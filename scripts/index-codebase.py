@@ -471,7 +471,7 @@ class CodebaseIndexer:
             self.clear()
 
         source_files = []
-        for pattern in ("*.py", "*.rs"):
+        for pattern in ("*.py", "*.rs", "*.js", "*.jsx", "*.ts", "*.tsx"):
             for src_file in REPO_ROOT.rglob(pattern):
                 rel_parts = src_file.relative_to(REPO_ROOT).parts
                 if any(p in EXCLUDED_DIR_NAMES or p.startswith(".") for p in rel_parts[:-1]):
@@ -499,6 +499,8 @@ class CodebaseIndexer:
                 self._index_file(src_file)
             elif src_file.suffix == ".rs":
                 self._index_rust_file(src_file)
+            elif src_file.suffix in (".js", ".jsx", ".ts", ".tsx"):
+                self._index_typescript_file(src_file)
 
         # Remove deleted files
         if incremental:
@@ -573,6 +575,69 @@ class CodebaseIndexer:
                  sym.get("signature"), sym.get("docstring"),
                  sym.get("parent"), sym.get("decorators"),
                  sym.get("bases"))
+            )
+            self.stats["symbols"] += 1
+        for imp in extracted["imports"]:
+            self.db.execute(
+                "INSERT INTO imports (file_id, imported_module, imported_name, alias, line) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (file_id, imp["module"], imp["name"], imp.get("alias"), imp["line"])
+            )
+            self.stats["imports"] += 1
+        for t in extracted["tests"]:
+            self.db.execute(
+                "INSERT INTO tests (file_id, name, kind, parent_class) "
+                "VALUES (?, ?, ?, ?)",
+                (file_id, t["name"], t["kind"], t.get("parent_class"))
+            )
+            self.stats["tests"] += 1
+
+        head_text = "\n".join(source.splitlines()[:150])
+        record = parse_header(filepath, head_text, rel_path=rel_path)
+        if record is not None:
+            self._store_header_record(file_id, record)
+
+    def _index_typescript_file(self, filepath: Path):
+        """Parse and index a single JS/TS file via tree-sitter.
+
+        Mirrors _index_rust_file's shape. Handles .js, .jsx, .ts, .tsx via
+        the typescript indexer (TypeScript grammar parses JS as a subset).
+        """
+        rel_path = str(filepath.relative_to(REPO_ROOT))
+        try:
+            from indexers.typescript import index_typescript_file
+        except ImportError:
+            self._skipped_no_treesitter.append(rel_path)
+            return
+
+        try:
+            source = filepath.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return
+        line_count = source.count("\n") + 1
+        mtime = filepath.stat().st_mtime
+
+        rel_parts = filepath.relative_to(REPO_ROOT).parts
+        package = rel_parts[-2] if len(rel_parts) >= 2 else ""
+        module = "/".join(rel_parts[:-1]) if len(rel_parts) > 1 else ""
+
+        self.db.execute(
+            "INSERT INTO files (path, module, package, lines, last_modified, indexed_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (rel_path, module, package, line_count, mtime, time.time())
+        )
+        file_id = self.db.execute("SELECT last_insert_rowid()").fetchone()[0]
+        self.stats["files"] += 1
+
+        extracted = index_typescript_file(filepath)
+        for sym in extracted["symbols"]:
+            self.db.execute(
+                "INSERT INTO symbols (file_id, name, kind, line, signature, "
+                "docstring, parent, decorators, bases) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (file_id, sym["name"], sym["kind"], sym["line"],
+                 sym.get("signature"), sym.get("docstring"),
+                 sym.get("parent"), sym.get("decorators"), sym.get("bases"))
             )
             self.stats["symbols"] += 1
         for imp in extracted["imports"]:

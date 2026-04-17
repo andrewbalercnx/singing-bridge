@@ -1,74 +1,32 @@
-## Code Review: Sprint 3 - video track + two-tile UI + browser gating (R1)
+## Code Review: Sprint 3 - video track + two-tile UI + browser gating (R2)
 
-**Round:** 1  
-**Verdict:** CHANGES_REQUESTED  
+**Round:** 2  
+**Verdict:** APPROVED  
 **Review Method:** Council of Experts (4 reviewers + consolidator)
 
 ### Implementation Assessment
-The implementation is structurally aligned with the approved plan. The main blockers are coverage gaps around browser gating behavior.
+The implementation matches the approved plan. The Rust path is correct on truncation, defaulting, lock discipline, and malformed-message handling. The browser-gating path remains advisory and is documented as such. No security or domain defects remain from the tracked set.
 
 ### Code Quality
-The code is generally clear and conservative. A few low-risk cleanup items remain in the Rust WebSocket path and supporting constants.
+The code is internally consistent across the Rust and JS changes. Error handling and protocol limits follow established patterns. Two maintainability issues remain in the frontend: one misleading parameter name and one implicit temporal dependency in a closure.
 
 ### Test Coverage
-Coverage is broad across the new browser helpers, signalling flow, and WebSocket tier handling. It is not yet sufficient for the browser-gating edge cases and a few critical UI/media regressions.
+Coverage is strong. The suite pins the browser-tier boundaries, unworkable paths, codec ordering, media teardown, media acquisition, truncation boundaries, tier round-trips, and HTML DOM markers. The prior gaps called out in R1 and R2 are closed.
 
 ### Findings
-- **[High]** The unworkable feature-gate path for `hasGetUserMedia === false` is not independently tested. A regression in that branch would allow blocked browsers through the gate. (File: `web/assets/tests/browser.test.js`, Location: feature-absent gating tests) (Source: test_quality)
-- **[High]** Android WebView detection via the `; wv)` marker is untested. A common in-app browser class can bypass the intended unworkable classification without a fixture covering it. (Files: `web/assets/browser.js`, `web/assets/tests/browser.test.js`, Location: in-app WebView detection and fixtures) (Source: test_quality)
-- **[Medium]** The WebSocket integration tests only exercise `"tier":"degraded"`. They do not verify end-to-end handling for `"supported"` or `"unworkable"`. (Files: `server/tests/ws_lobby.rs`, `server/tests/ws_lobby_tier.rs`, Location: lobby join integration tests) (Source: test_quality)
-- **[Medium]** The served HTML tests do not assert `muted` on `#local-video`. Removing that attribute would cause immediate self-audio feedback and the regression would be silent. (File: `server/tests/http_teach_debug_marker.rs`, Location: student and teacher page assertions) (Source: test_quality)
-- **[Medium]** `teardownMedia` is only tested with fully populated media state. Null or partial-init inputs are unverified. (File: `web/assets/tests/signalling.test.js`, Location: `teardownMedia` tests) (Source: test_quality)
-- **[Medium]** `acquireMedia` is only tested for video-phase failure. Audio-phase failure propagation is unverified. (File: `web/assets/tests/signalling.test.js`, Location: `acquireMedia` tests) (Source: test_quality)
-- **[Medium]** `truncate_to_chars` does unnecessary work on oversized inputs. It performs two character scans and allocates a new `String` instead of truncating in place. (File: `server/src/ws/lobby.rs`, Location: `truncate_to_chars`) (Source: domain)
-- **[Low]** `tier_reason` lacks the field-level byte cap applied to the other lobby string fields. Oversized values are silently truncated after allocation and traversal instead of being rejected consistently. (File: `server/src/ws/mod.rs`, Location: `handle_lobby_join`) (Source: domain, security)
-- **[Low]** `truncate_to_chars` has no direct unit test that pins exact boundary behavior independently of WebSocket integration coverage. (File: `server/src/ws/lobby.rs`, Location: `truncate_to_chars`) (Source: test_quality)
-- **[Low]** Android tablet classification is not covered by browser fixtures. (File: `web/assets/tests/browser.test.js`, Location: `detectDevice` coverage) (Source: test_quality)
-- **[Low]** The in-session control button and tile container DOM is not pinned by server HTML tests. (File: `server/tests/http_teach_debug_marker.rs`, Location: page structure assertions) (Source: test_quality)
-- **[Low]** `block-notice` and `degraded-notice` are not asserted in served student HTML despite being required by the landing-page gating flow. (File: `server/tests/http_teach_debug_marker.rs`, Location: student page assertions) (Source: test_quality)
-- **[Low]** `AdmitOutcome::NoRoom` is dead code. The enum variant is never constructed because the function returns before the outcome match when no room is available. (File: `server/src/ws/lobby.rs`, Location: `admit`) (Source: code_quality)
-- **[Low]** `MAX_TIER_REASON_LEN` is a misleading name for a character-count limit. (File: `server/src/ws/protocol.rs`, Location: constant definition) (Source: code_quality)
+- **[Medium]** `wireBidirectionalMedia` names its parameter `tier` even though callers pass the full browser-detection object. This invites misuse of `tier` as the tier string and makes the current `tier.device` access misleading. (File: `web/assets/signalling.js`, Location: `wireBidirectionalMedia`) (Source: Code Quality Expert)
+- **[Low]** `student.js` captures `handle` in `onHangup` before the `const handle` binding is initialised. The current call order makes this safe, but the safety depends on an unstated sequencing invariant. (File: `web/assets/student.js`, Location: form submit handler) (Source: Code Quality Expert)
 
 ### Excluded Findings
-- Third-party STUN disclosure to Google — Reason: valid product/privacy concern, but not a defect in the Sprint 3 implementation and not a review blocker for this change set. (Source: security)
-- `server/src/ws/mod.rs` header export comment is incomplete — Reason: documentation nit with negligible impact. (Source: code_quality)
-
-### Required Changes (if CHANGES_REQUESTED)
-1. **File**: `web/assets/tests/browser.test.js`  
-   **Location**: feature-gating tests  
-   **Current behavior**: The unworkable path is only tested with `hasRTCPeerConnection: false`.  
-   **Required change**: Add a test case with `hasRTCPeerConnection: true` and `hasGetUserMedia: false` and assert `tier === 'unworkable'`.  
-   **Acceptance criteria**: The test suite fails if the `hasGetUserMedia === false` branch no longer produces `unworkable`.
-
-2. **File**: `web/assets/tests/browser.test.js`  
-   **Location**: in-app WebView fixture coverage  
-   **Current behavior**: No Android WebView UA fixture exercises the `; wv)` marker.  
-   **Required change**: Add an Android WebView fixture and assert both `isInAppWebView === true` and `tier === 'unworkable'`.  
-   **Acceptance criteria**: The test suite fails if `; wv)` is no longer recognized as an in-app WebView or no longer maps to `unworkable`.
-
-3. **File**: `server/tests/ws_lobby.rs`, `server/tests/ws_lobby_tier.rs`  
-   **Location**: lobby join integration tests  
-   **Current behavior**: Only `"degraded"` is covered end to end.  
-   **Required change**: Add integration coverage for `"supported"` and `"unworkable"` round-trip behavior.  
-   **Acceptance criteria**: Teacher-visible lobby state preserves both values exactly.
-
-4. **File**: `server/tests/http_teach_debug_marker.rs`  
-   **Location**: student and teacher page assertions  
-   **Current behavior**: `playsinline` is checked, but `muted` on `#local-video` is not.  
-   **Required change**: Assert that the `#local-video` element includes `muted`.  
-   **Acceptance criteria**: The tests fail if `muted` is removed from the local preview video.
+No findings excluded.
 
 ### Recommendations
-- Add direct unit tests for `truncate_to_chars` and switch it to in-place truncation with `char_indices`.
-- Add signalling tests for partial media teardown and audio-acquisition failure.
-- Add HTML assertions for control buttons, tile containers, and browser-gating notice elements.
-- Remove dead `AdmitOutcome::NoRoom` or make it reachable by design.
-- Align `tier_reason` length handling with the other user-supplied fields.
+Rename the `wireBidirectionalMedia` parameter to `detect` or `browserInfo` and update both call sites. Add a guard in `student.js` so `onHangup` only calls `handle.hangup()` after `handle` exists.
 
 ### Expert Concordance
 | Area | Experts Agreeing | Key Theme |
-|------|------------------|-----------|
-| Browser gating tests | Test Quality, Consolidator | Critical unworkable branches are not fully pinned |
-| Tier reason length handling | Domain, Security | Inconsistent field validation and unnecessary oversized-input work |
-| Rust WebSocket quality | Domain, Code Quality | Small cleanup and efficiency issues in lobby handling |
-| HTML and signalling regression tests | Test Quality, Consolidator | Important UX and media behaviors are under-tested |
+|------|-----------------|-----------|
+| Domain correctness | Domain, Security, Test Quality | R1 findings are resolved; truncation, defaults, and async lock handling are correct |
+| Security posture | Security, Domain | Browser tier is advisory only; malformed input handling and rendering surfaces are safe |
+| Test adequacy | Test Quality, Domain, Security | Regression coverage is broad and pins the intended behavior |
+| Frontend maintainability | Code Quality | Two minor JS issues remain; neither blocks approval |

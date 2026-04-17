@@ -92,7 +92,7 @@
     });
   }
 
-  async function wireBidirectionalMedia(pc, tier) {
+  async function wireBidirectionalMedia(pc, detect) {
     var acq = await mod.acquireMedia(window.sbAudio, window.sbVideo);
     var audio = acq.audio;
     var video = acq.video;
@@ -104,7 +104,8 @@
       streams: [video.stream], direction: 'sendrecv',
     });
     // Mobile UAs benefit from hardware H.264; desktop prefers VP8.
-    var preferH264 = tier && tier.device !== 'desktop';
+    // `detect` is the full browser-detection result from sbBrowser.
+    var preferH264 = detect && detect.device !== 'desktop';
     window.sbVideo.applyCodecPreferences(
       videoTransceiver, preferH264 ? 'h264' : 'vp8'
     );
@@ -150,11 +151,11 @@
 
     var refs = { pc: null, media: null, overlay: null, dataChannel: null };
     var teardownSession = makeTeardown(refs);
-    var tier = detectTier();
+    var detect = detectTier();
 
     sig.on('peer_connected', async function () {
       refs.pc = makePeerConnection();
-      refs.media = await wireBidirectionalMedia(refs.pc, tier);
+      refs.media = await wireBidirectionalMedia(refs.pc, detect);
       refs.overlay = window.sbDebug.startDebugOverlay(refs.pc, { localTrack: refs.media.audio.track });
       refs.pc.onicecandidate = function (ev) {
         if (ev.candidate) sig.send({ type: 'signal', to: 'student', payload: { candidate: ev.candidate } });
@@ -204,16 +205,16 @@
     var onPeerDisconnected = args.onPeerDisconnected;
     var onPeerConnected = args.onPeerConnected;
 
-    var tier = detectTier();
+    var detect = detectTier();
     var sig = new Signalling(openWs());
     sig.send({
       type: 'lobby_join',
       slug: slug,
       email: email,
-      browser: tier.name + (tier.version != null ? '/' + tier.version : ''),
-      device_class: tier.device,
-      tier: tier.tier,
-      tier_reason: tier.reasons[0] || null,
+      browser: detect.name + (detect.version != null ? '/' + detect.version : ''),
+      device_class: detect.device,
+      tier: detect.tier,
+      tier_reason: detect.reasons[0] || null,
     });
 
     var refs = { pc: null, media: null, overlay: null, dataChannel: null };
@@ -226,7 +227,7 @@
     });
     sig.on('peer_connected', async function () {
       refs.pc = makePeerConnection();
-      refs.media = await wireBidirectionalMedia(refs.pc, tier);
+      refs.media = await wireBidirectionalMedia(refs.pc, detect);
       refs.overlay = window.sbDebug.startDebugOverlay(refs.pc, { localTrack: refs.media.audio.track });
       refs.pc.onicecandidate = function (ev) {
         if (ev.candidate) sig.send({ type: 'signal', to: 'teacher', payload: { candidate: ev.candidate } });

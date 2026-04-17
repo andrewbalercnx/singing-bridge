@@ -43,7 +43,12 @@
     lobbyStatus.hidden = false;
 
     let controlsHandle = null;
-    const handle = await window.signallingClient.connectStudent({
+    // `handle` is assigned by the await below; `onHangup` fires only
+    // after the session has actually started (after onPeerConnected),
+    // by which time `handle` is populated. Guarded explicitly so the
+    // safety does not depend on an unstated sequencing invariant.
+    let handle = null;
+    handle = await window.signallingClient.connectStudent({
       slug,
       email,
       onAdmitted() {
@@ -61,7 +66,7 @@
         controlsHandle = window.sbControls.wireControls({
           audioTrack,
           videoTrack,
-          onHangup() { handle.hangup(); },
+          onHangup() { if (handle) handle.hangup(); },
         });
         dataChannel.addEventListener('message', (ev) => {
           errEl.textContent = `Teacher says: ${ev.data}`;
@@ -75,6 +80,6 @@
         errEl.textContent = 'Teacher disconnected.';
       },
     });
-    window.addEventListener('beforeunload', () => handle.hangup());
+    window.addEventListener('beforeunload', () => { if (handle) handle.hangup(); });
   });
 })();

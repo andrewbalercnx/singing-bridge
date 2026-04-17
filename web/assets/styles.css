@@ -1,0 +1,38 @@
+/* File: web/assets/styles.css
+ * Purpose: Minimal styles for signup / teach / student pages.
+ * Last updated: 2026-04-17
+ */
+
+:root {
+  color-scheme: light dark;
+  --fg: #111;
+  --bg: #fafafa;
+  --accent: #244;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --fg: #f3f3f3; --bg: #161616; --accent: #8cf; }
+}
+
+body {
+  margin: 0;
+  font: 16px/1.45 system-ui, -apple-system, sans-serif;
+  color: var(--fg);
+  background: var(--bg);
+}
+main {
+  max-width: 42rem;
+  margin: 0 auto;
+  padding: 2rem 1rem;
+}
+h1 { font-size: 1.6rem; margin: 0 0 1rem; }
+h2 { font-size: 1.1rem; margin: 1.5rem 0 0.5rem; color: var(--accent); }
+
+form label { display: block; margin: 0.5rem 0; }
+form input { width: 100%; padding: 0.4rem; font: inherit; box-sizing: border-box; }
+form button, button { padding: 0.5rem 1rem; font: inherit; }
+
+ul { list-style: none; padding: 0; }
+li { padding: 0.25rem 0; border-bottom: 1px solid #ccc3; }
+li button { margin-left: 0.5rem; }
+
+#error { color: #c00; min-height: 1.2em; }

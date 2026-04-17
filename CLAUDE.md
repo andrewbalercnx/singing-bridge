@@ -58,8 +58,7 @@ working in that directory.
 
 ### Tier 3: Deep reference (`knowledge/`)
 
-(no knowledge files yet — run Step 3) *(bootstrap fills this with one line per
-`knowledge/*.md` file)*
+- `knowledge/decisions/0001-mvp-architecture.md` — foundational ADR: browser-only clients, teacher magic-link auth, lobby admission, AEC-off + music-mode Opus, bidirectional fidelity, bandwidth degradation order, Azure + Cloudflare deployment. Read before proposing changes to the session model, codec settings, or infra shape.
 
 ## Sprint process
 

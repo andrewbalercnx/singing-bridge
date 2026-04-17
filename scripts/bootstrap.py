@@ -34,7 +34,7 @@ Invariants & gotchas:
     / `_validate_patch`). User confirms every disk write derived
     from Claude output.
 
-Last updated: Sprint 7 (2026-04-16) -- domain-expert library + knowledge scaffold wiring; _load_domain_expert_library, _apply_library_lens, _scaffold_is_present.
+Last updated: Sprint 1 (2026-04-17) -- chmod during Sprint 1 bootstrap; no logic change.
 """
 
 from __future__ import annotations

@@ -1,0 +1,11 @@
+[workspace]
+members = ["server"]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+version = "0.1.0"
+license = "MIT"
+
+[workspace.lints.clippy]
+await_holding_lock = "deny"

@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>singing-bridge — join</title>
+  <link rel="stylesheet" href="/assets/styles.css">
+</head>
+<body>
+  <main class="student">
+    <h1>Join your lesson</h1>
+    <p>Please wear headphones.</p>
+    <form id="join-form">
+      <label>Your email
+        <input type="email" name="email" autocomplete="email" required>
+      </label>
+      <button type="submit">Enter lobby</button>
+    </form>
+
+    <section id="lobby-status" hidden>
+      <p>Waiting to be admitted…</p>
+    </section>
+
+    <section id="session-status" hidden>
+      <p>Connected.</p>
+    </section>
+
+    <p id="error"></p>
+
+    <script src="/assets/signalling.js"></script>
+    <script src="/assets/student.js"></script>
+  </main>
+</body>
+</html>

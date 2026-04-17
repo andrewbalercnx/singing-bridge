@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>singing-bridge — teacher</title>
+  <link rel="stylesheet" href="/assets/styles.css">
+</head>
+<body>
+  <main class="teacher">
+    <h1 id="room-heading">Your room</h1>
+
+    <section class="lobby">
+      <h2>Lobby</h2>
+      <ul id="lobby-list" aria-live="polite"></ul>
+      <p id="lobby-empty">No one is waiting.</p>
+    </section>
+
+    <section class="session">
+      <h2>Session</h2>
+      <p id="session-status">Waiting for a student.</p>
+      <button id="hangup" type="button" hidden>End session</button>
+    </section>
+
+    <p id="error"></p>
+
+    <script src="/assets/signalling.js"></script>
+    <script src="/assets/teacher.js"></script>
+  </main>
+</body>
+</html>

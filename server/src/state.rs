@@ -1,0 +1,185 @@
+// File: server/src/state.rs
+// Purpose: In-memory shared state — AppState, per-room RoomState, LobbyEntry,
+//          ClientHandle. Room lookup goes through typed helpers so no
+//          `DashMap::Ref` ever escapes an async scope.
+// Role: Single source of truth for live connections and lobby membership.
+// Exports: AppState, RoomState, LobbyEntry, ActiveSession, ClientHandle,
+//          ConnectionId, SlugKey
+// Depends: tokio, dashmap, sqlx, tokio_util, async trait mailer
+// Invariants: RoomState is `tokio::sync::RwLock`; callers MUST use
+//             AppState::room / ::room_or_insert (no direct DashMap access
+//             from async fns).
+// Last updated: Sprint 1 (2026-04-17) -- initial implementation
+
+use std::sync::Arc;
+use std::time::Instant;
+
+use dashmap::DashMap;
+use sqlx::SqlitePool;
+use tokio::sync::{mpsc, RwLock};
+use tokio_util::sync::CancellationToken;
+
+use crate::auth::mailer::Mailer;
+use crate::config::Config;
+use crate::error::{AppError, Result};
+use crate::ws::protocol::{EntryId, LobbyEntryView, PumpDirective};
+
+/// Random per-connection identifier. Used to distinguish connections when
+/// the teacher reconnects and the old socket is being torn down.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+pub struct ConnectionId(pub u64);
+
+impl ConnectionId {
+    pub fn new() -> Self {
+        use rand::RngCore;
+        Self(rand::thread_rng().next_u64())
+    }
+}
+
+impl Default for ConnectionId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Normalised slug key. Constructed only via `SlugKey::new` which lowercases.
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+pub struct SlugKey(String);
+
+impl SlugKey {
+    pub fn new(raw: &str) -> std::result::Result<Self, AppError> {
+        let lower = crate::auth::slug::validate(raw)?;
+        Ok(Self(lower))
+    }
+
+    /// Skip validation — used only when loading a previously validated slug
+    /// from the DB.
+    pub fn from_trusted(raw: String) -> Self {
+        Self(raw.to_ascii_lowercase())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+#[derive(Clone)]
+pub struct ClientHandle {
+    pub id: ConnectionId,
+    pub tx: mpsc::Sender<PumpDirective>,
+}
+
+pub struct LobbyEntry {
+    pub id: EntryId,
+    pub email: String,
+    pub browser: String,
+    pub device_class: String,
+    pub joined_at: Instant,
+    pub joined_at_unix: i64,
+    pub conn: ClientHandle,
+}
+
+impl LobbyEntry {
+    pub fn view(&self) -> LobbyEntryView {
+        LobbyEntryView {
+            id: self.id,
+            email: self.email.clone(),
+            browser: self.browser.clone(),
+            device_class: self.device_class.clone(),
+            joined_at_unix: self.joined_at_unix,
+        }
+    }
+}
+
+pub struct ActiveSession {
+    pub student: LobbyEntry,
+    #[allow(dead_code)]
+    pub started_at: Instant,
+}
+
+#[derive(Default)]
+pub struct RoomState {
+    pub teacher_conn: Option<ClientHandle>,
+    pub lobby: Vec<LobbyEntry>,
+    pub active_session: Option<ActiveSession>,
+}
+
+impl RoomState {
+    pub fn lobby_view(&self) -> Vec<LobbyEntryView> {
+        self.lobby.iter().map(LobbyEntry::view).collect()
+    }
+
+    /// Remove an entry by connection id from either lobby or active_session.
+    /// Returns true if the entry was in the active session (caller should
+    /// notify the peer).
+    pub fn remove_by_connection(&mut self, conn: ConnectionId) -> Option<RemovalKind> {
+        if let Some(pos) = self.lobby.iter().position(|e| e.conn.id == conn) {
+            self.lobby.swap_remove(pos);
+            return Some(RemovalKind::FromLobby);
+        }
+        if self
+            .active_session
+            .as_ref()
+            .map(|s| s.student.conn.id == conn)
+            .unwrap_or(false)
+        {
+            self.active_session = None;
+            return Some(RemovalKind::FromActiveSession);
+        }
+        None
+    }
+}
+
+pub enum RemovalKind {
+    FromLobby,
+    FromActiveSession,
+}
+
+pub struct AppState {
+    pub db: SqlitePool,
+    pub config: Config,
+    pub mailer: Arc<dyn Mailer>,
+    pub rooms: DashMap<SlugKey, Arc<RwLock<RoomState>>>,
+    pub shutdown: CancellationToken,
+}
+
+impl AppState {
+    /// Look up an existing room. Returns the `Arc<RwLock<RoomState>>` with
+    /// no lingering DashMap guard.
+    pub fn room(&self, slug: &SlugKey) -> Option<Arc<RwLock<RoomState>>> {
+        self.rooms.get(slug).map(|r| Arc::clone(r.value()))
+    }
+
+    /// Look up or insert a room. Enforces MAX_ACTIVE_ROOMS.
+    pub fn room_or_insert(&self, slug: SlugKey) -> Result<Arc<RwLock<RoomState>>> {
+        if !self.rooms.contains_key(&slug) && self.rooms.len() >= self.config.max_active_rooms {
+            return Err(AppError::ServiceUnavailable);
+        }
+        let arc = self
+            .rooms
+            .entry(slug)
+            .or_insert_with(|| Arc::new(RwLock::new(RoomState::default())))
+            .value()
+            .clone();
+        Ok(arc)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn slug_key_is_lowercase_by_construction() {
+        let a = SlugKey::new("Alice").unwrap();
+        let b = SlugKey::new("alice").unwrap();
+        assert_eq!(a, b);
+        assert_eq!(a.as_str(), "alice");
+    }
+
+    #[test]
+    fn slug_key_rejects_invalid() {
+        assert!(SlugKey::new("bad slug").is_err());
+        assert!(SlugKey::new("admin").is_err());
+    }
+}

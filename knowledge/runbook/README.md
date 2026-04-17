@@ -1,4 +1,4 @@
-# Runbook — {{PROJECT_NAME}}
+# Runbook — singing-bridge
 
 *What lives here:* Operational playbooks — what to do when X
 happens. Oncall procedures, deploy + rollback, incident response.

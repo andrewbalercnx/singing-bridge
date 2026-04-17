@@ -1,4 +1,4 @@
-# Architecture — {{PROJECT_NAME}}
+# Architecture — singing-bridge
 
 *What lives here:* System boundaries, services map, deployment
 model, trust boundaries, data-flow diagrams.

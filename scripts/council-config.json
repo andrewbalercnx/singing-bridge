@@ -21,7 +21,10 @@
       {
         "role": "security",
         "label": "Security Expert",
-        "phases": ["plan", "code"],
+        "phases": [
+          "plan",
+          "code"
+        ],
         "platform": "claude_cli",
         "model": "sonnet",
         "api_key_env": null,
@@ -37,7 +40,10 @@
       {
         "role": "code_quality",
         "label": "Code Quality Expert",
-        "phases": ["plan", "code"],
+        "phases": [
+          "plan",
+          "code"
+        ],
         "platform": "claude_cli",
         "model": "sonnet",
         "api_key_env": null,
@@ -53,7 +59,10 @@
       {
         "role": "test_quality",
         "label": "Test Quality Expert",
-        "phases": ["plan", "code"],
+        "phases": [
+          "plan",
+          "code"
+        ],
         "platform": "claude_cli",
         "model": "sonnet",
         "api_key_env": null,
@@ -69,7 +78,10 @@
       {
         "role": "domain",
         "label": "Domain Expert",
-        "phases": ["plan", "code"],
+        "phases": [
+          "plan",
+          "code"
+        ],
         "platform": "claude_cli",
         "model": "sonnet",
         "api_key_env": null,
@@ -80,7 +92,7 @@
         },
         "max_tokens": 4096,
         "temperature": 0.2,
-        "lens": "Validate domain correctness per the knowledge base. Read knowledge/ before reviewing. (This lens is customised during template bootstrap -- replace with the concrete domain-expert checklist for this project: authoritative references, protocol-level invariants, data-model semantics, domain-specific edge cases.) You have live MCP access to the project's codegraph via `codegraph_*` tools. **Verify domain claims against the authoritative references in knowledge/ before flagging.** Ignore security controls, code style, testing, performance, UX -- handled by other reviewers. If a finding is outside the project's domain, state 'outside scope' and produce no findings."
+        "lens": "You are the Domain Expert for a Rust systems project. Focus\nEXCLUSIVELY on concerns a Rust specialist catches:\n\n- **Ownership and lifetimes** \u2014 functions that take `&T` when they\n  need `T` (forcing clones at call sites); `'static` bounds that\n  block testability; self-referential structs without `Pin`;\n  `Rc<RefCell<T>>` where `&mut T` would do.\n- **`unsafe` discipline** \u2014 every `unsafe` block needs a comment\n  stating the invariant it upholds; raw-pointer dereferences where\n  a safe abstraction exists (`Pin`, `NonNull`, `Box::leak`); FFI\n  boundaries that don't `catch_unwind` (UB on panic across FFI).\n- **`Send` and `Sync` correctness** \u2014 `Arc<T>` where `T: !Send` (compile\n  error, but an implicit `unsafe impl Send` is a smell); lock-free\n  data structures claiming `Sync` without justification;\n  `thread_local!` values accessed across `.await` (`Send` loss).\n- **Panic vs Result** \u2014 `.unwrap()` / `.expect()` in library code\n  (panics propagate to callers); `assert!` on untrusted input\n  (DoS); `todo!()` / `unimplemented!()` reached in production; `?`\n  operator used where a custom error type would preserve context.\n- **Async correctness** \u2014 `.await` inside a synchronous `MutexGuard`\n  (deadlock risk); `tokio::spawn` losing the `JoinHandle` without\n  cancellation; `Pin<Box<dyn Future>>` when a concrete generic\n  would compile; `block_on` inside an `async` function (runtime\n  panic).\n- **Lifetime elision pitfalls** \u2014 functions that elide lifetimes\n  across `&self` and a returned reference, tying the return's\n  lifetime to `&self` when the caller wants it tied to a different\n  input.\n\nYou have live MCP access to the codegraph. **Before flagging an\nunsafe block, verify it exists and cite the symbol** via\n`codegraph_query`. Do not assume `unsafe` from prose; check.\n\nIgnore generic security (crypto choice, TLS handled by Security),\ncode style (cargo fmt), and test coverage."
       }
     ],
     "consolidator": {

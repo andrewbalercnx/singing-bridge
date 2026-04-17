@@ -1,4 +1,4 @@
-# Decisions — {{PROJECT_NAME}}
+# Decisions — singing-bridge
 
 *What lives here:* Architecture Decision Records (ADRs) —
 significant, durable decisions about the system.

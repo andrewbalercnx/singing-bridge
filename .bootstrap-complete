@@ -1,0 +1,4 @@
+project_name=singing-bridge
+mvp_outcome=A simple video/audio application allowing a singer and their teacher to interact online.  Low latency and fidelity of audio are key
+languages=rust
+council_enabled=True

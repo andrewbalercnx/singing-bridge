@@ -1,7 +1,7 @@
-# {{PROJECT_NAME}} — Claude Code Instructions
+# singing-bridge — Claude Code Instructions
 
-> Filled in by `scripts/bootstrap.py`. Replace `{{PROJECT_NAME}}`,
-> `{{MVP_OUTCOME}}`, and any other placeholders. This top block is
+> Filled in by `scripts/bootstrap.py`. Replace `singing-bridge`,
+> `Allow two remote users to enter a video conference that supports low latency audio`, and any other placeholders. This top block is
 > descriptive; the rest is the working convention.
 
 > **Developing the template itself?** You're likely in the
@@ -10,11 +10,11 @@
 
 ## Project overview
 
-**MVP outcome:** {{MVP_OUTCOME}}
+**MVP outcome:** Allow two remote users to enter a video conference that supports low latency audio
 
-**Stack:** {{STACK}}
+**Stack:** rust
 
-{{PROFILE_NOTE}}
+This project uses the **standard** install profile. Re-run `python3 scripts/bootstrap.py --profile <other>` to change it.
 
 ## Install profile
 
@@ -58,7 +58,7 @@ working in that directory.
 
 ### Tier 3: Deep reference (`knowledge/`)
 
-{{KNOWLEDGE_INDEX}} *(bootstrap fills this with one line per
+(no knowledge files yet — run Step 3) *(bootstrap fills this with one line per
 `knowledge/*.md` file)*
 
 ## Sprint process

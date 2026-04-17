@@ -1,4 +1,4 @@
-# Domain — {{PROJECT_NAME}}
+# Domain — singing-bridge
 
 *What lives here:* Business-domain entities, terminology, state
 machines, invariants specific to the problem area.

@@ -76,6 +76,19 @@ async function setMungedLocalDescription(pc, desc) {
   await pc.setLocalDescription(desc);
 }
 
+// Returns a teardown function that releases overlay, audio, peer
+// connection, and data channel from the shared refs object. Used by
+// both connectTeacher and connectStudent to avoid duplicating the
+// four-step shutdown sequence.
+function makeTeardown(refs) {
+  return function () {
+    if (refs.overlay) { try { refs.overlay.stop(); } catch (_) {} refs.overlay = null; }
+    if (refs.audio) { try { refs.audio.teardown(); } catch (_) {} refs.audio = null; }
+    if (refs.pc) { try { refs.pc.close(); } catch (_) {} refs.pc = null; }
+    refs.dataChannel = null;
+  };
+}
+
 // Adds a local audio track, wires ontrack for remote audio, and
 // returns a handle with a teardown() that stops the track and
 // detaches the remote element.
@@ -97,42 +110,33 @@ async function connectTeacher({ slug, onLobbyUpdate, onPeerConnected, onPeerDisc
   sig.send({ type: 'lobby_watch', slug });
   sig.on('lobby_state', (m) => onLobbyUpdate && onLobbyUpdate(m.entries));
 
-  let pc = null;
-  let audio = null;
-  let overlay = null;
-  let dataChannel = null;
-
-  const teardownSession = () => {
-    if (overlay) { try { overlay.stop(); } catch (_) {} overlay = null; }
-    if (audio) { try { audio.teardown(); } catch (_) {} audio = null; }
-    if (pc) { try { pc.close(); } catch (_) {} pc = null; }
-    dataChannel = null;
-  };
+  const refs = { pc: null, audio: null, overlay: null, dataChannel: null };
+  const teardownSession = makeTeardown(refs);
 
   sig.on('peer_connected', async () => {
-    pc = makePeerConnection();
-    audio = await wireBidirectionalAudio(pc);
-    overlay = window.sbDebug.startDebugOverlay(pc, { localTrack: audio.local.track });
-    pc.onicecandidate = (ev) => {
+    refs.pc = makePeerConnection();
+    refs.audio = await wireBidirectionalAudio(refs.pc);
+    refs.overlay = window.sbDebug.startDebugOverlay(refs.pc, { localTrack: refs.audio.local.track });
+    refs.pc.onicecandidate = (ev) => {
       if (ev.candidate) sig.send({ type: 'signal', to: 'student', payload: { candidate: ev.candidate } });
     };
-    pc.ondatachannel = (ev) => {
-      dataChannel = ev.channel;
-      dataChannel.onopen = () => onPeerConnected && onPeerConnected({ dataChannel });
+    refs.pc.ondatachannel = (ev) => {
+      refs.dataChannel = ev.channel;
+      refs.dataChannel.onopen = () => onPeerConnected && onPeerConnected({ dataChannel: refs.dataChannel });
     };
   });
   sig.on('signal', async (m) => {
-    if (!pc) return;
+    if (!refs.pc) return;
     const p = m.payload;
     if (p.sdp) {
-      await pc.setRemoteDescription(new RTCSessionDescription(p.sdp));
+      await refs.pc.setRemoteDescription(new RTCSessionDescription(p.sdp));
       if (p.sdp.type === 'offer') {
-        const answer = await pc.createAnswer();
-        await setMungedLocalDescription(pc, answer);
-        sig.send({ type: 'signal', to: 'student', payload: { sdp: pc.localDescription } });
+        const answer = await refs.pc.createAnswer();
+        await setMungedLocalDescription(refs.pc, answer);
+        sig.send({ type: 'signal', to: 'student', payload: { sdp: refs.pc.localDescription } });
       }
     } else if (p.candidate) {
-      try { await pc.addIceCandidate(p.candidate); } catch (_) {}
+      try { await refs.pc.addIceCandidate(p.candidate); } catch (_) {}
     }
   });
   sig.on('peer_disconnected', () => {
@@ -157,40 +161,31 @@ async function connectStudent({ slug, email, onAdmitted, onRejected, onPeerDisco
     device_class: deviceClass(),
   });
 
-  let pc = null;
-  let audio = null;
-  let overlay = null;
-  let dataChannel = null;
-
-  const teardownSession = () => {
-    if (overlay) { try { overlay.stop(); } catch (_) {} overlay = null; }
-    if (audio) { try { audio.teardown(); } catch (_) {} audio = null; }
-    if (pc) { try { pc.close(); } catch (_) {} pc = null; }
-    dataChannel = null;
-  };
+  const refs = { pc: null, audio: null, overlay: null, dataChannel: null };
+  const teardownSession = makeTeardown(refs);
 
   sig.on('admitted', () => onAdmitted && onAdmitted());
   sig.on('rejected', (m) => { onRejected && onRejected(m.reason); sig.close(); });
   sig.on('peer_connected', async () => {
-    pc = makePeerConnection();
-    audio = await wireBidirectionalAudio(pc);
-    overlay = window.sbDebug.startDebugOverlay(pc, { localTrack: audio.local.track });
-    pc.onicecandidate = (ev) => {
+    refs.pc = makePeerConnection();
+    refs.audio = await wireBidirectionalAudio(refs.pc);
+    refs.overlay = window.sbDebug.startDebugOverlay(refs.pc, { localTrack: refs.audio.local.track });
+    refs.pc.onicecandidate = (ev) => {
       if (ev.candidate) sig.send({ type: 'signal', to: 'teacher', payload: { candidate: ev.candidate } });
     };
-    dataChannel = pc.createDataChannel('hello');
-    dataChannel.onopen = () => onPeerConnected && onPeerConnected({ dataChannel });
-    const offer = await pc.createOffer();
-    await setMungedLocalDescription(pc, offer);
-    sig.send({ type: 'signal', to: 'teacher', payload: { sdp: pc.localDescription } });
+    refs.dataChannel = refs.pc.createDataChannel('hello');
+    refs.dataChannel.onopen = () => onPeerConnected && onPeerConnected({ dataChannel: refs.dataChannel });
+    const offer = await refs.pc.createOffer();
+    await setMungedLocalDescription(refs.pc, offer);
+    sig.send({ type: 'signal', to: 'teacher', payload: { sdp: refs.pc.localDescription } });
   });
   sig.on('signal', async (m) => {
-    if (!pc) return;
+    if (!refs.pc) return;
     const p = m.payload;
     if (p.sdp) {
-      await pc.setRemoteDescription(new RTCSessionDescription(p.sdp));
+      await refs.pc.setRemoteDescription(new RTCSessionDescription(p.sdp));
     } else if (p.candidate) {
-      try { await pc.addIceCandidate(p.candidate); } catch (_) {}
+      try { await refs.pc.addIceCandidate(p.candidate); } catch (_) {}
     }
   });
   sig.on('peer_disconnected', () => {

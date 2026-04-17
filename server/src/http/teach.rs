@@ -17,7 +17,7 @@ use std::sync::Arc;
 
 use axum::{
     extract::{Path, State},
-    http::HeaderMap,
+    http::{header, HeaderMap, HeaderValue},
     response::{Html, IntoResponse, Response},
 };
 
@@ -59,12 +59,14 @@ pub async fn get_teach(
 
     let page = if is_owner { "teacher.html" } else { "student.html" };
     let html_path = state.config.static_dir.join(page);
-    let html = tokio::fs::read_to_string(&html_path)
-        .await
-        .map_err(|e| AppError::Internal(format!("read {page}: {e}").into()))?;
+    let html = tokio::fs::read_to_string(&html_path).await?;
 
     let html = inject_debug_marker(html, state.config.dev);
-    Ok(Html(html).into_response())
+    let mut resp = Html(html).into_response();
+    let h = resp.headers_mut();
+    h.insert(header::CACHE_CONTROL, HeaderValue::from_static("private, no-store"));
+    h.insert(header::VARY, HeaderValue::from_static("Cookie"));
+    Ok(resp)
 }
 
 /// Placeholder token in `teacher.html` / `student.html` that is

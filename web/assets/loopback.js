@@ -89,6 +89,86 @@
     return bestIdx;
   }
 
+  // Creates AudioContext, loads the capture worklet, and wires the mic
+  // stream into it. Returns graph handles and latency constants.
+  async function setupAudioGraph(stream) {
+    var ctx = new (window.AudioContext || window.webkitAudioContext)({
+      sampleRate: SAMPLE_RATE,
+      latencyHint: 'interactive',
+    });
+    await ctx.audioWorklet.addModule('/assets/loopback-worklet.js');
+    var src = ctx.createMediaStreamSource(stream);
+    var worklet = new AudioWorkletNode(ctx, 'sb-capture');
+    src.connect(worklet);
+    var captured = [];
+    var capturedStartTime = ctx.currentTime;
+    worklet.port.onmessage = function (ev) { captured.push(ev.data); };
+    return {
+      ctx: ctx,
+      src: src,
+      worklet: worklet,
+      captured: captured,
+      capturedStartTime: capturedStartTime,
+      baseLatency: ctx.baseLatency || 0,
+      outputLatency: ctx.outputLatency || 0,
+    };
+  }
+
+  // Schedules PULSE_COUNT tones on the AudioContext destination and
+  // returns the scheduled emit times.
+  function schedulePulses(ctx) {
+    var now = ctx.currentTime;
+    var emitTimes = [];
+    var spacing = PULSE_SPACING_MS / 1000;
+    var firstEmit = now + 0.2;
+    for (var i = 0; i < PULSE_COUNT; i++) {
+      var t = firstEmit + i * spacing;
+      var osc = ctx.createOscillator();
+      osc.frequency.value = PULSE_HZ;
+      var gain = ctx.createGain();
+      gain.gain.setValueAtTime(0, t);
+      gain.gain.linearRampToValueAtTime(1, t + 0.0005);
+      gain.gain.setValueAtTime(1, t + PULSE_MS / 1000 - 0.0005);
+      gain.gain.linearRampToValueAtTime(0, t + PULSE_MS / 1000);
+      osc.connect(gain).connect(ctx.destination);
+      osc.start(t);
+      osc.stop(t + PULSE_MS / 1000 + 0.01);
+      emitTimes.push(t);
+    }
+    return emitTimes;
+  }
+
+  // Concatenates captured worklet buffers, cross-correlates each
+  // pulse against the reference, and returns compensated round-trip
+  // latency estimates in milliseconds.
+  function analyzeCapture(captured, emitTimes, capturedStartTime, baseLatency, outputLatency) {
+    var total = 0;
+    for (var a = 0; a < captured.length; a++) total += captured[a].length;
+    var signal = new Float32Array(total);
+    var offset = 0;
+    for (var b = 0; b < captured.length; b++) {
+      signal.set(captured[b], offset);
+      offset += captured[b].length;
+    }
+    var ref = makeReferencePulse(SAMPLE_RATE);
+    var results = [];
+    for (var j = 0; j < emitTimes.length; j++) {
+      var emitSample = Math.round((emitTimes[j] - capturedStartTime) * SAMPLE_RATE);
+      // Search window: from emit up to +300 ms to tolerate large
+      // round trips without matching a neighbouring pulse.
+      var windowStart = Math.max(0, emitSample);
+      var windowEnd = Math.min(
+        signal.length - ref.length,
+        emitSample + Math.round(0.3 * SAMPLE_RATE)
+      );
+      if (windowEnd <= windowStart) continue;
+      var arrivalSample = crossCorrelateArgmax(signal, ref, windowStart, windowEnd);
+      var rawDelaySec = (arrivalSample - emitSample) / SAMPLE_RATE;
+      results.push((rawDelaySec - baseLatency - outputLatency) * 1000);
+    }
+    return results;
+  }
+
   async function runMeasurement(statusEl, outEl) {
     statusEl.textContent = 'Requesting microphone…';
     var stream;
@@ -109,94 +189,35 @@
     }
 
     statusEl.textContent = 'Initialising audio graph…';
-    var ctx = new (window.AudioContext || window.webkitAudioContext)({
-      sampleRate: SAMPLE_RATE,
-      latencyHint: 'interactive',
-    });
-
+    var graph;
     try {
-      await ctx.audioWorklet.addModule('/assets/loopback-worklet.js');
+      graph = await setupAudioGraph(stream);
     } catch (e) {
       statusEl.textContent = 'AudioWorklet failed to load: ' + e;
       return;
     }
 
-    var src = ctx.createMediaStreamSource(stream);
-    var worklet = new AudioWorkletNode(ctx, 'sb-capture');
-    src.connect(worklet);
-
-    var captured = [];
-    var capturedStartTime = ctx.currentTime;
-    worklet.port.onmessage = function (ev) {
-      captured.push(ev.data);
-    };
-
-    var baseLatency = ctx.baseLatency || 0;
-    var outputLatency = ctx.outputLatency || 0;
-
     statusEl.textContent =
       'Playing ' + PULSE_COUNT + ' pulses… baseLatency=' +
-      (baseLatency * 1000).toFixed(1) + 'ms outputLatency=' +
-      (outputLatency * 1000).toFixed(1) + 'ms';
+      (graph.baseLatency * 1000).toFixed(1) + 'ms outputLatency=' +
+      (graph.outputLatency * 1000).toFixed(1) + 'ms';
 
-    var now = ctx.currentTime;
-    var emitTimes = [];
-    var spacing = PULSE_SPACING_MS / 1000;
-    var firstEmit = now + 0.2;
-    for (var i = 0; i < PULSE_COUNT; i++) {
-      var t = firstEmit + i * spacing;
-      var osc = ctx.createOscillator();
-      osc.frequency.value = PULSE_HZ;
-      var gain = ctx.createGain();
-      gain.gain.setValueAtTime(0, t);
-      gain.gain.linearRampToValueAtTime(1, t + 0.0005);
-      gain.gain.setValueAtTime(1, t + PULSE_MS / 1000 - 0.0005);
-      gain.gain.linearRampToValueAtTime(0, t + PULSE_MS / 1000);
-      osc.connect(gain).connect(ctx.destination);
-      osc.start(t);
-      osc.stop(t + PULSE_MS / 1000 + 0.01);
-      emitTimes.push(t);
-    }
-
+    var emitTimes = schedulePulses(graph.ctx);
     var runtimeMs = 200 + PULSE_COUNT * PULSE_SPACING_MS + 500;
     await new Promise(function (r) { return setTimeout(r, runtimeMs); });
 
     stream.getTracks().forEach(function (t) { t.stop(); });
-    worklet.disconnect();
-    src.disconnect();
+    graph.worklet.disconnect();
+    graph.src.disconnect();
 
-    // Concatenate captured buffers.
-    var total = 0;
-    for (var a = 0; a < captured.length; a++) total += captured[a].length;
-    var signal = new Float32Array(total);
-    var offset = 0;
-    for (var b = 0; b < captured.length; b++) {
-      signal.set(captured[b], offset);
-      offset += captured[b].length;
-    }
-
-    var ref = makeReferencePulse(SAMPLE_RATE);
-    var results = [];
-    for (var j = 0; j < emitTimes.length; j++) {
-      var emitSample =
-        Math.round((emitTimes[j] - capturedStartTime) * SAMPLE_RATE);
-      // Search window: from emit up to +300 ms to tolerate large
-      // round trips without matching a neighbouring pulse.
-      var windowStart = Math.max(0, emitSample);
-      var windowEnd = Math.min(signal.length - ref.length,
-        emitSample + Math.round(0.3 * SAMPLE_RATE));
-      if (windowEnd <= windowStart) continue;
-      var arrivalSample =
-        crossCorrelateArgmax(signal, ref, windowStart, windowEnd);
-      var rawDelaySec = (arrivalSample - emitSample) / SAMPLE_RATE;
-      var compensatedMs =
-        (rawDelaySec - baseLatency - outputLatency) * 1000;
-      results.push(compensatedMs);
-    }
+    var results = analyzeCapture(
+      graph.captured, emitTimes, graph.capturedStartTime,
+      graph.baseLatency, graph.outputLatency
+    );
 
     statusEl.textContent = 'Done.';
     renderResults(outEl, results);
-    ctx.close();
+    graph.ctx.close();
   }
 
   document.addEventListener('DOMContentLoaded', function () {

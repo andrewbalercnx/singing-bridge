@@ -46,17 +46,22 @@
   }
 
   function setRow(dl, label, value, ok) {
-    var dt = dl.querySelector('dt[data-k="' + label + '"]');
-    var dd;
+    var dt = null;
+    var dd = null;
+    var nodes = dl.childNodes;
+    for (var n = 0; n < nodes.length; n++) {
+      if (nodes[n].dataset && nodes[n].dataset.k === label) {
+        if (nodes[n].nodeName === 'DT') dt = nodes[n];
+        else if (nodes[n].nodeName === 'DD') dd = nodes[n];
+      }
+    }
     if (!dt) {
       dt = document.createElement('dt');
-      dt.setAttribute('data-k', label);
+      dt.dataset.k = label;
       dt.textContent = label;
       dd = document.createElement('dd');
-      dd.setAttribute('data-k', label);
+      dd.dataset.k = label;
       dl.append(dt, dd);
-    } else {
-      dd = dl.querySelector('dd[data-k="' + label + '"]');
     }
     dd.textContent = value == null ? '—' : String(value);
     dd.className = ok === true ? 'ok' : ok === false ? 'bad' : '';
@@ -64,7 +69,10 @@
 
   function parseOpusFmtp(sdp) {
     if (!sdp) return null;
-    var m = /^a=fmtp:\d+ (.+)$/m.exec(sdp);
+    var ptMatch = /^a=rtpmap:(\d+)\s+opus\/48000\/2\b/im.exec(sdp);
+    if (!ptMatch) return null;
+    var pt = ptMatch[1];
+    var m = new RegExp('^a=fmtp:' + pt + ' (.+)$', 'm').exec(sdp);
     if (!m) return null;
     var out = {};
     var parts = m[1].split(';');

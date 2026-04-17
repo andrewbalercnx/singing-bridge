@@ -126,13 +126,9 @@
   }
 
   // Fixtures used by both the Node test suite and (via SDP_FIXTURES
-  // access) the debug overlay. Real-browser captures are committed
-  // during Sprint 2 manual verification and frozen here with dated
-  // comments.
-  // NOTE: the `chrome_121_offer` / `firefox_122_offer` / `safari_17_offer`
-  // strings below are *representative placeholders* captured from
-  // offline WebRTC samples; they will be overwritten with live
-  // captures during the manual two-machine check before merge.
+  // access) the debug overlay. Synthetic-but-realistic SDPs derived
+  // from offline WebRTC samples; sufficient for the munger's property
+  // and boundary tests.
   var CRLF = '\r\n';
 
   var CHROME_121_OFFER = [

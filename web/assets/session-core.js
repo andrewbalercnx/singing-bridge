@@ -53,7 +53,7 @@
           if (callbacks.onQuality) callbacks.onQuality(summary);
 
           var outbound = samples.filter(function (s) { return s.dir === 'outbound'; });
-          var res = adapt.decideNextRung(ladderState, outbound, role);
+          var res = adapt.decideNextRung(ladderState, outbound);
           ladderState = res.next;
           mod.applyActions(res.actions, senders);
           for (var i = 0; i < res.actions.length; i++) {

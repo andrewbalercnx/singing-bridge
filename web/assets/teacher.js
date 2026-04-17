@@ -22,10 +22,11 @@
   const floorNotice = document.getElementById('floor-violation');
 
   // Proxy so list-item click handlers can reach the handle before
-  // connectTeacher resolves.
+  // connectTeacher resolves. Reads the closure-scoped sessionHandle
+  // (NOT a global) — the handle is never exposed on window.
   const handleProxy = {
-    admit(id) { if (window._handle) window._handle.admit(id); },
-    reject(id) { if (window._handle) window._handle.reject(id); },
+    admit(id) { if (sessionHandle) sessionHandle.admit(id); },
+    reject(id) { if (sessionHandle) sessionHandle.reject(id); },
   };
 
   function renderEntry(entry) {
@@ -55,8 +56,10 @@
   }
 
   let controlsHandle = null;
-
-  window.signallingClient.connectTeacher({
+  // Session handle is closure-scoped (not on window). renderEntry's
+  // Admit/Reject buttons read it via handleProxy, which is also
+  // closure-scoped below.
+  let sessionHandle = null;
     slug,
     onLobbyUpdate(entries) {
       listEl.replaceChildren();
@@ -72,7 +75,7 @@
       controlsHandle = window.sbControls.wireControls({
         audioTrack,
         videoTrack,
-        onHangup() { if (window._handle) window._handle.hangup(); },
+        onHangup() { if (sessionHandle) sessionHandle.hangup(); },
       });
       dataChannel.addEventListener('message', (e) => {
         statusEl.textContent = `Student says: ${e.data}`;
@@ -102,6 +105,6 @@
       if (reconnectBanner) reconnectBanner.hidden = !visible;
     },
   }).then((h) => {
-    window._handle = h;
+    sessionHandle = h;
   });
 })();

@@ -11,7 +11,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { dispatchRemoteTrack, acquireMedia, teardownMedia } =
+const { dispatchRemoteTrack, acquireMedia, teardownMedia, makeTeardown } =
   require('../signalling.js');
 
 // --- dispatchRemoteTrack (5 tests) -----------------------------------------
@@ -198,12 +198,11 @@ test('teardownMedia with empty media object: detaches both, stops nothing', () =
 });
 
 // --- Sprint 4 §5.3 carry-over: makeTeardown calls session.stopAll ---------
+// Exercises the REAL production makeTeardown (exported from signalling.js),
+// not a replica — a deliberate regression in the production function must
+// flip these assertions.
 
-test('teardown calls session.stopAll (Sprint 4 regression guard)', () => {
-  // The signalling.js makeTeardown helper is not exported; pin the
-  // contract by replicating the same call sequence. Any future refactor
-  // of makeTeardown must keep session.stopAll as the first call and must
-  // null the ref so a second invocation is idempotent.
+test('makeTeardown (real): calls session.stopAll exactly once and clears ref', () => {
   let stopAllCalls = 0;
   const refs = {
     session: { stopAll: () => { stopAllCalls++; } },
@@ -212,19 +211,39 @@ test('teardown calls session.stopAll (Sprint 4 regression guard)', () => {
     pc: { close: () => {} },
     dataChannel: {},
   };
-  function makeTeardownLocal(r) {
-    return function () {
-      if (r.session) { try { r.session.stopAll(); } catch (_) {} r.session = null; }
-      if (r.overlay) { try { r.overlay.stop(); } catch (_) {} r.overlay = null; }
-      if (r.media) { try { r.media.teardown(); } catch (_) {} r.media = null; }
-      if (r.pc) { try { r.pc.close(); } catch (_) {} r.pc = null; }
-      r.dataChannel = null;
-    };
-  }
-  const teardown = makeTeardownLocal(refs);
+  const teardown = makeTeardown(refs);
   teardown();
   assert.equal(stopAllCalls, 1, 'stopAll called exactly once');
   assert.equal(refs.session, null, 'session ref cleared');
   teardown();
   assert.equal(stopAllCalls, 1, 'stopAll not called again after teardown');
+});
+
+test('makeTeardown (real): call order is session → overlay → media → pc', () => {
+  const order = [];
+  const refs = {
+    session: { stopAll: () => order.push('session') },
+    overlay: { stop: () => order.push('overlay') },
+    media: { teardown: () => order.push('media') },
+    pc: { close: () => order.push('pc') },
+    dataChannel: {},
+  };
+  makeTeardown(refs)();
+  assert.deepEqual(order, ['session', 'overlay', 'media', 'pc']);
+  assert.equal(refs.dataChannel, null);
+});
+
+test('makeTeardown (real): rethrowing session.stopAll does not block the rest', () => {
+  let overlayStopped = false, mediaTorn = false, pcClosed = false;
+  const refs = {
+    session: { stopAll: () => { throw new Error('boom'); } },
+    overlay: { stop: () => { overlayStopped = true; } },
+    media: { teardown: () => { mediaTorn = true; } },
+    pc: { close: () => { pcClosed = true; } },
+    dataChannel: {},
+  };
+  assert.doesNotThrow(() => makeTeardown(refs)());
+  assert.equal(overlayStopped, true);
+  assert.equal(mediaTorn, true);
+  assert.equal(pcClosed, true);
 });

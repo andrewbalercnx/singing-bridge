@@ -33,7 +33,7 @@ function drive(state, sampleFn, role, ticks) {
   let s = state;
   let lastActions = [];
   for (let i = 0; i < ticks; i++) {
-    const res = decideNextRung(s, [sampleFn('video'), sampleFn('audio')], role);
+    const res = decideNextRung(s, [sampleFn('video'), sampleFn('audio')]);
     s = res.next;
     lastActions = res.actions;
   }
@@ -86,8 +86,8 @@ test('#4 decideNextRung is pure (same input → deep-equal output)', () => {
   for (const role of roles) {
     for (const s of samples) {
       const state = initLadderState(role);
-      const a = decideNextRung(state, s, role);
-      const b = decideNextRung(state, s, role);
+      const a = decideNextRung(state, s);
+      const b = decideNextRung(state, s);
       assert.deepEqual(a, b);
     }
   }
@@ -142,7 +142,7 @@ test('#6b teacher: audio advances after video exhausted; no floor_violation emit
   let sawFloorViolation = false;
   // Drive enough bad ticks to reach teacher audio terminal rung (3).
   for (let i = 0; i < DEGRADE_SAMPLES * aLen + FLOOR_SAMPLES + 4; i++) {
-    const r = decideNextRung(s, [bad('video'), bad('audio')], 'teacher');
+    const r = decideNextRung(s, [bad('video'), bad('audio')]);
     s = r.next;
     if (r.actions.some((a) => a.type === 'floor_violation')) sawFloorViolation = true;
   }
@@ -157,7 +157,7 @@ test('#7 hysteresis: alternating good/bad for 20 ticks does not change rungs', (
   let s = initLadderState('student');
   for (let i = 0; i < 20; i++) {
     const sample = i % 2 === 0 ? bad : good;
-    const r = decideNextRung(s, [sample('video'), sample('audio')], 'student');
+    const r = decideNextRung(s, [sample('video'), sample('audio')]);
     s = r.next;
   }
   assert.equal(s.videoRung, 0);
@@ -195,7 +195,7 @@ test('#9 student: floorBreachStreak emits exactly one floor_violation', () => {
   // floor_violation fires after FLOOR_SAMPLES - 1 more bad ticks.
   let violations = 0;
   for (let i = 0; i < FLOOR_SAMPLES + 10; i++) {
-    const r = decideNextRung(s, [bad('video'), bad('audio')], 'student');
+    const r = decideNextRung(s, [bad('video'), bad('audio')]);
     s = r.next;
     violations += r.actions.filter((a) => a.type === 'floor_violation').length;
   }
@@ -303,7 +303,7 @@ test('§5.2 decideNextRung with null lossFraction: no rung change, no crash', ()
   const sample = { kind: 'video', dir: 'outbound', lossFraction: null, rttMs: null };
   let cur = s;
   for (let i = 0; i < DEGRADE_SAMPLES + 2; i++) {
-    const r = decideNextRung(cur, [sample, { ...sample, kind: 'audio' }], 'student');
+    const r = decideNextRung(cur, [sample, { ...sample, kind: 'audio' }]);
     cur = r.next;
   }
   assert.equal(cur.videoRung, 0);
@@ -315,7 +315,7 @@ test('§5.2 decideNextRung with oversized rung index: clamped, no throw', () => 
   s.videoRung = 999; // simulate corruption
   s.audioRung = 999;
   assert.doesNotThrow(() => {
-    const r = decideNextRung(s, [bad('video'), bad('audio')], 'student');
+    const r = decideNextRung(s, [bad('video'), bad('audio')]);
     assert.ok(r.next.videoRung < LADDER.studentVideo.length);
     assert.ok(r.next.audioRung < LADDER.studentAudio.length);
   });
@@ -325,7 +325,7 @@ test('§5.2 teacher state never advances studentAudio ladder', () => {
   // Drive enough bad ticks to exhaust every teacher rung.
   let s = initLadderState('teacher');
   for (let i = 0; i < 100; i++) {
-    const r = decideNextRung(s, [bad('video'), bad('audio')], 'teacher');
+    const r = decideNextRung(s, [bad('video'), bad('audio')]);
     s = r.next;
   }
   assert.equal(s.role, 'teacher');
@@ -336,17 +336,51 @@ test('§5.2 decideNextRung preserves role through transitions', () => {
   for (const role of ['student', 'teacher']) {
     let s = initLadderState(role);
     for (let i = 0; i < 10; i++) {
-      const r = decideNextRung(s, [bad('video'), bad('audio')], role);
+      const r = decideNextRung(s, [bad('video'), bad('audio')]);
       s = r.next;
       assert.equal(s.role, role);
     }
   }
 });
 
+test('floorViolationEmitted resets on sustained good audio and re-fires on next streak', () => {
+  // Prime to studentAudio rung 1 then emit floor_violation.
+  const vLen = LADDER.studentVideo.length;
+  let s = initLadderState('student');
+  s = drive(s, bad, 'student', DEGRADE_SAMPLES * (vLen - 1)).state;
+  s = drive(s, bad, 'student', DEGRADE_SAMPLES).state;
+  // Drive enough bad ticks to trip the first floor_violation.
+  let firstEmitted = 0;
+  for (let i = 0; i < FLOOR_SAMPLES + 2; i++) {
+    const r = decideNextRung(s, [bad('video'), bad('audio')]);
+    s = r.next;
+    firstEmitted += r.actions.filter((a) => a.type === 'floor_violation').length;
+  }
+  assert.equal(firstEmitted, 1);
+  assert.equal(s.floorViolationEmitted, true);
+  // Now feed sustained good audio. The streak resets; floorViolationEmitted
+  // resets to false the first time a good sample is observed at the floor rung.
+  // (Video still bad — audio rung stays terminal, which is exactly the
+  // intersection in which the reset applies.)
+  const goodAudioBadVideo = [bad('video'), good('audio')];
+  const r = decideNextRung(s, goodAudioBadVideo);
+  s = r.next;
+  assert.equal(s.floorBreachStreak, 0);
+  assert.equal(s.floorViolationEmitted, false);
+  // Now start a NEW streak of bad audio — should re-fire once.
+  let secondEmitted = 0;
+  for (let i = 0; i < FLOOR_SAMPLES + 2; i++) {
+    const r2 = decideNextRung(s, [bad('video'), bad('audio')]);
+    s = r2.next;
+    secondEmitted += r2.actions.filter((a) => a.type === 'floor_violation').length;
+  }
+  assert.equal(secondEmitted, 1, 'second floor_violation fires after reset');
+});
+
 test('§5.2 actions never target track.enabled', () => {
   let s = initLadderState('student');
   for (let i = 0; i < 30; i++) {
-    const r = decideNextRung(s, [bad('video'), bad('audio')], 'student');
+    const r = decideNextRung(s, [bad('video'), bad('audio')]);
     s = r.next;
     for (const a of r.actions) {
       assert.ok(!/^setTrackEnabled/.test(a.type), `unexpected action type ${a.type}`);

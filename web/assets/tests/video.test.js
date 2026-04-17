@@ -2,7 +2,7 @@
 // Purpose: Node tests for the pure video helpers (hasVideoTrack,
 //          orderCodecs). Browser wrappers are DOM-only and covered
 //          by the manual two-machine check.
-// Last updated: Sprint 3 (2026-04-17) -- initial implementation
+// Last updated: Sprint 4 (2026-04-17) -- +verifyVideoFeedback tests
 
 'use strict';
 

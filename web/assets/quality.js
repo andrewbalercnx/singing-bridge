@@ -120,78 +120,82 @@
 
   // --- Pure API -----------------------------------------------------------
 
+  // Pure helper: find the remote-inbound report that corresponds to the
+  // given outbound report, by localId or ssrc. Returns null if absent.
+  function matchRemoteInbound(remotes, outR) {
+    for (var i = 0; i < remotes.length; i++) {
+      var ri = remotes[i];
+      if (ri.localId === outR.id || ri.ssrc === outR.ssrc) return ri;
+    }
+    return null;
+  }
+
+  // Build one outbound Sample (or null if no outbound report for this kind).
+  function outboundSample(stats, prevStats, kind) {
+    var candidates = collectOutbound(stats, kind);
+    if (candidates.length === 0) return null;
+    var outR = pickReport(candidates, 'packetsSent');
+    var remoteInbound = matchRemoteInbound(collectRemoteInbound(stats, kind), outR);
+    var prevOut = prevStats ? findByIdInPrev(prevStats, outR.id) : null;
+    var lossFraction = null;
+    var rttMs = null;
+    if (remoteInbound) {
+      if (typeof remoteInbound.fractionLost === 'number') {
+        lossFraction = remoteInbound.fractionLost;
+      } else if (
+        typeof remoteInbound.packetsLost === 'number' &&
+        typeof outR.packetsSent === 'number' &&
+        outR.packetsSent > 0
+      ) {
+        lossFraction = remoteInbound.packetsLost / outR.packetsSent;
+      }
+      if (typeof remoteInbound.roundTripTime === 'number') {
+        rttMs = remoteInbound.roundTripTime * 1000;
+      }
+    }
+    return {
+      kind: kind,
+      dir: 'outbound',
+      lossFraction: lossFraction,
+      rttMs: rttMs,
+      outBitrate: bitrateDelta(outR, prevOut, 'bytesSent'),
+      inBitrate: 0,
+    };
+  }
+
+  // Build one inbound Sample (or null if no inbound report for this kind).
+  function inboundSample(stats, prevStats, kind) {
+    var candidates = collectInbound(stats, kind);
+    if (candidates.length === 0) return null;
+    var inR = pickReport(candidates, 'packetsReceived');
+    var prevIn = prevStats ? findByIdInPrev(prevStats, inR.id) : null;
+    var inLoss = null;
+    if (
+      typeof inR.packetsLost === 'number' &&
+      typeof inR.packetsReceived === 'number' &&
+      inR.packetsReceived > 0
+    ) {
+      inLoss = inR.packetsLost / (inR.packetsLost + inR.packetsReceived);
+    }
+    return {
+      kind: kind,
+      dir: 'inbound',
+      lossFraction: inLoss,
+      rttMs: null,
+      outBitrate: 0,
+      inBitrate: bitrateDelta(inR, prevIn, 'bytesReceived'),
+    };
+  }
+
   function summariseStats(stats, prevStats) {
+    if (!stats) return [];
     var samples = [];
-    if (!stats) return samples;
-
     ['audio', 'video'].forEach(function (kind) {
-      // Outbound sample: pick by highest packetsSent.
-      var outCandidates = collectOutbound(stats, kind);
-      if (outCandidates.length > 0) {
-        var outR = pickReport(outCandidates, 'packetsSent');
-        // Find matching remote-inbound report by localId or by ssrc.
-        var remoteInbound = null;
-        var remotes = collectRemoteInbound(stats, kind);
-        for (var i = 0; i < remotes.length; i++) {
-          var ri = remotes[i];
-          if (ri.localId === outR.id || ri.ssrc === outR.ssrc) {
-            remoteInbound = ri;
-            break;
-          }
-        }
-        var prevOut = prevStats ? findByIdInPrev(prevStats, outR.id) : null;
-        var outBitrate = bitrateDelta(outR, prevOut, 'bytesSent');
-        var lossFraction = null;
-        var rttMs = null;
-        if (remoteInbound) {
-          if (typeof remoteInbound.fractionLost === 'number') {
-            lossFraction = remoteInbound.fractionLost;
-          } else if (
-            typeof remoteInbound.packetsLost === 'number' &&
-            typeof outR.packetsSent === 'number' &&
-            outR.packetsSent > 0
-          ) {
-            lossFraction = remoteInbound.packetsLost / outR.packetsSent;
-          }
-          if (typeof remoteInbound.roundTripTime === 'number') {
-            rttMs = remoteInbound.roundTripTime * 1000;
-          }
-        }
-        samples.push({
-          kind: kind,
-          dir: 'outbound',
-          lossFraction: lossFraction,
-          rttMs: rttMs,
-          outBitrate: outBitrate,
-          inBitrate: 0,
-        });
-      }
-
-      // Inbound sample: pick by highest packetsReceived.
-      var inCandidates = collectInbound(stats, kind);
-      if (inCandidates.length > 0) {
-        var inR = pickReport(inCandidates, 'packetsReceived');
-        var prevIn = prevStats ? findByIdInPrev(prevStats, inR.id) : null;
-        var inBitrate = bitrateDelta(inR, prevIn, 'bytesReceived');
-        var inLoss = null;
-        if (
-          typeof inR.packetsLost === 'number' &&
-          typeof inR.packetsReceived === 'number' &&
-          inR.packetsReceived > 0
-        ) {
-          inLoss = inR.packetsLost / (inR.packetsLost + inR.packetsReceived);
-        }
-        samples.push({
-          kind: kind,
-          dir: 'inbound',
-          lossFraction: inLoss,
-          rttMs: null,
-          outBitrate: 0,
-          inBitrate: inBitrate,
-        });
-      }
+      var o = outboundSample(stats, prevStats, kind);
+      if (o) samples.push(o);
+      var i = inboundSample(stats, prevStats, kind);
+      if (i) samples.push(i);
     });
-
     return samples;
   }
 

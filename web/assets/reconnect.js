@@ -11,11 +11,12 @@
 //          STRAIGHT_TO_FAILED, CLOSED_FROM_HEALTHY,
 //          initReconnectState, onIceStateEvent (pure);
 //          startReconnectWatcher (browser-only, window.sbReconnect).
-// Depends: none (pure logic); pc for the browser wrapper only.
+// Depends: none (pure logic); pc + setTimeout/clearTimeout for the
+//          browser wrapper only.
 // Invariants: giveup is terminal (effect stays 'none' on any further
-//             event); every (phase, iceState) pair is defined;
-//             timers are scheduled and cleared via injected clock —
-//             pure function NEVER touches the real clock.
+//             event); every (phase, iceState) pair is defined; the
+//             pure function is time-independent (no nowMs param);
+//             timer scheduling is entirely the caller's responsibility.
 // Last updated: Sprint 4 (2026-04-17) -- initial implementation
 
 (function (root, factory) {
@@ -42,7 +43,6 @@
   // so tests can inject a fake.
   function startReconnectWatcher(pc, onEffect, clock) {
     clock = clock || {
-      now: Date.now,
       setTimeout: setTimeout,
       clearTimeout: clearTimeout,
     };
@@ -77,7 +77,7 @@
     }
 
     function handle(iceState) {
-      var res = mod.onIceStateEvent(state, iceState, clock.now());
+      var res = mod.onIceStateEvent(state, iceState);
       state = res.next;
       fireEffect(res.effect);
     }
@@ -101,16 +101,18 @@
   var ICE_RESTART_MS = 5000;
 
   function initReconnectState() {
-    return { phase: 'healthy', retryCount: 0 };
+    return { phase: 'healthy' };
   }
 
-  // Pure state transition. Returns { next, effect }.
-  function onIceStateEvent(prev, iceState, nowMs) {
+  // Pure state transition. Returns { next, effect }. No clock needed —
+  // the state machine is time-independent; timers are scheduled by the
+  // caller in response to `schedule_watch` / `call_restart_ice` effects.
+  function onIceStateEvent(prev, iceState) {
     var phase = prev.phase;
 
     // Terminal state: any event returns 'none'.
     if (phase === 'giveup') {
-      return { next: { phase: 'giveup', retryCount: prev.retryCount }, effect: 'none' };
+      return { next: { phase: 'giveup' }, effect: 'none' };
     }
 
     // healthy row
@@ -119,15 +121,9 @@
         case 'new': case 'checking': case 'connected': case 'completed':
           return { next: prev, effect: 'none' };
         case 'disconnected':
-          return {
-            next: { phase: 'watching', retryCount: prev.retryCount },
-            effect: 'schedule_watch',
-          };
+          return { next: { phase: 'watching' }, effect: 'schedule_watch' };
         case 'failed': case 'closed':
-          return {
-            next: { phase: 'giveup', retryCount: prev.retryCount },
-            effect: 'give_up',
-          };
+          return { next: { phase: 'giveup' }, effect: 'give_up' };
       }
     }
 
@@ -137,23 +133,14 @@
         case 'new': case 'checking':
           return { next: prev, effect: 'none' };
         case 'connected': case 'completed':
-          return {
-            next: { phase: 'healthy', retryCount: prev.retryCount },
-            effect: 'cancel_timer',
-          };
+          return { next: { phase: 'healthy' }, effect: 'cancel_timer' };
         case 'disconnected':
           // Idempotent — no double timer.
           return { next: prev, effect: 'none' };
         case 'failed': case 'closed':
-          return {
-            next: { phase: 'giveup', retryCount: prev.retryCount },
-            effect: 'give_up',
-          };
+          return { next: { phase: 'giveup' }, effect: 'give_up' };
         case '<watch-timer-fire>':
-          return {
-            next: { phase: 'restarting', retryCount: prev.retryCount + 1 },
-            effect: 'call_restart_ice',
-          };
+          return { next: { phase: 'restarting' }, effect: 'call_restart_ice' };
       }
     }
 
@@ -163,15 +150,9 @@
         case 'new': case 'checking': case 'disconnected':
           return { next: prev, effect: 'none' };
         case 'connected': case 'completed':
-          return {
-            next: { phase: 'healthy', retryCount: prev.retryCount },
-            effect: 'cancel_timer',
-          };
+          return { next: { phase: 'healthy' }, effect: 'cancel_timer' };
         case 'failed': case 'closed': case '<restart-timer-fire>':
-          return {
-            next: { phase: 'giveup', retryCount: prev.retryCount },
-            effect: 'give_up',
-          };
+          return { next: { phase: 'giveup' }, effect: 'give_up' };
       }
     }
 

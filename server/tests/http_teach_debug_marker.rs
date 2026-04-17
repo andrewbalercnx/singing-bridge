@@ -36,10 +36,10 @@ async fn test_dev_teach_html_carries_debug_marker_student_view() {
     assert!(body.contains(r#"id="remote-video""#), "student.html missing #remote-video");
     assert!(body.contains(r#"id="local-video""#), "student.html missing #local-video");
     // playsinline on both video elements (R2 iOS full-screen risk).
-    let remote_idx = body.find(r#"id="remote-video""#).unwrap();
-    let local_idx = body.find(r#"id="local-video""#).unwrap();
-    let remote_tag_end = remote_idx + body[remote_idx..].find('>').unwrap();
-    let local_tag_end = local_idx + body[local_idx..].find('>').unwrap();
+    let remote_idx = body.find(r#"id="remote-video""#).expect("student.html missing #remote-video");
+    let local_idx = body.find(r#"id="local-video""#).expect("student.html missing #local-video");
+    let remote_tag_end = remote_idx + body[remote_idx..].find('>').expect("#remote-video tag unclosed");
+    let local_tag_end = local_idx + body[local_idx..].find('>').expect("#local-video tag unclosed");
     assert!(
         body[remote_idx..remote_tag_end].contains("playsinline"),
         "student.html #remote-video missing playsinline"
@@ -100,10 +100,10 @@ async fn test_dev_teach_html_carries_debug_marker_teacher_view() {
     assert!(body.contains(r#"id="unmute-audio""#), "teacher.html missing #unmute-audio");
     assert!(body.contains(r#"id="remote-video""#), "teacher.html missing #remote-video");
     assert!(body.contains(r#"id="local-video""#), "teacher.html missing #local-video");
-    let remote_idx = body.find(r#"id="remote-video""#).unwrap();
-    let local_idx = body.find(r#"id="local-video""#).unwrap();
-    let remote_tag_end = remote_idx + body[remote_idx..].find('>').unwrap();
-    let local_tag_end = local_idx + body[local_idx..].find('>').unwrap();
+    let remote_idx = body.find(r#"id="remote-video""#).expect("teacher.html missing #remote-video");
+    let local_idx = body.find(r#"id="local-video""#).expect("teacher.html missing #local-video");
+    let remote_tag_end = remote_idx + body[remote_idx..].find('>').expect("#remote-video tag unclosed");
+    let local_tag_end = local_idx + body[local_idx..].find('>').expect("#local-video tag unclosed");
     assert!(
         body[remote_idx..remote_tag_end].contains("playsinline"),
         "teacher.html #remote-video missing playsinline"
@@ -124,6 +124,16 @@ async fn test_dev_teach_html_carries_debug_marker_teacher_view() {
     assert!(body.contains(r#"id="quality-badge""#), "teacher.html missing #quality-badge");
     assert!(body.contains(r#"id="reconnect-banner""#), "teacher.html missing #reconnect-banner");
     assert!(body.contains(r#"id="floor-violation""#), "teacher.html missing #floor-violation");
+    // Sprint 4: script load order must match student.html.
+    let t_adapt = body.find(r#"src="/assets/adapt.js""#).expect("teacher.html missing adapt.js");
+    let t_quality = body.find(r#"src="/assets/quality.js""#).expect("teacher.html missing quality.js");
+    let t_reconnect = body.find(r#"src="/assets/reconnect.js""#).expect("teacher.html missing reconnect.js");
+    let t_sessioncore = body.find(r#"src="/assets/session-core.js""#).expect("teacher.html missing session-core.js");
+    let t_signalling = body.find(r#"src="/assets/signalling.js""#).expect("teacher.html missing signalling.js");
+    assert!(t_adapt < t_quality, "teacher: adapt.js must load before quality.js");
+    assert!(t_quality < t_reconnect, "teacher: quality.js must load before reconnect.js");
+    assert!(t_reconnect < t_sessioncore, "teacher: reconnect.js must load before session-core.js");
+    assert!(t_sessioncore < t_signalling, "teacher: session-core.js must load before signalling.js");
     app.shutdown().await;
 }
 
@@ -148,6 +158,11 @@ async fn test_prod_teach_html_has_no_debug_marker() {
         !body.contains(r#"<meta name="sb-debug" content="1""#),
         "prod view must not carry the injected meta tag"
     );
+    // Sprint 4: the UI elements must be present in prod too — debug gating
+    // only suppresses the dev-only overlay meta tag, not real UI.
+    assert!(body.contains(r#"id="quality-badge""#), "prod student view missing #quality-badge");
+    assert!(body.contains(r#"id="reconnect-banner""#), "prod student view missing #reconnect-banner");
+    assert!(body.contains(r#"id="floor-violation""#), "prod student view missing #floor-violation");
     drop(cookie);
     app.shutdown().await;
 }

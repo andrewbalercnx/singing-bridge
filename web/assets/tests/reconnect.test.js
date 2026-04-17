@@ -22,7 +22,7 @@ function replay(seq) {
   let s = initReconnectState();
   const trace = [];
   for (const ev of seq) {
-    const r = onIceStateEvent(s, ev, 0);
+    const r = onIceStateEvent(s, ev);
     s = r.next;
     trace.push({ event: ev, phase: s.phase, effect: r.effect });
   }
@@ -81,12 +81,45 @@ test('#28 repeated disconnected: second returns effect "none"', () => {
 // --- §5.1 #29 Pure function does not encode role --------------------------
 
 test('#29 pure function emits call_restart_ice regardless of role', () => {
-  // The pure function has no `role` parameter at all; this test simply
-  // confirms the contract: same input → same effect, always call_restart_ice.
-  const r1 = onIceStateEvent({ phase: 'watching', retryCount: 0 }, '<watch-timer-fire>', 0);
-  const r2 = onIceStateEvent({ phase: 'watching', retryCount: 0 }, '<watch-timer-fire>', 0);
+  // The pure function has no `role` parameter; this test confirms the
+  // contract: same input → same effect, always call_restart_ice.
+  const r1 = onIceStateEvent({ phase: 'watching' }, '<watch-timer-fire>');
+  const r2 = onIceStateEvent({ phase: 'watching' }, '<watch-timer-fire>');
   assert.equal(r1.effect, 'call_restart_ice');
   assert.equal(r2.effect, 'call_restart_ice');
+});
+
+// --- Direct arc coverage for every failure transition ---------------------
+
+test('watching + failed → giveup (direct arc)', () => {
+  const r = onIceStateEvent({ phase: 'watching' }, 'failed');
+  assert.equal(r.next.phase, 'giveup');
+  assert.equal(r.effect, 'give_up');
+});
+
+test('watching + closed → giveup (direct arc)', () => {
+  const r = onIceStateEvent({ phase: 'watching' }, 'closed');
+  assert.equal(r.next.phase, 'giveup');
+  assert.equal(r.effect, 'give_up');
+});
+
+test('restarting + failed → giveup (direct arc)', () => {
+  const r = onIceStateEvent({ phase: 'restarting' }, 'failed');
+  assert.equal(r.next.phase, 'giveup');
+  assert.equal(r.effect, 'give_up');
+});
+
+test('restarting + closed → giveup (direct arc)', () => {
+  const r = onIceStateEvent({ phase: 'restarting' }, 'closed');
+  assert.equal(r.next.phase, 'giveup');
+  assert.equal(r.effect, 'give_up');
+});
+
+test('state has no retryCount field (dead-field guard)', () => {
+  const s = initReconnectState();
+  assert.equal('retryCount' in s, false);
+  const r = onIceStateEvent(s, 'disconnected');
+  assert.equal('retryCount' in r.next, false);
 });
 
 // --- §5.2 failure paths --------------------------------------------------

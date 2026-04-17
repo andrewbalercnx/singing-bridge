@@ -1,4 +1,4 @@
-"""File: template/scripts/indexers/typescript.py
+"""File: scripts/indexers/typescript.py
 
 Purpose: Tree-sitter indexer for TypeScript and JavaScript (.ts, .tsx,
 .js, .jsx). Populates symbols, imports, tests in the codegraph schema.

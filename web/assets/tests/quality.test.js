@@ -88,11 +88,20 @@ test('#23 qualityTierFromSummary([]) returns safe defaults', () => {
 
 // --- §5.1 #24 renderQualityBadge is textContent-only (regression guard) ---
 
-test('#24 renderQualityBadge writes textContent and className only (no innerHTML injection)', () => {
+test('#24 renderQualityBadge writes textContent and className only (no innerHTML injection)', (t) => {
   // Load the browser-side wrapper with a minimal window+document stand-in.
+  // Use t.after to restore globals even if the assertion throws.
+  const origWindow = global.window;
+  const origDocument = global.document;
+  t.after(() => {
+    if (origWindow === undefined) delete global.window;
+    else global.window = origWindow;
+    if (origDocument === undefined) delete global.document;
+    else global.document = origDocument;
+    delete require.cache[require.resolve('../quality.js')];
+  });
   global.window = {};
   global.document = {};
-  // Re-require the module to exercise the browser branch.
   delete require.cache[require.resolve('../quality.js')];
   require('../quality.js');
   const renderBadge = global.window.sbQuality.renderQualityBadge;
@@ -108,8 +117,6 @@ test('#24 renderQualityBadge writes textContent and className only (no innerHTML
   assert.ok(el.className.includes('fair'));
   // textContent path never rewrites innerHTML with angle-bracket content
   assert.equal(el.innerHTML, '<!-- initial marker -->');
-  delete global.window;
-  delete global.document;
 });
 
 // --- §5.2 Failure paths ---------------------------------------------------
@@ -132,4 +139,32 @@ test('§5.2 qualityTierFromSummary handles null lossFraction samples', () => {
   ];
   const r = qualityTierFromSummary(samples);
   assert.equal(r.tier, 'good');
+});
+
+test('§5.2 byte-counter reset: delta never goes negative', () => {
+  // Mock fixture: bytesSent "resets" (counter rolled over or stream swap).
+  const t0 = new Map([['OT', {
+    id: 'OT', type: 'outbound-rtp', kind: 'audio', ssrc: 1,
+    bytesSent: 500000, packetsSent: 1000,
+  }]]);
+  const t1 = new Map([['OT', {
+    id: 'OT', type: 'outbound-rtp', kind: 'audio', ssrc: 1,
+    bytesSent: 10000, packetsSent: 2000, // bytesSent went DOWN
+  }]]);
+  const samples = summariseStats(t1, t0);
+  const out = samples.find((s) => s.dir === 'outbound');
+  // Must not produce a negative bitrate; clamps at 0.
+  assert.ok(out.outBitrate >= 0);
+});
+
+test('§5.2 inbound-only summary: no outbound report present', () => {
+  const stats = new Map([['IN', {
+    id: 'IN', type: 'inbound-rtp', kind: 'audio', ssrc: 1,
+    bytesReceived: 100000, packetsReceived: 1000, packetsLost: 5,
+  }]]);
+  const samples = summariseStats(stats, null);
+  assert.equal(samples.length, 1);
+  assert.equal(samples[0].dir, 'inbound');
+  // qualityTierFromSummary only inspects outbound samples — returns safe.
+  assert.equal(qualityTierFromSummary(samples).tier, 'good');
 });

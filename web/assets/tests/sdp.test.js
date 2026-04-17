@@ -2,7 +2,7 @@
 // Purpose: Node-run property + failure-case suite for the SDP munger.
 //          Runs under `node --test` in CI (ubuntu-latest ships
 //          Node 18+, no install step required).
-// Last updated: Sprint 2 (2026-04-17) -- initial implementation
+// Last updated: Sprint 4 (2026-04-17) -- +FEC survival, video section invariance
 
 'use strict';
 

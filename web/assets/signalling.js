@@ -37,6 +37,7 @@
       dispatchRemoteTrack: mod.dispatchRemoteTrack,
       acquireMedia: mod.acquireMedia,
       teardownMedia: mod.teardownMedia,
+      makeTeardown: mod.makeTeardown,
     };
   }
 
@@ -78,6 +79,10 @@
   Signalling.prototype.close = function () { try { this.sock.close(); } catch (_) {} };
 
   function makePeerConnection() {
+    // Sprint 4 note: Google STUN is a pre-production placeholder. It leaks
+    // the client's public IP to Google once at ICE gather time and again
+    // on every ICE restart. Sprint 5 brings up coturn (ADR-0001 §Infra)
+    // at singing.rcnx.io and this will be swapped for our own STUN/TURN.
     return new RTCPeerConnection({
       iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
     });
@@ -95,7 +100,7 @@
     });
   }
 
-  async function wireBidirectionalMedia(pc, detect, role) {
+  async function wireBidirectionalMedia(pc, detect) {
     var acq = await mod.acquireMedia(window.sbAudio, window.sbVideo);
     var audio = acq.audio;
     var video = acq.video;
@@ -155,15 +160,10 @@
     };
   }
 
-  function makeTeardown(refs) {
-    return function () {
-      if (refs.session) { try { refs.session.stopAll(); } catch (_) {} refs.session = null; }
-      if (refs.overlay) { try { refs.overlay.stop(); } catch (_) {} refs.overlay = null; }
-      if (refs.media) { try { refs.media.teardown(); } catch (_) {} refs.media = null; }
-      if (refs.pc) { try { refs.pc.close(); } catch (_) {} refs.pc = null; }
-      refs.dataChannel = null;
-    };
-  }
+  // makeTeardown is defined in the pure factory (mod.makeTeardown) so it
+  // can be exercised by Node tests against the REAL function. The browser
+  // wrapper just uses it directly.
+  var makeTeardown = mod.makeTeardown;
 
   // Starts adapt/quality/reconnect via session-core.js and wires the
   // student-side ICE-restart re-offer into the existing signalling flow.
@@ -224,7 +224,7 @@
 
     sig.on('peer_connected', async function () {
       refs.pc = makePeerConnection();
-      refs.media = await wireBidirectionalMedia(refs.pc, detect, 'teacher');
+      refs.media = await wireBidirectionalMedia(refs.pc, detect);
       refs.overlay = window.sbDebug.startDebugOverlay(refs.pc, { localTrack: refs.media.audio.track });
       refs.pc.onicecandidate = function (ev) {
         if (ev.candidate) sig.send({ type: 'signal', to: 'student', payload: { candidate: ev.candidate } });
@@ -308,7 +308,7 @@
     });
     sig.on('peer_connected', async function () {
       refs.pc = makePeerConnection();
-      refs.media = await wireBidirectionalMedia(refs.pc, detect, 'student');
+      refs.media = await wireBidirectionalMedia(refs.pc, detect);
       refs.overlay = window.sbDebug.startDebugOverlay(refs.pc, { localTrack: refs.media.audio.track });
       refs.pc.onicecandidate = function (ev) {
         if (ev.candidate) sig.send({ type: 'signal', to: 'teacher', payload: { candidate: ev.candidate } });
@@ -395,9 +395,26 @@
     }
   }
 
+  // Pure: makeTeardown closes over the caller-supplied refs bag. Every
+  // method it calls is a plain invocation on whatever object is stored on
+  // the ref; it doesn't touch window, document, or RTCPeerConnection. The
+  // contract is strict: calls session.stopAll() first, nulls the ref, then
+  // overlay → media → pc; the dataChannel ref is cleared last. Idempotent —
+  // a second invocation is a no-op because every ref is now null.
+  function makeTeardown(refs) {
+    return function () {
+      if (refs.session) { try { refs.session.stopAll(); } catch (_) {} refs.session = null; }
+      if (refs.overlay) { try { refs.overlay.stop(); } catch (_) {} refs.overlay = null; }
+      if (refs.media) { try { refs.media.teardown(); } catch (_) {} refs.media = null; }
+      if (refs.pc) { try { refs.pc.close(); } catch (_) {} refs.pc = null; }
+      refs.dataChannel = null;
+    };
+  }
+
   return {
     dispatchRemoteTrack: dispatchRemoteTrack,
     acquireMedia: acquireMedia,
     teardownMedia: teardownMedia,
+    makeTeardown: makeTeardown,
   };
 });

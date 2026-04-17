@@ -15,7 +15,9 @@
 //             next.role === prev.role; student audio rung clamped
 //             at 1 (96 kbps floor); video rung advances to terminal
 //             before audio rung leaves 0; floor_violation action
-//             emitted at most once per streak (one-shot).
+//             emitted at most once per streak (guarded by
+//             state.floorViolationEmitted, cleared on a sustained
+//             good-audio reset — see stepFloorBreach).
 // Last updated: Sprint 4 (2026-04-17) -- initial implementation
 
 (function (root, factory) {
@@ -111,6 +113,123 @@
     return null;
   }
 
+  function cloneState(prev) {
+    return {
+      role: prev.role,
+      videoRung: prev.videoRung,
+      audioRung: prev.audioRung,
+      consecutiveBad: {
+        video: prev.consecutiveBad.video,
+        audio: prev.consecutiveBad.audio,
+      },
+      consecutiveGood: {
+        video: prev.consecutiveGood.video,
+        audio: prev.consecutiveGood.audio,
+      },
+      floorBreachStreak: prev.floorBreachStreak,
+      floorViolationEmitted: prev.floorViolationEmitted,
+    };
+  }
+
+  // Helper: update {bad,good} counters given one sample; returns {bad, good}
+  // as new values. Pure.
+  function updateStreak(bad, good, isBad, isGood) {
+    if (isBad) return { bad: bad + 1, good: 0 };
+    if (isGood) return { bad: 0, good: good + 1 };
+    return { bad: bad, good: good };
+  }
+
+  // Decide whether to step the video rung. Mutates `next` and pushes any
+  // emitted action. Returns nothing.
+  function stepVideoRung(next, videoSample, vKey, vTerminal, actions) {
+    var isBad = isBadSample(videoSample);
+    var isGood = isGoodSample(videoSample);
+    var upd = updateStreak(next.consecutiveBad.video, next.consecutiveGood.video, isBad, isGood);
+    next.consecutiveBad.video = upd.bad;
+    next.consecutiveGood.video = upd.good;
+    var changed = false;
+    if (upd.bad >= DEGRADE_SAMPLES && next.videoRung < vTerminal) {
+      next.videoRung += 1;
+      next.consecutiveBad.video = 0;
+      changed = true;
+    } else if (upd.good >= IMPROVE_SAMPLES && next.videoRung > 0) {
+      next.videoRung -= 1;
+      next.consecutiveGood.video = 0;
+      changed = true;
+    }
+    if (changed) {
+      actions.push({
+        type: 'setVideoEncoding',
+        params: encodingParamsForRung(vKey, next.videoRung),
+      });
+    }
+  }
+
+  // Decide whether to step the audio rung. Mutates `next` and pushes any
+  // emitted action. Audio only advances when video is already at terminal.
+  function stepAudioRung(next, audioSample, videoAtTerminal, aKey, aTerminal, actions) {
+    var isBad = isBadSample(audioSample);
+    var isGood = isGoodSample(audioSample);
+    if (videoAtTerminal && isBad) {
+      next.consecutiveBad.audio += 1;
+      next.consecutiveGood.audio = 0;
+    } else if (isGood) {
+      next.consecutiveBad.audio = 0;
+      next.consecutiveGood.audio += 1;
+    } else if (!videoAtTerminal) {
+      next.consecutiveBad.audio = 0;
+      // consecutiveGood stays so we can upgrade when things recover.
+    }
+    var changed = false;
+    if (
+      videoAtTerminal &&
+      next.consecutiveBad.audio >= DEGRADE_SAMPLES &&
+      next.audioRung < aTerminal
+    ) {
+      next.audioRung += 1;
+      next.consecutiveBad.audio = 0;
+      changed = true;
+    } else if (
+      next.consecutiveGood.audio >= IMPROVE_SAMPLES &&
+      next.audioRung > 0
+    ) {
+      next.audioRung -= 1;
+      next.consecutiveGood.audio = 0;
+      changed = true;
+    }
+    if (changed) {
+      actions.push({
+        type: 'setAudioEncoding',
+        params: encodingParamsForRung(aKey, next.audioRung),
+      });
+    }
+  }
+
+  // Student-only: track the floor-breach streak and emit the one-shot
+  // floor_violation action. Audio at student terminal rung + sustained
+  // bad samples are the only way this trips. Mutates `next`.
+  function stepFloorBreach(next, audioSample, aTerminal, actions) {
+    if (next.role !== 'student' || next.audioRung < aTerminal) {
+      next.floorBreachStreak = 0;
+      return;
+    }
+    var isBad = isBadSample(audioSample);
+    var isGood = isGoodSample(audioSample);
+    if (isBad) {
+      next.floorBreachStreak += 1;
+    } else if (isGood) {
+      next.floorBreachStreak = 0;
+      next.floorViolationEmitted = false;
+    }
+    if (
+      next.floorBreachStreak >= FLOOR_SAMPLES &&
+      !next.floorViolationEmitted
+    ) {
+      actions.push({ type: 'floor_violation' });
+      next.floorViolationEmitted = true;
+    }
+  }
+
   // --- Public API ----------------------------------------------------------
 
   function initLadderState(role) {
@@ -157,123 +276,26 @@
     return state.floorBreachStreak >= FLOOR_SAMPLES;
   }
 
-  function decideNextRung(prev, outboundSamples, role) {
-    var next = {
-      role: prev.role,
-      videoRung: prev.videoRung,
-      audioRung: prev.audioRung,
-      consecutiveBad: {
-        video: prev.consecutiveBad.video,
-        audio: prev.consecutiveBad.audio,
-      },
-      consecutiveGood: {
-        video: prev.consecutiveGood.video,
-        audio: prev.consecutiveGood.audio,
-      },
-      floorBreachStreak: prev.floorBreachStreak,
-      floorViolationEmitted: prev.floorViolationEmitted,
-    };
+  // decideNextRung(prev, outboundSamples): role is derived from prev.role.
+  // Delegates each sub-decision to a helper so this function stays short.
+  function decideNextRung(prev, outboundSamples) {
+    var next = cloneState(prev);
     var actions = [];
 
-    // Clamp possibly-corrupted rung indices.
     var vKey = videoLadderKey(next.role);
     var aKey = audioLadderKey(next.role);
-    next.videoRung = clamp(next.videoRung, 0, LADDER[vKey].length - 1);
-    next.audioRung = clamp(next.audioRung, 0, LADDER[aKey].length - 1);
+    var vTerminal = LADDER[vKey].length - 1;
+    var aTerminal = LADDER[aKey].length - 1;
+    next.videoRung = clamp(next.videoRung, 0, vTerminal);
+    next.audioRung = clamp(next.audioRung, 0, aTerminal);
 
     var videoSample = pickSample(outboundSamples, 'video');
     var audioSample = pickSample(outboundSamples, 'audio');
 
-    // --- Video rung transitions --------------------------------------------
-    var vTerminal = LADDER[vKey].length - 1;
-    var videoBad = isBadSample(videoSample);
-    var videoGood = isGoodSample(videoSample);
-    if (videoBad) {
-      next.consecutiveBad.video += 1;
-      next.consecutiveGood.video = 0;
-    } else if (videoGood) {
-      next.consecutiveGood.video += 1;
-      next.consecutiveBad.video = 0;
-    }
-    var videoChanged = false;
-    if (next.consecutiveBad.video >= DEGRADE_SAMPLES && next.videoRung < vTerminal) {
-      next.videoRung += 1;
-      next.consecutiveBad.video = 0;
-      videoChanged = true;
-    } else if (next.consecutiveGood.video >= IMPROVE_SAMPLES && next.videoRung > 0) {
-      next.videoRung -= 1;
-      next.consecutiveGood.video = 0;
-      videoChanged = true;
-    }
-    if (videoChanged) {
-      actions.push({
-        type: 'setVideoEncoding',
-        params: encodingParamsForRung(vKey, next.videoRung),
-      });
-    }
-
-    // --- Audio rung transitions (only after video is at terminal) ----------
+    stepVideoRung(next, videoSample, vKey, vTerminal, actions);
     var videoAtTerminal = next.videoRung >= vTerminal;
-    var audioBad = isBadSample(audioSample);
-    var audioGood = isGoodSample(audioSample);
-    var aTerminal = LADDER[aKey].length - 1;
-    // Track streaks only when we're allowed to degrade audio.
-    if (videoAtTerminal && audioBad) {
-      next.consecutiveBad.audio += 1;
-      next.consecutiveGood.audio = 0;
-    } else if (audioGood) {
-      next.consecutiveGood.audio += 1;
-      next.consecutiveBad.audio = 0;
-    } else if (!videoAtTerminal) {
-      // Video still degrading — hold audio counters.
-      next.consecutiveBad.audio = 0;
-      // consecutiveGood stays so we can upgrade when things recover.
-    }
-
-    var audioChanged = false;
-    if (
-      videoAtTerminal &&
-      next.consecutiveBad.audio >= DEGRADE_SAMPLES &&
-      next.audioRung < aTerminal
-    ) {
-      next.audioRung += 1;
-      next.consecutiveBad.audio = 0;
-      audioChanged = true;
-    } else if (
-      next.consecutiveGood.audio >= IMPROVE_SAMPLES &&
-      next.audioRung > 0
-    ) {
-      next.audioRung -= 1;
-      next.consecutiveGood.audio = 0;
-      audioChanged = true;
-    }
-    if (audioChanged) {
-      actions.push({
-        type: 'setAudioEncoding',
-        params: encodingParamsForRung(aKey, next.audioRung),
-      });
-    }
-
-    // --- Floor-breach streak (student only) --------------------------------
-    if (next.role === 'student' && next.audioRung >= aTerminal) {
-      // At the floor rung for student audio. Persistent bad audio here is
-      // the "your connection can't support this lesson" signal.
-      if (audioBad) {
-        next.floorBreachStreak += 1;
-      } else if (audioGood) {
-        next.floorBreachStreak = 0;
-        next.floorViolationEmitted = false;
-      }
-      if (
-        next.floorBreachStreak >= FLOOR_SAMPLES &&
-        !next.floorViolationEmitted
-      ) {
-        actions.push({ type: 'floor_violation' });
-        next.floorViolationEmitted = true;
-      }
-    } else {
-      next.floorBreachStreak = 0;
-    }
+    stepAudioRung(next, audioSample, videoAtTerminal, aKey, aTerminal, actions);
+    stepFloorBreach(next, audioSample, aTerminal, actions);
 
     return { next: next, actions: actions };
   }

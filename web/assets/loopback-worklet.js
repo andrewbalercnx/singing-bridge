@@ -4,6 +4,12 @@
 //          SharedArrayBuffer — avoids the COOP/COEP requirement).
 // Role: Renders on the audio render thread; main-thread cross-
 //       correlation happens in loopback.js.
+// Exports: registers 'sb-capture' processor via registerProcessor
+// Depends: AudioWorklet global scope (no DOM, no network access)
+// Invariants: transfers ownership of each block's ArrayBuffer so the
+//             render thread never aliases the transferred memory;
+//             always returns true (keeps processor alive until
+//             loopback.js disconnects the node).
 // Last updated: Sprint 2 (2026-04-17) -- initial implementation
 
 class CaptureProcessor extends AudioWorkletProcessor {

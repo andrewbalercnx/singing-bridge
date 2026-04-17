@@ -1,5 +1,5 @@
 // File: server/tests/http_csp.rs
-// Purpose: Strict CSP is present on every HTML route; verify page has no
+// Purpose: Strict CSP is present on every HTML route; verify pages have no
 //          inline script. R2 finding #29, R3 finding #44.
 // Last updated: Sprint 2 (2026-04-17) -- +dev/prod parameterisation + /loopback
 
@@ -23,19 +23,39 @@ async fn csp_header_is_strict() {
     app.shutdown().await;
 }
 
-#[tokio::test]
-async fn verify_html_has_no_inline_script() {
-    let app = spawn_app().await;
-    let r = app.client.get(app.url("/auth/verify")).send().await.unwrap();
-    let body = r.text().await.unwrap();
+fn assert_no_inline_script(body: &str, path: &str) {
     let script_tags: Vec<&str> =
         body.match_indices("<script").map(|(i, _)| &body[i..]).collect();
     for s in &script_tags {
         let head = s.split('>').next().unwrap_or("");
-        assert!(head.contains("src="), "inline <script> in body: {head}");
+        assert!(head.contains("src="), "inline <script> in {path}: {head}");
     }
-    assert!(!body.contains("onerror="), "inline event handler attribute in body");
-    assert!(!body.contains("onload="));
+    assert!(!body.contains("onerror="), "inline event handler in {path}");
+    assert!(!body.contains("onload="), "inline event handler in {path}");
+}
+
+#[tokio::test]
+async fn verify_html_has_no_inline_script() {
+    let app = spawn_app().await;
+    let cookie = app.signup_teacher("teacher@test.example", "myroom").await;
+
+    // /auth/verify
+    let body = app.client.get(app.url("/auth/verify")).send().await.unwrap()
+        .text().await.unwrap();
+    assert_no_inline_script(&body, "/auth/verify");
+
+    // /teach/<slug> — both student view (no cookie) and teacher view
+    let (_, _, body) = app.get_html("/teach/myroom", None).await;
+    assert_no_inline_script(&body, "/teach/myroom (student)");
+    let (_, _, body) = app.get_html("/teach/myroom", Some(&cookie)).await;
+    assert_no_inline_script(&body, "/teach/myroom (teacher)");
+
+    // /loopback (dev only)
+    let body = app.client.get(app.url("/loopback")).send().await.unwrap()
+        .text().await.unwrap();
+    assert_no_inline_script(&body, "/loopback");
+
+    drop(cookie);
     app.shutdown().await;
 }
 

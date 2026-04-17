@@ -69,18 +69,13 @@ pub async fn get_teach(
     Ok(resp)
 }
 
-/// Placeholder token in `teacher.html` / `student.html` that is
-/// replaced with the `<meta name="sb-debug">` tag when `dev == true`,
-/// and with the empty string when `dev == false`. In prod we skip
-/// the String::replace call entirely to keep the hot path allocation-
-/// light (domain-reviewer R3 recommendation): the placeholder is a
-/// visible HTML comment so leaving it in place is harmless.
+/// Placeholder token in `teacher.html` / `student.html`. In dev mode it
+/// is replaced with the `<meta name="sb-debug">` tag; in prod it is
+/// stripped (replaced with "") so the comment never reaches the client.
 const DEBUG_MARKER_PLACEHOLDER: &str = "<!-- sb:debug -->";
 const DEBUG_MARKER_TAG: &str = "<meta name=\"sb-debug\" content=\"1\">";
 
 fn inject_debug_marker(html: String, dev: bool) -> String {
-    if !dev {
-        return html;
-    }
-    html.replace(DEBUG_MARKER_PLACEHOLDER, DEBUG_MARKER_TAG)
+    let replacement = if dev { DEBUG_MARKER_TAG } else { "" };
+    html.replace(DEBUG_MARKER_PLACEHOLDER, replacement)
 }

@@ -67,11 +67,11 @@ async fn test_prod_teach_html_has_no_debug_marker() {
         headers.get("content-security-policy").unwrap().to_str().unwrap(),
         EXPECTED_CSP
     );
-    // In prod the placeholder `<!-- sb:debug -->` is left in place; the server
-    // must NOT have replaced it with the `<meta name="sb-debug" content="1">` tag.
+    // In prod the server strips the placeholder entirely; neither the
+    // comment nor the injected meta tag should reach the client.
     assert!(
-        body.contains("<!-- sb:debug -->"),
-        "prod view should still contain the sb:debug placeholder comment"
+        !body.contains("<!-- sb:debug -->"),
+        "prod view must not serve the sb:debug placeholder comment"
     );
     assert!(
         !body.contains(r#"<meta name="sb-debug" content="1""#),

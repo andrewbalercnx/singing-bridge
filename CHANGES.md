@@ -11,6 +11,31 @@
 > **Commit:** `<sha>`
 > ```
 
+## Sprint 3: Video track + two-tile UI + browser-compat gating — 2026-04-17
+
+**Files changed:**
+- `web/assets/browser.js` — NEW: UMD-wrapped pure detector `detectBrowser(ua, features)` → `{name, version, tier, reasons, device, isIOS, isInAppWebView}`; 13-UA fixture set (BROWSER_UA_FIXTURES) incl. CriOS, Android WebView, Facebook/Instagram/TikTok in-app; Chrome/Firefox/Safari version floors (BROWSER_FLOORS).
+- `web/assets/video.js` — NEW: UMD module; pure `hasVideoTrack` + `orderCodecs` (Node-exported); browser-only `startLocalVideo`, `attach/detachRemoteVideo`, `applyCodecPreferences` via `RTCRtpTransceiver.setCodecPreferences`.
+- `web/assets/controls.js` — NEW: pure `deriveToggleView`; DOM `wireControls({audioTrack, videoTrack, onHangup})` toggles `track.enabled` only (no renegotiation).
+- `web/assets/signalling.js` — UMD conversion exposing `dispatchRemoteTrack`, `acquireMedia`, `teardownMedia` for Node tests. `wireBidirectionalMedia(pc, detect)` adds audio + video transceivers, applies mobile H.264 preference, routes `ontrack` by kind. Partial-failure cleanup: audio stream stopped if video acquisition throws. `refs.audio` → `refs.media`.
+- `web/assets/student.js` — landing-page gate (block/degraded notices), local-video preview, mute/video-off/end-call controls. Explicit `let handle = null` guards closures against temporal-dependency bugs.
+- `web/assets/teacher.js` — tier badge + tier_reason rendered per lobby entry (textContent only); local-video preview; controls.
+- `web/student.html`, `web/teacher.html` — `#remote-video` (playsinline), `#local-video` (playsinline + muted), `.tiles` grid, controls bar; student.html adds `#block-notice`, `#degraded-notice`. New `<script>` load order: browser → sdp → audio → video → overlay → controls → signalling → (page).
+- `web/assets/styles.css` — `.tiles` responsive grid (mobile stack / desktop 2-col), `.tile`, `.controls`, `.tier-badge` + reason styling, dark-mode parity.
+- `server/src/ws/protocol.rs` — `Tier` enum (Supported/Degraded/Unworkable) with conservative `Degraded` default; `MAX_TIER_REASON_CHARS = 200` (char cap) + `MAX_TIER_REASON_BYTES = 4×chars` (byte cap); `#[serde(default)]` tier + tier_reason on `ClientMsg::LobbyJoin`; `LobbyEntryView` carries both.
+- `server/src/state.rs` — `LobbyEntry` gains `tier`, `tier_reason`; `view()` projects both.
+- `server/src/ws/lobby.rs` — char-safe `truncate_to_chars` using `char_indices().nth()` → in-place `String::truncate(byte_idx)`, one pass, no allocation. 6 unit tests. `join_lobby` threads tier + truncated reason. `AdmitOutcome::NoRoom` dead variant removed.
+- `server/src/ws/mod.rs` — threads tier + tier_reason from `ClientMsg`; rejects with `FieldTooLong` when `tier_reason.len() > MAX_TIER_REASON_BYTES`, paralleling email/browser/device_class.
+- `server/tests/common/mod.rs` — `get_html` uses a fresh per-call reqwest client (no cookie jar) so `cookie: None` genuinely means unauthenticated; fixes latent test-infra bug where Sprint 2's student-view test was actually hitting teacher.html.
+- `server/tests/ws_lobby.rs` — `student_join_visible_to_teacher` extended to assert `tier` + `tier_reason` round-trip.
+- `server/tests/ws_lobby_tier.rs` — NEW: 7 tests covering default-Degraded, unknown-tier→WS close 1008 `malformed_message`, multi-byte truncation at 200 chars (fixture uses 3-byte '中' codepoint at byte boundary), exact-cap accepted, byte-cap reject path, supported round-trip, unworkable round-trip.
+- `server/tests/http_teach_debug_marker.rs` — both views now assert `#remote-video`, `#local-video`, `playsinline` on both, `muted` on `#local-video`, `#mute`/`#video-off`/`#hangup` buttons, `.tiles` container. Student view additionally asserts `#block-notice` + `#degraded-notice`.
+- `web/assets/tests/{browser,video,controls,signalling}.test.js` — NEW Node suites: 20 browser (property + 9 version-floor boundary + failure paths + WebView marker + iOS CriOS + tablet), 13 video (hasVideoTrack + orderCodecs stability + null preservation), 6 controls (deriveToggleView), 11 signalling (dispatch + acquireMedia both failure phases + teardownMedia partial-init variants).
+
+**Commit:** `07800f4` (code review APPROVED R2, 95% convergence)
+
+---
+
 ## Sprint 2: High-fidelity bidirectional audio — 2026-04-17
 
 **Files changed:**

@@ -88,7 +88,7 @@ bidirectional full-fidelity A/V session.
 - In-app WebView join attempts are blocked with actionable guidance
 - End-call cleans up all tracks and returns teacher to an empty room with lobby still live
 
-**Status:** PENDING
+**Status:** COMPLETE — 2026-04-17, commit `07800f4` (code review APPROVED R2, 95% convergence)
 
 ---
 

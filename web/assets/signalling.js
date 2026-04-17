@@ -1,9 +1,17 @@
 // File: web/assets/signalling.js
-// Purpose: Browser-side WebSocket + RTCPeerConnection glue. Two entry points —
-//          connectTeacher and connectStudent — sharing the framing logic.
-// Role: Only place that speaks the wire protocol on the client side.
+// Purpose: Browser-side WebSocket + RTCPeerConnection glue. Two entry
+//          points — connectTeacher and connectStudent — sharing the
+//          framing logic. Sprint 2: wires local+remote audio tracks,
+//          munges Opus SDP, and attaches the dev-only debug overlay.
+// Role: Only place that speaks the signalling wire protocol on the
+//       client side.
 // Exports: window.signallingClient.{connectTeacher, connectStudent}
-// Last updated: Sprint 1 (2026-04-17) -- initial implementation
+// Depends: window.sbSdp (from sdp.js), window.sbAudio (from audio.js),
+//          window.sbDebug (from debug-overlay.js)
+// Invariants: every setLocalDescription is preceded by
+//             mungeSdpForOpusMusic; every teardown path stops the
+//             debug overlay and releases the local audio track.
+// Last updated: Sprint 2 (2026-04-17) -- Sprint 2 audio + overlay
 
 'use strict';
 
@@ -60,16 +68,51 @@ function makePeerConnection() {
   });
 }
 
+// Applies the SDP munge before setLocalDescription. Pulled out so
+// both paths are visibly identical and the invariant is easy to
+// audit.
+async function setMungedLocalDescription(pc, desc) {
+  desc.sdp = window.sbSdp.mungeSdpForOpusMusic(desc.sdp);
+  await pc.setLocalDescription(desc);
+}
+
+// Adds a local audio track, wires ontrack for remote audio, and
+// returns a handle with a teardown() that stops the track and
+// detaches the remote element.
+async function wireBidirectionalAudio(pc) {
+  const local = await window.sbAudio.startLocalAudio();
+  pc.addTrack(local.track, local.stream);
+  pc.ontrack = (ev) => window.sbAudio.attachRemoteAudio(ev);
+  return {
+    local,
+    teardown() {
+      window.sbAudio.detachRemoteAudio();
+      try { local.stream.getTracks().forEach((t) => t.stop()); } catch (_) {}
+    },
+  };
+}
+
 async function connectTeacher({ slug, onLobbyUpdate, onPeerConnected, onPeerDisconnected }) {
   const sig = new Signalling(openWs());
   sig.send({ type: 'lobby_watch', slug });
   sig.on('lobby_state', (m) => onLobbyUpdate && onLobbyUpdate(m.entries));
 
   let pc = null;
+  let audio = null;
+  let overlay = null;
   let dataChannel = null;
+
+  const teardownSession = () => {
+    if (overlay) { try { overlay.stop(); } catch (_) {} overlay = null; }
+    if (audio) { try { audio.teardown(); } catch (_) {} audio = null; }
+    if (pc) { try { pc.close(); } catch (_) {} pc = null; }
+    dataChannel = null;
+  };
 
   sig.on('peer_connected', async () => {
     pc = makePeerConnection();
+    audio = await wireBidirectionalAudio(pc);
+    overlay = window.sbDebug.startDebugOverlay(pc, { localTrack: audio.local.track });
     pc.onicecandidate = (ev) => {
       if (ev.candidate) sig.send({ type: 'signal', to: 'student', payload: { candidate: ev.candidate } });
     };
@@ -85,7 +128,7 @@ async function connectTeacher({ slug, onLobbyUpdate, onPeerConnected, onPeerDisc
       await pc.setRemoteDescription(new RTCSessionDescription(p.sdp));
       if (p.sdp.type === 'offer') {
         const answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
+        await setMungedLocalDescription(pc, answer);
         sig.send({ type: 'signal', to: 'student', payload: { sdp: pc.localDescription } });
       }
     } else if (p.candidate) {
@@ -93,14 +136,14 @@ async function connectTeacher({ slug, onLobbyUpdate, onPeerConnected, onPeerDisc
     }
   });
   sig.on('peer_disconnected', () => {
-    if (pc) { pc.close(); pc = null; }
+    teardownSession();
     onPeerDisconnected && onPeerDisconnected();
   });
 
   return {
     admit(entryId) { sig.send({ type: 'lobby_admit', slug, entry_id: entryId }); },
     reject(entryId) { sig.send({ type: 'lobby_reject', slug, entry_id: entryId }); },
-    hangup() { if (pc) pc.close(); sig.close(); },
+    hangup() { teardownSession(); sig.close(); },
   };
 }
 
@@ -115,19 +158,30 @@ async function connectStudent({ slug, email, onAdmitted, onRejected, onPeerDisco
   });
 
   let pc = null;
+  let audio = null;
+  let overlay = null;
   let dataChannel = null;
+
+  const teardownSession = () => {
+    if (overlay) { try { overlay.stop(); } catch (_) {} overlay = null; }
+    if (audio) { try { audio.teardown(); } catch (_) {} audio = null; }
+    if (pc) { try { pc.close(); } catch (_) {} pc = null; }
+    dataChannel = null;
+  };
 
   sig.on('admitted', () => onAdmitted && onAdmitted());
   sig.on('rejected', (m) => { onRejected && onRejected(m.reason); sig.close(); });
   sig.on('peer_connected', async () => {
     pc = makePeerConnection();
+    audio = await wireBidirectionalAudio(pc);
+    overlay = window.sbDebug.startDebugOverlay(pc, { localTrack: audio.local.track });
     pc.onicecandidate = (ev) => {
       if (ev.candidate) sig.send({ type: 'signal', to: 'teacher', payload: { candidate: ev.candidate } });
     };
     dataChannel = pc.createDataChannel('hello');
     dataChannel.onopen = () => onPeerConnected && onPeerConnected({ dataChannel });
     const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
+    await setMungedLocalDescription(pc, offer);
     sig.send({ type: 'signal', to: 'teacher', payload: { sdp: pc.localDescription } });
   });
   sig.on('signal', async (m) => {
@@ -140,12 +194,12 @@ async function connectStudent({ slug, email, onAdmitted, onRejected, onPeerDisco
     }
   });
   sig.on('peer_disconnected', () => {
-    if (pc) { pc.close(); pc = null; }
+    teardownSession();
     onPeerDisconnected && onPeerDisconnected();
   });
 
   return {
-    hangup() { if (pc) pc.close(); sig.close(); },
+    hangup() { teardownSession(); sig.close(); },
   };
 }
 

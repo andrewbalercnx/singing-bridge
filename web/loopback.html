@@ -1,0 +1,34 @@
+<!doctype html>
+<!--
+  File: web/loopback.html
+  Purpose: Dev-only landing page for the mic→speaker loopback
+           latency harness. Served by the Rust server only when
+           config.dev is true.
+  Last updated: Sprint 2 (2026-04-17) -- initial implementation
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>singing-bridge — loopback latency</title>
+  <link rel="stylesheet" href="/assets/styles.css">
+</head>
+<body>
+  <main class="loopback">
+    <h1>Loopback latency</h1>
+    <p>
+      Measures the real mic→speaker round-trip on this browser and
+      device. Requires speaker output and a microphone that can hear
+      it. Plays 10 short pulses spaced 500 ms apart and
+      cross-correlates the captured signal with a reference pulse.
+    </p>
+    <p class="setup-note">Point the microphone at the speaker. Avoid
+      headphones for this measurement.</p>
+
+    <button id="loopback-start" type="button">Start measurement</button>
+    <p id="loopback-status">Idle.</p>
+    <pre id="loopback-results" aria-live="polite"></pre>
+
+    <script src="/assets/loopback.js"></script>
+  </main>
+</body>
+</html>

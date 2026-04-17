@@ -7,6 +7,7 @@
 //             Cache-Control: no-store.
 // Last updated: Sprint 1 (2026-04-17) -- initial implementation
 
+pub mod loopback;
 pub mod security_headers;
 pub mod signup;
 pub mod static_assets;
@@ -29,6 +30,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/auth/verify", get(signup::get_verify))
         .route("/auth/consume", post(signup::post_consume))
         .route("/teach/:slug", get(teach::get_teach))
+        .route("/loopback", get(loopback::get_loopback))
         .route("/ws", get(crate::ws::ws_upgrade))
         .route("/", get(signup::get_root))
         .merge(static_assets::routes(&state.config))

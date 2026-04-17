@@ -1,6 +1,7 @@
 /* File: web/assets/styles.css
- * Purpose: Minimal styles for signup / teach / student pages.
- * Last updated: 2026-04-17
+ * Purpose: Minimal styles for signup / teach / student / loopback pages
+ *          and the dev-only debug overlay.
+ * Last updated: Sprint 2 (2026-04-17) -- +overlay, +tooltip, +unmute
  */
 
 :root {
@@ -8,9 +9,11 @@
   --fg: #111;
   --bg: #fafafa;
   --accent: #244;
+  --ok: #2a7a2a;
+  --bad: #b23a3a;
 }
 @media (prefers-color-scheme: dark) {
-  :root { --fg: #f3f3f3; --bg: #161616; --accent: #8cf; }
+  :root { --fg: #f3f3f3; --bg: #161616; --accent: #8cf; --ok: #7ec77e; --bad: #e77a7a; }
 }
 
 body {
@@ -36,3 +39,41 @@ li { padding: 0.25rem 0; border-bottom: 1px solid #ccc3; }
 li button { margin-left: 0.5rem; }
 
 #error { color: #c00; min-height: 1.2em; }
+
+.setup-note { background: #ffd; padding: 0.5rem 0.75rem; border-left: 3px solid var(--accent); }
+@media (prefers-color-scheme: dark) {
+  .setup-note { background: #332; }
+}
+details.why { display: inline; margin-left: 0.5rem; }
+details.why summary { cursor: pointer; color: var(--accent); display: inline; }
+details.why[open] { display: block; margin-top: 0.5rem; }
+
+#unmute-audio { margin: 0.5rem 0; }
+
+#remote-audio { display: none; }
+
+#loopback-results { white-space: pre-wrap; padding: 0.75rem; background: #0001; border-radius: 4px; }
+@media (prefers-color-scheme: dark) {
+  #loopback-results { background: #fff1; }
+}
+
+.sb-debug-panel {
+  position: fixed;
+  bottom: 0.5rem;
+  right: 0.5rem;
+  max-width: 20rem;
+  max-height: 60vh;
+  overflow: auto;
+  padding: 0.5rem 0.75rem;
+  background: rgba(0, 0, 0, 0.8);
+  color: #eee;
+  font: 11px/1.35 ui-monospace, monospace;
+  border-radius: 4px;
+  z-index: 9999;
+}
+.sb-debug-panel h3 { margin: 0 0 0.25rem; font-size: 11px; color: #fc8; }
+.sb-debug-panel dl { margin: 0; display: grid; grid-template-columns: auto auto; gap: 0 0.5rem; }
+.sb-debug-panel dt { color: #aaa; }
+.sb-debug-panel dd { margin: 0; }
+.sb-debug-panel dd.ok { color: var(--ok); }
+.sb-debug-panel dd.bad { color: var(--bad); }

@@ -1,7 +1,7 @@
 // File: server/tests/common/mod.rs
 // Purpose: Shared test harness — spawn_app, dev-mail reader, WS client.
 // Role: Keep integration-test bodies short and behaviour-focused.
-// Last updated: Sprint 1 (2026-04-17) -- initial implementation
+// Last updated: Sprint 2 (2026-04-17) -- +TestOpts.dev + TestApp::get_html
 
 #![allow(dead_code)]
 
@@ -41,6 +41,9 @@ pub struct TestOpts {
     pub max_active_rooms: usize,
     pub signup_rate_limit_per_email: usize,
     pub signup_rate_limit_per_ip: usize,
+    pub dev: bool,
+    /// Override the static file directory (defaults to the workspace `web/`).
+    pub static_dir: Option<std::path::PathBuf>,
 }
 
 impl Default for TestOpts {
@@ -50,6 +53,8 @@ impl Default for TestOpts {
             max_active_rooms: 1024,
             signup_rate_limit_per_email: 999_999,
             signup_rate_limit_per_ip: 999_999,
+            dev: true,
+            static_dir: None,
         }
     }
 }
@@ -85,11 +90,12 @@ pub async fn spawn_app_with(opts: TestOpts) -> TestApp {
     config.base_url = base_url.clone();
     config.db_url = "sqlite::memory:".into();
     config.dev_mail_dir = mail_dir.path().to_path_buf();
-    config.static_dir = locate_web_dir();
+    config.static_dir = opts.static_dir.unwrap_or_else(locate_web_dir);
     config.lobby_cap_per_room = opts.lobby_cap_per_room;
     config.max_active_rooms = opts.max_active_rooms;
     config.signup_rate_limit_per_email = opts.signup_rate_limit_per_email;
     config.signup_rate_limit_per_ip = opts.signup_rate_limit_per_ip;
+    config.dev = opts.dev;
 
     let pool = init_pool(&config.db_url).await.unwrap();
     let mailer: Arc<dyn Mailer> = Arc::new(DevMailer::new(&config.dev_mail_dir).await.unwrap());
@@ -138,6 +144,22 @@ pub async fn spawn_app_with(opts: TestOpts) -> TestApp {
 impl TestApp {
     pub fn url(&self, path: &str) -> String {
         format!("{}{}", self.base_url, path.trim_start_matches('/'))
+    }
+
+    pub async fn get_html(
+        &self,
+        path: &str,
+        cookie: Option<&str>,
+    ) -> (reqwest::StatusCode, reqwest::header::HeaderMap, String) {
+        let mut req = self.client.get(self.url(path));
+        if let Some(c) = cookie {
+            req = req.header("cookie", format!("sb_session={c}"));
+        }
+        let r = req.send().await.unwrap();
+        let status = r.status();
+        let headers = r.headers().clone();
+        let body = r.text().await.unwrap_or_default();
+        (status, headers, body)
     }
 
     pub async fn signup(&self, email: &str, slug: &str) -> reqwest::Response {

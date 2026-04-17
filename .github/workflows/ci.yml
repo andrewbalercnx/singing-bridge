@@ -46,3 +46,7 @@ jobs:
       - name: Bootstrap smoke (standard profile)
         if: hashFiles('scripts/bootstrap-smoke.py') != ''
         run: python3 scripts/bootstrap-smoke.py --profile standard
+
+      - name: JS tests (SDP munger + audio predicate)
+        if: hashFiles('web/assets/tests/*.test.js') != ''
+        run: node --test web/assets/tests/*.test.js

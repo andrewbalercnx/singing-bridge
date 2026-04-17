@@ -1,9 +1,17 @@
 <!doctype html>
+<!--
+  File: web/teacher.html
+  Purpose: Teacher-side landing page. The sb:debug placeholder is
+           replaced server-side with a <meta name="sb-debug"> tag
+           when config.dev is true (empty string otherwise).
+  Last updated: Sprint 2 (2026-04-17) -- Sprint 2 audio + overlay
+-->
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <title>singing-bridge — teacher</title>
   <link rel="stylesheet" href="/assets/styles.css">
+  <!-- sb:debug -->
 </head>
 <body>
   <main class="teacher">
@@ -17,12 +25,26 @@
 
     <section class="session">
       <h2>Session</h2>
+      <p class="setup-note">Please wear headphones.
+        <details class="why">
+          <summary>Why?</summary>
+          We've turned off browser echo cancellation so your voice
+          sounds natural. Headphones stop the student's voice bouncing
+          back into your microphone.
+        </details>
+      </p>
       <p id="session-status">Waiting for a student.</p>
+      <button id="unmute-audio" type="button" hidden>Click to enable audio</button>
+      <audio id="remote-audio" autoplay playsinline></audio>
       <button id="hangup" type="button" hidden>End session</button>
     </section>
 
+    <div id="sb-debug"></div>
     <p id="error"></p>
 
+    <script src="/assets/sdp.js"></script>
+    <script src="/assets/audio.js"></script>
+    <script src="/assets/debug-overlay.js"></script>
     <script src="/assets/signalling.js"></script>
     <script src="/assets/teacher.js"></script>
   </main>

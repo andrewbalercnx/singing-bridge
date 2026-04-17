@@ -9,7 +9,7 @@
 mod common;
 
 use common::{recv_json, send_ws, spawn_app};
-use singing_bridge_server::ws::protocol::MAX_TIER_REASON_LEN;
+use singing_bridge_server::ws::protocol::MAX_TIER_REASON_CHARS;
 
 #[tokio::test]
 async fn test_lobby_join_without_tier_defaults_to_degraded() {
@@ -132,8 +132,8 @@ async fn test_lobby_join_with_oversized_tier_reason_is_truncated() {
     let stored = entries[0]["tier_reason"].as_str().unwrap();
     assert_eq!(
         stored.chars().count(),
-        MAX_TIER_REASON_LEN,
-        "stored reason must be exactly {MAX_TIER_REASON_LEN} chars"
+        MAX_TIER_REASON_CHARS,
+        "stored reason must be exactly {MAX_TIER_REASON_CHARS} chars"
     );
     // The 200th codepoint ('中') must be intact at the end, proving
     // we did NOT split a multi-byte codepoint.
@@ -141,6 +141,97 @@ async fn test_lobby_join_with_oversized_tier_reason_is_truncated() {
         stored.ends_with('中'),
         "multi-byte codepoint should survive truncation, got end of {stored:?}"
     );
+    app.shutdown().await;
+}
+
+#[tokio::test]
+async fn test_lobby_join_supported_tier_round_trips() {
+    let app = spawn_app().await;
+    let cookie = app.signup_teacher("teach@example.test", "alice").await;
+
+    let mut teacher = app.open_ws(Some(&cookie), None).await;
+    send_ws(
+        &mut teacher,
+        &serde_json::json!({"type":"lobby_watch","slug":"alice"}),
+    )
+    .await;
+    let _ = recv_json(&mut teacher).await;
+
+    let mut student = app.open_ws(None, None).await;
+    send_ws(
+        &mut student,
+        &serde_json::json!({
+            "type":"lobby_join","slug":"alice",
+            "email":"s@example.test","browser":"Chrome/124","device_class":"desktop",
+            "tier":"supported"
+        }),
+    )
+    .await;
+
+    let update = recv_json(&mut teacher).await;
+    let entries = update["entries"].as_array().unwrap();
+    assert_eq!(entries[0]["tier"], "supported");
+    app.shutdown().await;
+}
+
+#[tokio::test]
+async fn test_lobby_join_unworkable_tier_round_trips() {
+    // An attacker could hand-craft this past the client gate, but the
+    // server still echoes it to the teacher so they can see the flag.
+    let app = spawn_app().await;
+    let cookie = app.signup_teacher("teach@example.test", "alice").await;
+
+    let mut teacher = app.open_ws(Some(&cookie), None).await;
+    send_ws(
+        &mut teacher,
+        &serde_json::json!({"type":"lobby_watch","slug":"alice"}),
+    )
+    .await;
+    let _ = recv_json(&mut teacher).await;
+
+    let mut student = app.open_ws(None, None).await;
+    send_ws(
+        &mut student,
+        &serde_json::json!({
+            "type":"lobby_join","slug":"alice",
+            "email":"s@example.test","browser":"FBAN","device_class":"phone",
+            "tier":"unworkable","tier_reason":"in-app browser"
+        }),
+    )
+    .await;
+
+    let update = recv_json(&mut teacher).await;
+    let entries = update["entries"].as_array().unwrap();
+    assert_eq!(entries[0]["tier"], "unworkable");
+    assert_eq!(entries[0]["tier_reason"], "in-app browser");
+    app.shutdown().await;
+}
+
+#[tokio::test]
+async fn test_lobby_join_oversized_tier_reason_rejected_at_byte_cap() {
+    // Byte-level guard: if the client sends a tier_reason whose UTF-8
+    // byte length exceeds MAX_TIER_REASON_BYTES (4 × char cap), the
+    // server rejects with FieldTooLong instead of silently truncating.
+    // This matches MAX_EMAIL_LEN / MAX_BROWSER_LEN semantics.
+    use singing_bridge_server::ws::protocol::MAX_TIER_REASON_BYTES;
+    let app = spawn_app().await;
+    let cookie = app.signup_teacher("teach@example.test", "alice").await;
+    let _teacher = app.open_ws(Some(&cookie), None).await;
+
+    let reason: String = "x".repeat(MAX_TIER_REASON_BYTES + 1);
+    let mut student = app.open_ws(None, None).await;
+    send_ws(
+        &mut student,
+        &serde_json::json!({
+            "type":"lobby_join","slug":"alice",
+            "email":"s@example.test","browser":"X/1","device_class":"desktop",
+            "tier":"degraded","tier_reason": reason
+        }),
+    )
+    .await;
+    let msg = recv_json(&mut student).await;
+    assert_eq!(msg["type"], "error");
+    assert_eq!(msg["code"], "field_too_long");
     app.shutdown().await;
 }
 
@@ -157,7 +248,7 @@ async fn test_lobby_join_accepts_tier_reason_at_exact_cap() {
     .await;
     let _ = recv_json(&mut teacher).await;
 
-    let reason: String = "x".repeat(MAX_TIER_REASON_LEN);
+    let reason: String = "x".repeat(MAX_TIER_REASON_CHARS);
 
     let mut student = app.open_ws(None, None).await;
     send_ws(
@@ -174,8 +265,8 @@ async fn test_lobby_join_accepts_tier_reason_at_exact_cap() {
     let entries = update["entries"].as_array().unwrap();
     assert_eq!(entries.len(), 1);
     let stored = entries[0]["tier_reason"].as_str().unwrap();
-    assert_eq!(stored.chars().count(), MAX_TIER_REASON_LEN);
-    assert_eq!(stored, "x".repeat(MAX_TIER_REASON_LEN));
+    assert_eq!(stored.chars().count(), MAX_TIER_REASON_CHARS);
+    assert_eq!(stored, "x".repeat(MAX_TIER_REASON_CHARS));
 
     app.shutdown().await;
 }

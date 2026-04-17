@@ -8,7 +8,7 @@
 // Invariants: no unwrap/expect in this module. Origin must match base_url.
 //             Role is decided on the first LobbyJoin/LobbyWatch and immutable
 //             thereafter.
-// Last updated: Sprint 1 (2026-04-17) -- initial implementation
+// Last updated: Sprint 3 (2026-04-17) -- thread tier + tier_reason + byte cap
 
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 
@@ -37,7 +37,7 @@ use crate::state::{AppState, ConnectionId, RemovalKind, SlugKey};
 use crate::ws::connection::ConnContext;
 use crate::ws::protocol::{
     ClientMsg, ErrorCode, PumpDirective, Role, ServerMsg, MAX_BROWSER_LEN, MAX_DEVICE_CLASS_LEN,
-    MAX_EMAIL_LEN, MAX_SIGNAL_PAYLOAD_BYTES,
+    MAX_EMAIL_LEN, MAX_SIGNAL_PAYLOAD_BYTES, MAX_TIER_REASON_BYTES,
 };
 
 pub async fn ws_upgrade(
@@ -237,6 +237,7 @@ async fn handle_lobby_join(
     if email.len() > MAX_EMAIL_LEN
         || browser.len() > MAX_BROWSER_LEN
         || device_class.len() > MAX_DEVICE_CLASS_LEN
+        || tier_reason.as_deref().map_or(0, str::len) > MAX_TIER_REASON_BYTES
     {
         send_error(ctx, ErrorCode::FieldTooLong, "field too long").await;
         return true;

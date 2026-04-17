@@ -111,6 +111,21 @@ test('acquireMedia partial failure stops audio stream when video acquisition thr
   assert.equal(audioTrack2.wasStopped(), true, 'audio track 2 should be stopped');
 });
 
+test('acquireMedia audio-phase failure propagates and never calls video', async () => {
+  let videoCalled = false;
+  const audioImpl = { startLocalAudio: async () => {
+    throw new Error('mic permission denied');
+  } };
+  const videoImpl = { startLocalVideo: async () => {
+    videoCalled = true;
+    return { stream: makeStream([]), track: null };
+  } };
+  await assert.rejects(async () => {
+    await acquireMedia(audioImpl, videoImpl);
+  }, /mic permission denied/);
+  assert.equal(videoCalled, false, 'video impl must not be invoked when audio fails');
+});
+
 // --- teardownMedia (1 test) ------------------------------------------------
 
 test('teardownMedia invokes detach + stops every track on both streams', () => {
@@ -137,4 +152,45 @@ test('teardownMedia: null media is a no-op, does not throw', () => {
     { detachRemoteAudio: () => { assert.fail('should not be called'); } },
     { detachRemoteVideo: () => { assert.fail('should not be called'); } },
   ));
+});
+
+test('teardownMedia with only audio populated: detaches both, stops only audio tracks', () => {
+  let detachAudio = 0; let detachVideo = 0;
+  const a1 = makeTrack('a1');
+  const media = {
+    audio: { stream: makeStream([a1]), track: a1 },
+    // video missing entirely
+  };
+  teardownMedia(media,
+    { detachRemoteAudio: () => { detachAudio++; } },
+    { detachRemoteVideo: () => { detachVideo++; } },
+  );
+  assert.equal(detachAudio, 1, 'detachRemoteAudio should still be called');
+  assert.equal(detachVideo, 1, 'detachRemoteVideo should still be called (detach is idempotent)');
+  assert.equal(a1.wasStopped(), true);
+});
+
+test('teardownMedia with only video populated: detaches both, stops only video tracks', () => {
+  let detachAudio = 0; let detachVideo = 0;
+  const v1 = makeTrack('v1');
+  const media = {
+    video: { stream: makeStream([v1]), track: v1 },
+  };
+  teardownMedia(media,
+    { detachRemoteAudio: () => { detachAudio++; } },
+    { detachRemoteVideo: () => { detachVideo++; } },
+  );
+  assert.equal(detachAudio, 1);
+  assert.equal(detachVideo, 1);
+  assert.equal(v1.wasStopped(), true);
+});
+
+test('teardownMedia with empty media object: detaches both, stops nothing', () => {
+  let detachAudio = 0; let detachVideo = 0;
+  assert.doesNotThrow(() => teardownMedia({},
+    { detachRemoteAudio: () => { detachAudio++; } },
+    { detachRemoteVideo: () => { detachVideo++; } },
+  ));
+  assert.equal(detachAudio, 1);
+  assert.equal(detachVideo, 1);
 });

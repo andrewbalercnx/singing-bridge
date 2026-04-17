@@ -9,7 +9,7 @@
 // Invariants: RoomState is `tokio::sync::RwLock`; callers MUST use
 //             AppState::room / ::room_or_insert (no direct DashMap access
 //             from async fns).
-// Last updated: Sprint 1 (2026-04-17) -- initial implementation
+// Last updated: Sprint 3 (2026-04-17) -- LobbyEntry carries tier + tier_reason
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;

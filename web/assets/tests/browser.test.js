@@ -13,6 +13,7 @@ const { detectBrowser, BROWSER_FLOORS, BROWSER_UA_FIXTURES } =
 
 const FEATURES_OK = { hasRTCPeerConnection: true, hasGetUserMedia: true };
 const FEATURES_MISSING_RTC = { hasRTCPeerConnection: false, hasGetUserMedia: true };
+const FEATURES_MISSING_GUM = { hasRTCPeerConnection: true, hasGetUserMedia: false };
 
 const TIERS = new Set(['supported', 'degraded', 'unworkable']);
 
@@ -45,9 +46,27 @@ test('iOS UAs always map to degraded regardless of Safari version', () => {
   assert.equal(r2.name, 'Chrome');
 });
 
-test('feature-absent env is unworkable regardless of UA', () => {
+test('feature-absent env is unworkable regardless of UA (RTCPeerConnection missing)', () => {
   const r = detectBrowser(BROWSER_UA_FIXTURES.chrome_desktop_current, FEATURES_MISSING_RTC);
   assert.equal(r.tier, 'unworkable');
+});
+
+test('feature-absent env is unworkable (getUserMedia missing)', () => {
+  // Independent regression guard — a UA with RTCPeerConnection but no
+  // getUserMedia must still be classified unworkable.
+  const r = detectBrowser(BROWSER_UA_FIXTURES.chrome_desktop_current, FEATURES_MISSING_GUM);
+  assert.equal(r.tier, 'unworkable');
+});
+
+test('Android WebView (; wv) marker is unworkable + isInAppWebView', () => {
+  const r = detectBrowser(BROWSER_UA_FIXTURES.android_webview, FEATURES_OK);
+  assert.equal(r.isInAppWebView, true, 'wv marker must flag isInAppWebView');
+  assert.equal(r.tier, 'unworkable');
+});
+
+test('Android tablet UA is classified as tablet', () => {
+  const r = detectBrowser(BROWSER_UA_FIXTURES.android_tablet, FEATURES_OK);
+  assert.equal(r.device, 'tablet');
 });
 
 test('BROWSER_FLOORS exports are stable and present', () => {

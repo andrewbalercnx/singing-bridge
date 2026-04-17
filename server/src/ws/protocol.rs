@@ -23,7 +23,14 @@ pub const MAX_DEVICE_CLASS_LEN: usize = 32;
 /// supplied tier reason. `String::truncate` is byte-based and would
 /// panic on multi-byte UTF-8 at the boundary — callers must use
 /// char-safe truncation (see `ws::lobby::truncate_to_chars`).
-pub const MAX_TIER_REASON_LEN: usize = 200;
+pub const MAX_TIER_REASON_CHARS: usize = 200;
+/// Hard byte cap enforced at the connection boundary. Strings whose
+/// byte length exceeds this are rejected with `ErrorCode::FieldTooLong`
+/// (paralleling `MAX_EMAIL_LEN`, `MAX_BROWSER_LEN`, etc.). The value
+/// is `4 × MAX_TIER_REASON_CHARS` — the worst-case byte length of a
+/// 200-char UTF-8 string (4 bytes per codepoint). Strings within the
+/// byte cap are then char-truncated at `MAX_TIER_REASON_CHARS`.
+pub const MAX_TIER_REASON_BYTES: usize = 4 * MAX_TIER_REASON_CHARS;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

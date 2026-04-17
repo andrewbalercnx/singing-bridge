@@ -46,6 +46,20 @@ async fn test_dev_teach_html_carries_debug_marker_student_view() {
         body[local_idx..local_tag_end].contains("playsinline"),
         "student.html #local-video missing playsinline"
     );
+    // muted on #local-video is critical: removing it causes immediate
+    // self-audio feedback. This assertion would fail silently otherwise.
+    assert!(
+        body[local_idx..local_tag_end].contains("muted"),
+        "student.html #local-video missing `muted` — self-audio feedback risk"
+    );
+    // Control buttons (mute / video-off / hangup) and tile container.
+    assert!(body.contains(r#"id="mute""#), "student.html missing #mute button");
+    assert!(body.contains(r#"id="video-off""#), "student.html missing #video-off button");
+    assert!(body.contains(r#"id="hangup""#), "student.html missing #hangup button");
+    assert!(body.contains(r#"class="tiles""#), "student.html missing .tiles container");
+    // Landing-page gating notices (student-only).
+    assert!(body.contains(r#"id="block-notice""#), "student.html missing #block-notice");
+    assert!(body.contains(r#"id="degraded-notice""#), "student.html missing #degraded-notice");
     drop(cookie);
     app.shutdown().await;
 }
@@ -82,6 +96,14 @@ async fn test_dev_teach_html_carries_debug_marker_teacher_view() {
         body[local_idx..local_tag_end].contains("playsinline"),
         "teacher.html #local-video missing playsinline"
     );
+    assert!(
+        body[local_idx..local_tag_end].contains("muted"),
+        "teacher.html #local-video missing `muted` — self-audio feedback risk"
+    );
+    assert!(body.contains(r#"id="mute""#), "teacher.html missing #mute button");
+    assert!(body.contains(r#"id="video-off""#), "teacher.html missing #video-off button");
+    assert!(body.contains(r#"id="hangup""#), "teacher.html missing #hangup button");
+    assert!(body.contains(r#"class="tiles""#), "teacher.html missing .tiles container");
     app.shutdown().await;
 }
 

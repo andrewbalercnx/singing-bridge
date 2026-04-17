@@ -16,20 +16,73 @@ use tokio::sync::mpsc;
 
 use crate::state::{ActiveSession, AppState, ClientHandle, LobbyEntry, SlugKey};
 use crate::ws::connection::ConnContext;
-use crate::ws::protocol::{EntryId, ErrorCode, PumpDirective, Role, ServerMsg, Tier, MAX_TIER_REASON_LEN};
+use crate::ws::protocol::{EntryId, ErrorCode, PumpDirective, Role, ServerMsg, Tier, MAX_TIER_REASON_CHARS};
 
-/// Truncate to at most `max_chars` *characters*. `String::truncate`
-/// is byte-based and panics on a non-char-boundary byte — this helper
-/// counts characters with `.chars().count()` for the guard and
-/// rebuilds the String with `.chars().take(max_chars).collect()` so
-/// every codepoint boundary is respected. Regression fixture in
-/// `server/tests/ws_lobby_tier.rs` uses a 3-byte codepoint placed so
-/// that byte-based truncation would split inside the codepoint.
-pub(crate) fn truncate_to_chars(s: String, max_chars: usize) -> String {
-    if s.chars().count() <= max_chars {
-        return s;
+/// Truncate to at most `max_chars` *characters*. Plain
+/// `String::truncate` is byte-based and panics on a non-char-boundary
+/// byte. This helper walks `char_indices()` exactly `max_chars + 1`
+/// times to find the byte offset of the (max_chars)-th codepoint —
+/// that offset is guaranteed to be a valid char boundary, so the
+/// in-place `String::truncate` call is safe. One pass, no new
+/// allocation unless the caller passes ownership of an already-short
+/// string. Regression fixture in `server/tests/ws_lobby_tier.rs` uses
+/// a 3-byte codepoint placed so that a naive byte truncation would
+/// split inside the codepoint.
+pub(crate) fn truncate_to_chars(mut s: String, max_chars: usize) -> String {
+    if let Some((byte_idx, _)) = s.char_indices().nth(max_chars) {
+        s.truncate(byte_idx);
     }
-    s.chars().take(max_chars).collect()
+    s
+}
+
+#[cfg(test)]
+mod truncate_tests {
+    use super::truncate_to_chars;
+
+    #[test]
+    fn ascii_shorter_than_cap_passes_through() {
+        let s = "hello".to_string();
+        assert_eq!(truncate_to_chars(s, 200), "hello");
+    }
+
+    #[test]
+    fn ascii_at_exact_cap_passes_through() {
+        let s = "x".repeat(200);
+        let out = truncate_to_chars(s.clone(), 200);
+        assert_eq!(out, s);
+        assert_eq!(out.chars().count(), 200);
+    }
+
+    #[test]
+    fn ascii_over_cap_is_cut_at_cap() {
+        let s = "y".repeat(201);
+        let out = truncate_to_chars(s, 200);
+        assert_eq!(out.chars().count(), 200);
+    }
+
+    #[test]
+    fn multibyte_at_boundary_is_preserved() {
+        // 199 ASCII + 1 three-byte codepoint = 200 chars, 202 bytes.
+        // Adding one more char makes 201 chars / 203 bytes. The cap
+        // must land right after the 3-byte codepoint, not inside it.
+        let mut s = "a".repeat(199);
+        s.push('中');
+        s.push('b');
+        assert_eq!(s.chars().count(), 201);
+        let out = truncate_to_chars(s, 200);
+        assert_eq!(out.chars().count(), 200);
+        assert!(out.ends_with('中'), "multibyte codepoint should be intact at cut");
+    }
+
+    #[test]
+    fn zero_cap_returns_empty() {
+        assert_eq!(truncate_to_chars("abc".to_string(), 0), "");
+    }
+
+    #[test]
+    fn empty_input_is_empty() {
+        assert_eq!(truncate_to_chars(String::new(), 200), "");
+    }
 }
 
 async fn send(tx: &mpsc::Sender<PumpDirective>, msg: ServerMsg) {
@@ -82,7 +135,7 @@ pub async fn join_lobby(
             browser,
             device_class,
             tier,
-            tier_reason: tier_reason.map(|r| truncate_to_chars(r, MAX_TIER_REASON_LEN)),
+            tier_reason: tier_reason.map(|r| truncate_to_chars(r, MAX_TIER_REASON_CHARS)),
             joined_at: Instant::now(),
             joined_at_unix: now_unix,
             conn: client_handle,
@@ -132,7 +185,6 @@ enum AdmitOutcome {
     },
     SessionInProgress,
     EntryNotFound,
-    NoRoom,
 }
 
 pub async fn admit(state: &Arc<AppState>, ctx: &ConnContext, entry_id: EntryId) {
@@ -199,7 +251,6 @@ pub async fn admit(state: &Arc<AppState>, ctx: &ConnContext, entry_id: EntryId) 
         AdmitOutcome::EntryNotFound => {
             send_error(&ctx.tx, ErrorCode::EntryNotFound, "entry not found").await;
         }
-        AdmitOutcome::NoRoom => {}
     }
 }
 

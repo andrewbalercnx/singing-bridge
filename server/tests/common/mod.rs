@@ -151,7 +151,15 @@ impl TestApp {
         path: &str,
         cookie: Option<&str>,
     ) -> (reqwest::StatusCode, reqwest::header::HeaderMap, String) {
-        let mut req = self.client.get(self.url(path));
+        // Build a fresh client per request so the shared cookie jar from
+        // `signup_teacher` does not leak into subsequent calls — a
+        // `cookie: None` caller genuinely means "unauthenticated".
+        let client = reqwest::Client::builder()
+            .cookie_store(false)
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap();
+        let mut req = client.get(self.url(path));
         if let Some(c) = cookie {
             req = req.header("cookie", format!("sb_session={c}"));
         }

@@ -7,7 +7,7 @@
 // Depends: serde, uuid, bytes via axum
 // Invariants: ServerMsg.Signal.from is server-filled; clients cannot spoof.
 //             Signal.payload ≤ 16 KiB independent of the 64 KiB frame cap.
-// Last updated: Sprint 1 (2026-04-17) -- initial implementation
+// Last updated: Sprint 3 (2026-04-17) -- +Tier + tier_reason on LobbyJoin/LobbyEntryView
 
 use std::borrow::Cow;
 
@@ -19,6 +19,11 @@ pub const MAX_FRAME_BYTES: usize = 64 * 1024;
 pub const MAX_EMAIL_LEN: usize = 256;
 pub const MAX_BROWSER_LEN: usize = 128;
 pub const MAX_DEVICE_CLASS_LEN: usize = 32;
+/// Maximum stored length (in *characters*, not bytes) for a client-
+/// supplied tier reason. `String::truncate` is byte-based and would
+/// panic on multi-byte UTF-8 at the boundary — callers must use
+/// char-safe truncation (see `ws::lobby::truncate_to_chars`).
+pub const MAX_TIER_REASON_LEN: usize = 200;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -41,12 +46,40 @@ impl EntryId {
     }
 }
 
+/// Client-reported browser-compatibility tier. Surfaced to the teacher
+/// in the lobby so they can see at a glance whether a waiting student
+/// is running on a healthy browser. This is **UX advisory**, not a
+/// security boundary — a tampered tier only affects the client's own
+/// session. Unknown strings fail deserialisation (no `#[serde(other)]`),
+/// which the connection pump converts into a WS close with code 1003.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Tier {
+    Supported,
+    Degraded,
+    Unworkable,
+}
+
+impl Default for Tier {
+    /// CONSERVATIVE DEFAULT: a `lobby_join` without an explicit tier is
+    /// assumed Degraded, not Supported. A legitimate Sprint 3+ client
+    /// always sends a tier (set by `web/assets/browser.js`); a missing
+    /// field is therefore an older build, a hand-crafted client, or a
+    /// tampered payload. Flagging it as Degraded warns the teacher
+    /// without blocking the join.
+    fn default() -> Self {
+        Tier::Degraded
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct LobbyEntryView {
     pub id: EntryId,
     pub email: String,
     pub browser: String,
     pub device_class: String,
+    pub tier: Tier,
+    pub tier_reason: Option<String>,
     pub joined_at_unix: i64,
 }
 
@@ -75,6 +108,10 @@ pub enum ClientMsg {
         email: String,
         browser: String,
         device_class: String,
+        #[serde(default)]
+        tier: Tier,
+        #[serde(default)]
+        tier_reason: Option<String>,
     },
     LobbyWatch {
         slug: String,
@@ -144,6 +181,8 @@ mod tests {
                 email: "s@example".into(),
                 browser: "Firefox/999".into(),
                 device_class: "desktop".into(),
+                tier: Tier::Supported,
+                tier_reason: None,
             },
             ClientMsg::LobbyWatch {
                 slug: "alice".into(),
@@ -207,6 +246,8 @@ mod tests {
                 email,
                 browser: "x".into(),
                 device_class: "desktop".into(),
+                tier: Tier::Supported,
+                tier_reason: None,
             };
             let s = serde_json::to_string(&msg).unwrap();
             let _: ClientMsg = serde_json::from_str(&s).unwrap();

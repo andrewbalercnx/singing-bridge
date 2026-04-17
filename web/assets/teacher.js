@@ -1,7 +1,10 @@
 // File: web/assets/teacher.js
 // Purpose: Teacher UI wiring. Student-supplied strings rendered via
-//          textContent only (R4 recommendation — no innerHTML to prevent XSS).
-// Last updated: Sprint 1 (2026-04-17) -- initial implementation
+//          textContent only (R4 recommendation — no innerHTML to
+//          prevent XSS). Sprint 3: renders tier + tier_reason on
+//          each lobby entry, wires local-video preview, and attaches
+//          the mute/video-off/end-call controls.
+// Last updated: Sprint 3 (2026-04-17) -- +tier badge +controls +local preview
 
 'use strict';
 
@@ -12,32 +15,60 @@
   const listEl = document.getElementById('lobby-list');
   const emptyEl = document.getElementById('lobby-empty');
   const statusEl = document.getElementById('session-status');
-  const hangupBtn = document.getElementById('hangup');
+  const localVideo = document.getElementById('local-video');
+
+  // Proxy so list-item click handlers can reach the handle before
+  // connectTeacher resolves.
+  const handleProxy = {
+    admit(id) { if (window._handle) window._handle.admit(id); },
+    reject(id) { if (window._handle) window._handle.reject(id); },
+  };
+
+  function renderEntry(entry) {
+    const li = document.createElement('li');
+    const meta = document.createElement('span');
+    meta.textContent = `${entry.email} · ${entry.browser} · ${entry.device_class}`;
+    const badge = document.createElement('span');
+    badge.className = `tier-badge ${entry.tier || 'degraded'}`;
+    badge.textContent = entry.tier || 'degraded';
+    li.append(meta, document.createTextNode(' '), badge);
+    if (entry.tier_reason) {
+      const r = document.createElement('span');
+      r.className = 'tier-reason';
+      r.textContent = ` (${entry.tier_reason})`;
+      li.append(r);
+    }
+    const admit = document.createElement('button');
+    admit.type = 'button';
+    admit.textContent = 'Admit';
+    admit.addEventListener('click', () => handleProxy.admit(entry.id));
+    const reject = document.createElement('button');
+    reject.type = 'button';
+    reject.textContent = 'Reject';
+    reject.addEventListener('click', () => handleProxy.reject(entry.id));
+    li.append(document.createTextNode(' '), admit, reject);
+    return li;
+  }
+
+  let controlsHandle = null;
 
   window.signallingClient.connectTeacher({
     slug,
     onLobbyUpdate(entries) {
       listEl.replaceChildren();
       emptyEl.hidden = entries.length > 0;
-      for (const entry of entries) {
-        const li = document.createElement('li');
-        const meta = document.createElement('span');
-        meta.textContent = `${entry.email} · ${entry.browser} · ${entry.device_class}`;
-        const admit = document.createElement('button');
-        admit.type = 'button';
-        admit.textContent = 'Admit';
-        admit.addEventListener('click', () => handle.admit(entry.id));
-        const reject = document.createElement('button');
-        reject.type = 'button';
-        reject.textContent = 'Reject';
-        reject.addEventListener('click', () => handle.reject(entry.id));
-        li.append(meta, admit, reject);
-        listEl.append(li);
-      }
+      for (const entry of entries) listEl.append(renderEntry(entry));
     },
-    onPeerConnected({ dataChannel }) {
+    onPeerConnected({ dataChannel, audioTrack, videoTrack }) {
       statusEl.textContent = 'Connected.';
-      hangupBtn.hidden = false;
+      if (videoTrack) {
+        localVideo.srcObject = new MediaStream([videoTrack]);
+      }
+      controlsHandle = window.sbControls.wireControls({
+        audioTrack,
+        videoTrack,
+        onHangup() { if (window._handle) window._handle.hangup(); },
+      });
       dataChannel.addEventListener('message', (e) => {
         statusEl.textContent = `Student says: ${e.data}`;
       });
@@ -45,21 +76,10 @@
     },
     onPeerDisconnected() {
       statusEl.textContent = 'Student disconnected.';
-      hangupBtn.hidden = true;
+      if (controlsHandle) { controlsHandle.teardown(); controlsHandle = null; }
+      localVideo.srcObject = null;
     },
   }).then((h) => {
     window._handle = h;
-    hangupBtn.addEventListener('click', () => h.hangup());
-    const handle = h;
-    // Bind for the closures above.
-    window.__admit = handle.admit;
-    window.__reject = handle.reject;
   });
-
-  // Provide `handle.admit` / `handle.reject` to the list items via a proxy.
-  const handle = {
-    admit(id) { if (window._handle) window._handle.admit(id); },
-    reject(id) { if (window._handle) window._handle.reject(id); },
-  };
-  window._teacherHandle = handle;
 })();

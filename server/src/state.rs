@@ -24,7 +24,7 @@ use tokio_util::sync::CancellationToken;
 use crate::auth::mailer::Mailer;
 use crate::config::Config;
 use crate::error::{AppError, Result};
-use crate::ws::protocol::{EntryId, LobbyEntryView, PumpDirective};
+use crate::ws::protocol::{EntryId, LobbyEntryView, PumpDirective, Tier};
 
 /// Random per-connection identifier. Used to distinguish connections when
 /// the teacher reconnects and the old socket is being torn down.
@@ -76,6 +76,8 @@ pub struct LobbyEntry {
     pub email: String,
     pub browser: String,
     pub device_class: String,
+    pub tier: Tier,
+    pub tier_reason: Option<String>,
     pub joined_at: Instant,
     pub joined_at_unix: i64,
     pub conn: ClientHandle,
@@ -88,6 +90,8 @@ impl LobbyEntry {
             email: self.email.clone(),
             browser: self.browser.clone(),
             device_class: self.device_class.clone(),
+            tier: self.tier,
+            tier_reason: self.tier_reason.clone(),
             joined_at_unix: self.joined_at_unix,
         }
     }

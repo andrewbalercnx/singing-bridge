@@ -4,7 +4,7 @@
   Purpose: Teacher-side landing page. The sb:debug placeholder is
            replaced server-side with a <meta name="sb-debug"> tag
            when config.dev is true (empty string otherwise).
-  Last updated: Sprint 2 (2026-04-17) -- Sprint 2 audio + overlay
+  Last updated: Sprint 3 (2026-04-17) -- +video tiles +controls +tier badge
 -->
 <html lang="en">
 <head>
@@ -34,17 +34,33 @@
         </details>
       </p>
       <p id="session-status">Waiting for a student.</p>
-      <button id="unmute-audio" type="button" hidden>Click to enable audio</button>
-      <audio id="remote-audio" autoplay playsinline></audio>
-      <button id="hangup" type="button" hidden>End session</button>
+
+      <div class="tiles">
+        <div class="tile remote">
+          <video id="remote-video" autoplay playsinline></video>
+          <audio id="remote-audio" autoplay></audio>
+          <button id="unmute-audio" type="button" hidden>Click to enable audio</button>
+        </div>
+        <div class="tile self">
+          <video id="local-video" autoplay playsinline muted></video>
+        </div>
+      </div>
+      <div class="controls">
+        <button id="mute" type="button" aria-pressed="false">Mute</button>
+        <button id="video-off" type="button" aria-pressed="false">Video off</button>
+        <button id="hangup" type="button">End session</button>
+      </div>
     </section>
 
     <div id="sb-debug"></div>
     <p id="error"></p>
 
+    <script src="/assets/browser.js"></script>
     <script src="/assets/sdp.js"></script>
     <script src="/assets/audio.js"></script>
+    <script src="/assets/video.js"></script>
     <script src="/assets/debug-overlay.js"></script>
+    <script src="/assets/controls.js"></script>
     <script src="/assets/signalling.js"></script>
     <script src="/assets/teacher.js"></script>
   </main>

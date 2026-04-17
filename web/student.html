@@ -4,7 +4,7 @@
   Purpose: Student join form + session UI. The sb:debug placeholder
            is replaced server-side with a <meta name="sb-debug"> tag
            when config.dev is true (empty string otherwise).
-  Last updated: Sprint 2 (2026-04-17) -- Sprint 2 audio + overlay
+  Last updated: Sprint 3 (2026-04-17) -- +video tiles +controls +browser gate
 -->
 <html lang="en">
 <head>
@@ -16,37 +16,65 @@
 <body>
   <main class="student">
     <h1>Join your lesson</h1>
-    <p class="setup-note">Please wear headphones.
-      <details class="why">
-        <summary>Why?</summary>
-        We've turned off browser echo cancellation so your voice
-        sounds natural. Headphones stop your teacher's voice bouncing
-        back into your microphone.
-      </details>
-    </p>
-    <form id="join-form">
-      <label>Your email
-        <input type="email" name="email" autocomplete="email" required>
-      </label>
-      <button type="submit">Enter lobby</button>
-    </form>
+
+    <section id="block-notice" hidden>
+      <h2>This browser can't run the lesson tool</h2>
+      <p id="block-reason"></p>
+      <p>Open the link in Chrome, Firefox, Safari, or Edge.</p>
+    </section>
+
+    <section id="degraded-notice" hidden class="degraded">
+      <p id="degraded-reason"></p>
+    </section>
+
+    <section id="join">
+      <p class="setup-note">Please wear headphones.
+        <details class="why">
+          <summary>Why?</summary>
+          We've turned off browser echo cancellation so your voice
+          sounds natural. Headphones stop your teacher's voice bouncing
+          back into your microphone.
+        </details>
+      </p>
+      <form id="join-form">
+        <label>Your email
+          <input type="email" name="email" autocomplete="email" required>
+        </label>
+        <button type="submit">Enter lobby</button>
+      </form>
+    </section>
 
     <section id="lobby-status" hidden>
       <p>Waiting to be admitted…</p>
     </section>
 
-    <section id="session-status" hidden>
-      <p>Connected.</p>
-      <button id="unmute-audio" type="button" hidden>Click to enable audio</button>
-      <audio id="remote-audio" autoplay playsinline></audio>
+    <section id="session" hidden>
+      <div class="tiles">
+        <div class="tile remote">
+          <video id="remote-video" autoplay playsinline></video>
+          <audio id="remote-audio" autoplay></audio>
+          <button id="unmute-audio" type="button" hidden>Click to enable audio</button>
+        </div>
+        <div class="tile self">
+          <video id="local-video" autoplay playsinline muted></video>
+        </div>
+      </div>
+      <div class="controls">
+        <button id="mute" type="button" aria-pressed="false">Mute</button>
+        <button id="video-off" type="button" aria-pressed="false">Video off</button>
+        <button id="hangup" type="button">End call</button>
+      </div>
     </section>
 
     <div id="sb-debug"></div>
     <p id="error"></p>
 
+    <script src="/assets/browser.js"></script>
     <script src="/assets/sdp.js"></script>
     <script src="/assets/audio.js"></script>
+    <script src="/assets/video.js"></script>
     <script src="/assets/debug-overlay.js"></script>
+    <script src="/assets/controls.js"></script>
     <script src="/assets/signalling.js"></script>
     <script src="/assets/student.js"></script>
   </main>

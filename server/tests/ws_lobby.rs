@@ -1,7 +1,7 @@
 // File: server/tests/ws_lobby.rs
 // Purpose: Lobby join + admit + signal relay end-to-end at the signalling layer.
 // Covers exit-criteria from SPRINTS.md Sprint 1.
-// Last updated: Sprint 1 (2026-04-17) -- initial implementation
+// Last updated: Sprint 3 (2026-04-17) -- assert tier + tier_reason round-trip
 
 mod common;
 
@@ -27,7 +27,8 @@ async fn student_join_visible_to_teacher() {
         &mut student,
         &serde_json::json!({
             "type":"lobby_join","slug":"alice",
-            "email":"s@example.test","browser":"Firefox/999","device_class":"desktop"
+            "email":"s@example.test","browser":"Firefox/999","device_class":"desktop",
+            "tier":"degraded","tier_reason":"iOS Safari forces voice processing"
         }),
     )
     .await;
@@ -37,6 +38,11 @@ async fn student_join_visible_to_teacher() {
     let entries = update["entries"].as_array().unwrap();
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0]["email"], "s@example.test");
+    assert_eq!(entries[0]["tier"], "degraded");
+    assert_eq!(
+        entries[0]["tier_reason"],
+        "iOS Safari forces voice processing"
+    );
 
     app.shutdown().await;
 }

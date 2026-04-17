@@ -206,7 +206,9 @@ async fn handle_client_msg(
             email,
             browser,
             device_class,
-        } => handle_lobby_join(ctx, state, slug, email, browser, device_class).await,
+            tier,
+            tier_reason,
+        } => handle_lobby_join(ctx, state, slug, email, browser, device_class, tier, tier_reason).await,
         ClientMsg::LobbyWatch { slug } => handle_lobby_watch(ctx, state, slug).await,
         ClientMsg::LobbyAdmit { slug, entry_id } => {
             handle_lobby_admit(ctx, state, &slug, entry_id).await
@@ -225,6 +227,8 @@ async fn handle_lobby_join(
     email: String,
     browser: String,
     device_class: String,
+    tier: crate::ws::protocol::Tier,
+    tier_reason: Option<String>,
 ) -> bool {
     if ctx.slug.is_some() {
         send_error(ctx, ErrorCode::AlreadyJoined, "already joined").await;
@@ -246,7 +250,7 @@ async fn handle_lobby_join(
     }
     ctx.slug = Some(key.clone());
     ctx.role = Some(Role::Student);
-    lobby::join_lobby(state, ctx, &key, email, browser, device_class).await
+    lobby::join_lobby(state, ctx, &key, email, browser, device_class, tier, tier_reason).await
 }
 
 async fn handle_lobby_watch(ctx: &mut ConnContext, state: &Arc<AppState>, slug: String) -> bool {

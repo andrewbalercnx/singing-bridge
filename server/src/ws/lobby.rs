@@ -7,7 +7,7 @@
 // Depends: tokio, state, protocol
 // Invariants: ≤ 1 teacher_conn, ≤ 1 active_session, LobbyEntry placement is
 //             XOR between lobby and active_session.
-// Last updated: Sprint 1 (2026-04-17) -- initial implementation
+// Last updated: Sprint 3 (2026-04-17) -- persist tier + char-safe tier_reason
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -16,7 +16,21 @@ use tokio::sync::mpsc;
 
 use crate::state::{ActiveSession, AppState, ClientHandle, LobbyEntry, SlugKey};
 use crate::ws::connection::ConnContext;
-use crate::ws::protocol::{EntryId, ErrorCode, PumpDirective, Role, ServerMsg};
+use crate::ws::protocol::{EntryId, ErrorCode, PumpDirective, Role, ServerMsg, Tier, MAX_TIER_REASON_LEN};
+
+/// Truncate to at most `max_chars` *characters*. `String::truncate`
+/// is byte-based and panics on a non-char-boundary byte — this helper
+/// counts characters with `.chars().count()` for the guard and
+/// rebuilds the String with `.chars().take(max_chars).collect()` so
+/// every codepoint boundary is respected. Regression fixture in
+/// `server/tests/ws_lobby_tier.rs` uses a 3-byte codepoint placed so
+/// that byte-based truncation would split inside the codepoint.
+pub(crate) fn truncate_to_chars(s: String, max_chars: usize) -> String {
+    if s.chars().count() <= max_chars {
+        return s;
+    }
+    s.chars().take(max_chars).collect()
+}
 
 async fn send(tx: &mpsc::Sender<PumpDirective>, msg: ServerMsg) {
     let _ = tx.send(PumpDirective::Send(msg)).await;
@@ -37,6 +51,8 @@ pub async fn join_lobby(
     email: String,
     browser: String,
     device_class: String,
+    tier: Tier,
+    tier_reason: Option<String>,
 ) -> bool {
     let room = match state.room_or_insert(slug.clone()) {
         Ok(r) => r,
@@ -65,6 +81,8 @@ pub async fn join_lobby(
             email,
             browser,
             device_class,
+            tier,
+            tier_reason: tier_reason.map(|r| truncate_to_chars(r, MAX_TIER_REASON_LEN)),
             joined_at: Instant::now(),
             joined_at_unix: now_unix,
             conn: client_handle,

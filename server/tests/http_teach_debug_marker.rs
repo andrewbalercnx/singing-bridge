@@ -1,7 +1,7 @@
 // File: server/tests/http_teach_debug_marker.rs
 // Purpose: Verifies the server injects (or withholds) the sb-debug meta tag
 //          correctly and that both HTML pages carry the required DOM structure.
-// Last updated: Sprint 2 (2026-04-17) -- initial implementation
+// Last updated: Sprint 3 (2026-04-17) -- +remote/local video + playsinline asserts
 
 mod common;
 
@@ -28,9 +28,24 @@ async fn test_dev_teach_html_carries_debug_marker_student_view() {
         !body.contains("<!-- sb:debug -->"),
         "dev student view still has placeholder"
     );
-    // Structural assertions (finding #2 regression guard, finding #21)
+    // Structural assertions (Sprint 2 finding #2, finding #21; Sprint 3 extensions)
     assert!(body.contains(r#"id="remote-audio""#), "student.html missing #remote-audio");
     assert!(body.contains(r#"id="unmute-audio""#), "student.html missing #unmute-audio");
+    assert!(body.contains(r#"id="remote-video""#), "student.html missing #remote-video");
+    assert!(body.contains(r#"id="local-video""#), "student.html missing #local-video");
+    // playsinline on both video elements (R2 iOS full-screen risk).
+    let remote_idx = body.find(r#"id="remote-video""#).unwrap();
+    let local_idx = body.find(r#"id="local-video""#).unwrap();
+    let remote_tag_end = remote_idx + body[remote_idx..].find('>').unwrap();
+    let local_tag_end = local_idx + body[local_idx..].find('>').unwrap();
+    assert!(
+        body[remote_idx..remote_tag_end].contains("playsinline"),
+        "student.html #remote-video missing playsinline"
+    );
+    assert!(
+        body[local_idx..local_tag_end].contains("playsinline"),
+        "student.html #local-video missing playsinline"
+    );
     drop(cookie);
     app.shutdown().await;
 }
@@ -53,6 +68,20 @@ async fn test_dev_teach_html_carries_debug_marker_teacher_view() {
     );
     assert!(body.contains(r#"id="remote-audio""#), "teacher.html missing #remote-audio");
     assert!(body.contains(r#"id="unmute-audio""#), "teacher.html missing #unmute-audio");
+    assert!(body.contains(r#"id="remote-video""#), "teacher.html missing #remote-video");
+    assert!(body.contains(r#"id="local-video""#), "teacher.html missing #local-video");
+    let remote_idx = body.find(r#"id="remote-video""#).unwrap();
+    let local_idx = body.find(r#"id="local-video""#).unwrap();
+    let remote_tag_end = remote_idx + body[remote_idx..].find('>').unwrap();
+    let local_tag_end = local_idx + body[local_idx..].find('>').unwrap();
+    assert!(
+        body[remote_idx..remote_tag_end].contains("playsinline"),
+        "teacher.html #remote-video missing playsinline"
+    );
+    assert!(
+        body[local_idx..local_tag_end].contains("playsinline"),
+        "teacher.html #local-video missing playsinline"
+    );
     app.shutdown().await;
 }
 

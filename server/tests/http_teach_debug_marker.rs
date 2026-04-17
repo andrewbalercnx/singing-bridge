@@ -1,7 +1,9 @@
 // File: server/tests/http_teach_debug_marker.rs
 // Purpose: Verifies the server injects (or withholds) the sb-debug meta tag
 //          correctly and that both HTML pages carry the required DOM structure.
-// Last updated: Sprint 3 (2026-04-17) -- +remote/local video + playsinline asserts
+//          Sprint 4 adds asserts for the new quality-badge, reconnect-banner,
+//          and floor-violation elements.
+// Last updated: Sprint 4 (2026-04-17) -- +quality badge, reconnect, floor asserts
 
 mod common;
 
@@ -60,6 +62,20 @@ async fn test_dev_teach_html_carries_debug_marker_student_view() {
     // Landing-page gating notices (student-only).
     assert!(body.contains(r#"id="block-notice""#), "student.html missing #block-notice");
     assert!(body.contains(r#"id="degraded-notice""#), "student.html missing #degraded-notice");
+    // Sprint 4: quality badge + reconnect banner + floor violation notice.
+    assert!(body.contains(r#"id="quality-badge""#), "student.html missing #quality-badge");
+    assert!(body.contains(r#"id="reconnect-banner""#), "student.html missing #reconnect-banner");
+    assert!(body.contains(r#"id="floor-violation""#), "student.html missing #floor-violation");
+    // Sprint 4: new script tags for adapt/quality/reconnect/session-core loaded in order.
+    let adapt_idx = body.find(r#"src="/assets/adapt.js""#).expect("student.html missing adapt.js");
+    let quality_idx = body.find(r#"src="/assets/quality.js""#).expect("student.html missing quality.js");
+    let reconnect_idx = body.find(r#"src="/assets/reconnect.js""#).expect("student.html missing reconnect.js");
+    let sessioncore_idx = body.find(r#"src="/assets/session-core.js""#).expect("student.html missing session-core.js");
+    let signalling_idx = body.find(r#"src="/assets/signalling.js""#).expect("student.html missing signalling.js");
+    assert!(adapt_idx < quality_idx, "adapt.js must load before quality.js");
+    assert!(quality_idx < reconnect_idx, "quality.js must load before reconnect.js");
+    assert!(reconnect_idx < sessioncore_idx, "reconnect.js must load before session-core.js");
+    assert!(sessioncore_idx < signalling_idx, "session-core.js must load before signalling.js");
     drop(cookie);
     app.shutdown().await;
 }
@@ -104,6 +120,10 @@ async fn test_dev_teach_html_carries_debug_marker_teacher_view() {
     assert!(body.contains(r#"id="video-off""#), "teacher.html missing #video-off button");
     assert!(body.contains(r#"id="hangup""#), "teacher.html missing #hangup button");
     assert!(body.contains(r#"class="tiles""#), "teacher.html missing .tiles container");
+    // Sprint 4: quality badge + reconnect banner + floor violation notice.
+    assert!(body.contains(r#"id="quality-badge""#), "teacher.html missing #quality-badge");
+    assert!(body.contains(r#"id="reconnect-banner""#), "teacher.html missing #reconnect-banner");
+    assert!(body.contains(r#"id="floor-violation""#), "teacher.html missing #floor-violation");
     app.shutdown().await;
 }
 

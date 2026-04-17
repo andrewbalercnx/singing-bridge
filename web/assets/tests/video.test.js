@@ -8,7 +8,10 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { hasVideoTrack, orderCodecs } = require('../video.js');
+const {
+  hasVideoTrack, orderCodecs, verifyVideoFeedback,
+  SDP_WITH_VIDEO, SDP_WITH_VIDEO_SAFARI, SDP_NO_VIDEO,
+} = require('../video.js');
 
 // --- hasVideoTrack (6 tests) ------------------------------------------------
 
@@ -115,4 +118,36 @@ test('orderCodecs: non-array input returns empty array', () => {
   assert.deepEqual(orderCodecs(null, 'h264'), []);
   assert.deepEqual(orderCodecs(undefined, 'vp8'), []);
   assert.deepEqual(orderCodecs('not-an-array', 'h264'), []);
+});
+
+// --- Sprint 4 §5.1 #36-#38: verifyVideoFeedback ---------------------------
+
+test('#36 verifyVideoFeedback Chrome-like SDP: nack + pli + transport-cc all true', () => {
+  const r = verifyVideoFeedback(SDP_WITH_VIDEO);
+  assert.equal(r.nack, true);
+  assert.equal(r.nackPli, true);
+  assert.equal(r.transportCc, true);
+  assert.equal(r.red, true);
+  assert.equal(r.ulpfec, true);
+});
+
+test('#37 verifyVideoFeedback audio-only SDP: all false, no throw', () => {
+  const r = verifyVideoFeedback(SDP_NO_VIDEO);
+  assert.deepEqual(r, { nack: false, nackPli: false, transportCc: false, red: false, ulpfec: false });
+});
+
+test('#38 verifyVideoFeedback Safari 16-like SDP: nack + pli, no transport-cc, no RED/ULPFEC', () => {
+  const r = verifyVideoFeedback(SDP_WITH_VIDEO_SAFARI);
+  assert.equal(r.nack, true);
+  assert.equal(r.nackPli, true);
+  assert.equal(r.transportCc, false);
+  assert.equal(r.red, false);
+  assert.equal(r.ulpfec, false);
+});
+
+test('verifyVideoFeedback handles null / empty input safely', () => {
+  assert.deepEqual(verifyVideoFeedback(null),
+    { nack: false, nackPli: false, transportCc: false, red: false, ulpfec: false });
+  assert.deepEqual(verifyVideoFeedback(''),
+    { nack: false, nackPli: false, transportCc: false, red: false, ulpfec: false });
 });

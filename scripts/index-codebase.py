@@ -18,7 +18,7 @@ Depends on:
   - internal: scripts/header_parser.py (parse_header for Sprint 125 index)
   - external: sqlite3, ast (stdlib only)
 
-Last updated: Sprint 6 (2026-04-16) -- --max-lines context-pack cap + render_context_table seam
+Last updated: Sprint 4 (2026-04-17) -- tree-sitter skip warning
 
 VVP Codebase Indexer -- builds a SQLite semantic map for Claude Code.
 

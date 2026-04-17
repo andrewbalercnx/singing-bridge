@@ -1,24 +1,27 @@
 // File: web/assets/signalling.js
 // Purpose: Browser-side WebSocket + RTCPeerConnection glue. Two entry
 //          points — connectTeacher and connectStudent — sharing the
-//          framing logic. Sprint 3: wires local+remote audio AND
-//          video, munges Opus SDP, sets video codec preferences,
-//          surfaces browser tier to the teacher via lobby_join.
+//          framing logic. Sprint 4: delegates adapt loop + quality
+//          monitor + reconnect watcher to session-core.js; sets
+//          priority hints at transceiver creation; handles student-
+//          side ICE-restart re-offer on call_restart_ice effect.
 // Role: Only place that speaks the signalling wire protocol on the
 //       client side.
 // Exports: window.signallingClient.{connectTeacher, connectStudent}
 //          (browser);
 //          dispatchRemoteTrack, acquireMedia, teardownMedia (UMD
 //          pure helpers, Node-testable).
-// Depends: window.sbSdp (from sdp.js), window.sbAudio (from audio.js),
-//          window.sbVideo (from video.js), window.sbBrowser (from
-//          browser.js), window.sbDebug (from debug-overlay.js).
+// Depends: window.sbSdp, window.sbAudio, window.sbVideo,
+//          window.sbBrowser, window.sbDebug, window.sbSessionCore
+//          (adapt loop + applyActions), window.sbReconnect (fixtures).
 // Invariants: every setLocalDescription is preceded by
 //             mungeSdpForOpusMusic; every teardown path stops the
-//             debug overlay and releases local audio + video tracks;
-//             if video acquisition throws after audio succeeded,
-//             audio is stopped before the error propagates.
-// Last updated: Sprint 3 (2026-04-17) -- video + tier + refs.media
+//             debug overlay, session subsystems, and releases local
+//             audio + video tracks; applyActions — never this module —
+//             is the sole sender.setParameters mutation site AFTER
+//             session subsystems start; priority hints at transceiver
+//             creation are the only pre-session setParameters calls.
+// Last updated: Sprint 4 (2026-04-17) -- adapt/quality/reconnect wiring
 
 (function (root, factory) {
   'use strict';
@@ -92,7 +95,7 @@
     });
   }
 
-  async function wireBidirectionalMedia(pc, detect) {
+  async function wireBidirectionalMedia(pc, detect, role) {
     var acq = await mod.acquireMedia(window.sbAudio, window.sbVideo);
     var audio = acq.audio;
     var video = acq.video;
@@ -110,6 +113,28 @@
       videoTransceiver, preferH264 ? 'h264' : 'vp8'
     );
 
+    // Sprint 4: priority hints at creation time. Audio = high priority so
+    // browser BWE protects it; video = low priority. minBitrate is NOT set
+    // here — per §4.1.4 it is only written at the studentAudio floor rung.
+    try {
+      var aParams = audioTransceiver.sender.getParameters();
+      if (!aParams.encodings || aParams.encodings.length === 0) {
+        aParams.encodings = [{}];
+      }
+      aParams.encodings[0].priority = 'high';
+      aParams.encodings[0].networkPriority = 'high';
+      await audioTransceiver.sender.setParameters(aParams);
+    } catch (_) { /* older UAs: fall through to browser BWE */ }
+    try {
+      var vParams = videoTransceiver.sender.getParameters();
+      if (!vParams.encodings || vParams.encodings.length === 0) {
+        vParams.encodings = [{}];
+      }
+      vParams.encodings[0].priority = 'low';
+      vParams.encodings[0].networkPriority = 'low';
+      await videoTransceiver.sender.setParameters(vParams);
+    } catch (_) { /* older UAs */ }
+
     pc.ontrack = function (ev) {
       mod.dispatchRemoteTrack(ev, {
         onAudio: window.sbAudio.attachRemoteAudio,
@@ -122,6 +147,8 @@
       video: video,
       audioTransceiver: audioTransceiver,
       videoTransceiver: videoTransceiver,
+      audioSender: audioTransceiver.sender,
+      videoSender: videoTransceiver.sender,
       teardown: function () {
         mod.teardownMedia({ audio: audio, video: video }, window.sbAudio, window.sbVideo);
       },
@@ -130,6 +157,7 @@
 
   function makeTeardown(refs) {
     return function () {
+      if (refs.session) { try { refs.session.stopAll(); } catch (_) {} refs.session = null; }
       if (refs.overlay) { try { refs.overlay.stop(); } catch (_) {} refs.overlay = null; }
       if (refs.media) { try { refs.media.teardown(); } catch (_) {} refs.media = null; }
       if (refs.pc) { try { refs.pc.close(); } catch (_) {} refs.pc = null; }
@@ -137,11 +165,52 @@
     };
   }
 
+  // Starts adapt/quality/reconnect via session-core.js and wires the
+  // student-side ICE-restart re-offer into the existing signalling flow.
+  function startSession(refs, role, sig, peerName, callbacks) {
+    var sessionCallbacks = {
+      onQuality: callbacks.onQuality,
+      onFloorViolation: callbacks.onFloorViolation,
+      onReconnectEffect: function (effect) {
+        if (effect === 'schedule_watch') {
+          if (callbacks.onReconnectBanner) callbacks.onReconnectBanner(true);
+        } else if (effect === 'cancel_timer') {
+          if (callbacks.onReconnectBanner) callbacks.onReconnectBanner(false);
+        } else if (effect === 'call_restart_ice') {
+          if (callbacks.onReconnectBanner) callbacks.onReconnectBanner(true);
+          if (role === 'student' && refs.pc && typeof refs.pc.restartIce === 'function') {
+            try { refs.pc.restartIce(); } catch (_) {}
+            // Explicit re-offer — doesn't rely on negotiationneeded.
+            (async function () {
+              try {
+                var offer = await refs.pc.createOffer({ iceRestart: true });
+                await setMungedLocalDescription(refs.pc, offer);
+                sig.send({ type: 'signal', to: peerName, payload: { sdp: refs.pc.localDescription } });
+              } catch (_) { /* teardown path will pick up failures */ }
+            })();
+          }
+        } else if (effect === 'give_up') {
+          if (callbacks.onReconnectBanner) callbacks.onReconnectBanner(false);
+          if (callbacks.onGiveUp) callbacks.onGiveUp();
+        }
+      },
+    };
+    refs.session = window.sbSessionCore.startSessionSubsystems(
+      refs.pc,
+      { audio: refs.media.audioSender, video: refs.media.videoSender },
+      role,
+      sessionCallbacks
+    );
+  }
+
   async function connectTeacher(args) {
     var slug = args.slug;
     var onLobbyUpdate = args.onLobbyUpdate;
     var onPeerConnected = args.onPeerConnected;
     var onPeerDisconnected = args.onPeerDisconnected;
+    var onQuality = args.onQuality;
+    var onFloorViolation = args.onFloorViolation;
+    var onReconnectBanner = args.onReconnectBanner;
 
     var sig = new Signalling(openWs());
     sig.send({ type: 'lobby_watch', slug: slug });
@@ -149,13 +218,13 @@
       if (onLobbyUpdate) onLobbyUpdate(m.entries);
     });
 
-    var refs = { pc: null, media: null, overlay: null, dataChannel: null };
+    var refs = { pc: null, media: null, overlay: null, dataChannel: null, session: null };
     var teardownSession = makeTeardown(refs);
     var detect = detectTier();
 
     sig.on('peer_connected', async function () {
       refs.pc = makePeerConnection();
-      refs.media = await wireBidirectionalMedia(refs.pc, detect);
+      refs.media = await wireBidirectionalMedia(refs.pc, detect, 'teacher');
       refs.overlay = window.sbDebug.startDebugOverlay(refs.pc, { localTrack: refs.media.audio.track });
       refs.pc.onicecandidate = function (ev) {
         if (ev.candidate) sig.send({ type: 'signal', to: 'student', payload: { candidate: ev.candidate } });
@@ -163,6 +232,15 @@
       refs.pc.ondatachannel = function (ev) {
         refs.dataChannel = ev.channel;
         refs.dataChannel.onopen = function () {
+          startSession(refs, 'teacher', sig, 'student', {
+            onQuality: onQuality,
+            onFloorViolation: onFloorViolation,
+            onReconnectBanner: onReconnectBanner,
+            onGiveUp: function () {
+              teardownSession();
+              if (onPeerDisconnected) onPeerDisconnected();
+            },
+          });
           if (onPeerConnected) onPeerConnected({
             dataChannel: refs.dataChannel,
             audioTrack: refs.media.audio.track,
@@ -204,6 +282,9 @@
     var onRejected = args.onRejected;
     var onPeerDisconnected = args.onPeerDisconnected;
     var onPeerConnected = args.onPeerConnected;
+    var onQuality = args.onQuality;
+    var onFloorViolation = args.onFloorViolation;
+    var onReconnectBanner = args.onReconnectBanner;
 
     var detect = detectTier();
     var sig = new Signalling(openWs());
@@ -217,7 +298,7 @@
       tier_reason: detect.reasons[0] || null,
     });
 
-    var refs = { pc: null, media: null, overlay: null, dataChannel: null };
+    var refs = { pc: null, media: null, overlay: null, dataChannel: null, session: null };
     var teardownSession = makeTeardown(refs);
 
     sig.on('admitted', function () { if (onAdmitted) onAdmitted(); });
@@ -227,13 +308,22 @@
     });
     sig.on('peer_connected', async function () {
       refs.pc = makePeerConnection();
-      refs.media = await wireBidirectionalMedia(refs.pc, detect);
+      refs.media = await wireBidirectionalMedia(refs.pc, detect, 'student');
       refs.overlay = window.sbDebug.startDebugOverlay(refs.pc, { localTrack: refs.media.audio.track });
       refs.pc.onicecandidate = function (ev) {
         if (ev.candidate) sig.send({ type: 'signal', to: 'teacher', payload: { candidate: ev.candidate } });
       };
       refs.dataChannel = refs.pc.createDataChannel('hello');
       refs.dataChannel.onopen = function () {
+        startSession(refs, 'student', sig, 'teacher', {
+          onQuality: onQuality,
+          onFloorViolation: onFloorViolation,
+          onReconnectBanner: onReconnectBanner,
+          onGiveUp: function () {
+            teardownSession();
+            if (onPeerDisconnected) onPeerDisconnected();
+          },
+        });
         if (onPeerConnected) onPeerConnected({
           dataChannel: refs.dataChannel,
           audioTrack: refs.media.audio.track,

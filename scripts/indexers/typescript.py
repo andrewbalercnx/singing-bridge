@@ -23,7 +23,7 @@ Invariants & gotchas:
     `public`/`private` modifier inside classes. Exported symbols are
     the intended Exports contract.
 
-Last updated: Sprint 1 (2026-04-14) -- initial indexer
+Last updated: Sprint 4 (2026-04-17) -- sync + dispatch
 """
 
 from __future__ import annotations

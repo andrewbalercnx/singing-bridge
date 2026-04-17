@@ -1,9 +1,9 @@
 // File: web/assets/student.js
-// Purpose: Student join form + lobby/session UI driver. Sprint 3:
-//          runs the landing-page browser-compat gate on load, shows
-//          block/degraded notices, wires local-video preview + the
-//          mute/video-off/end-call controls.
-// Last updated: Sprint 3 (2026-04-17) -- +browser gate +controls +local preview
+// Purpose: Student join form + lobby/session UI driver. Sprint 4:
+//          threads onQuality / onFloorViolation / onReconnectBanner
+//          callbacks through to the signalling client; renders the
+//          quality badge and floor-violation notice.
+// Last updated: Sprint 4 (2026-04-17) -- +quality +floor +reconnect wiring
 
 'use strict';
 
@@ -19,6 +19,9 @@
   const blockReason = document.getElementById('block-reason');
   const degradedNotice = document.getElementById('degraded-notice');
   const degradedReason = document.getElementById('degraded-reason');
+  const qualityBadge = document.getElementById('quality-badge');
+  const reconnectBanner = document.getElementById('reconnect-banner');
+  const floorNotice = document.getElementById('floor-violation');
 
   // Landing-page browser-compat gate.
   const detect = window.sbBrowser.detectBrowser(navigator.userAgent, {
@@ -60,6 +63,7 @@
       },
       onPeerConnected({ dataChannel, audioTrack, videoTrack }) {
         sessionSection.hidden = false;
+        if (qualityBadge) qualityBadge.hidden = false;
         if (videoTrack) {
           localVideo.srcObject = new MediaStream([videoTrack]);
         }
@@ -76,8 +80,25 @@
       onPeerDisconnected() {
         if (controlsHandle) { controlsHandle.teardown(); controlsHandle = null; }
         sessionSection.hidden = true;
+        if (qualityBadge) qualityBadge.hidden = true;
+        if (reconnectBanner) reconnectBanner.hidden = true;
         localVideo.srcObject = null;
         errEl.textContent = 'Teacher disconnected.';
+      },
+      onQuality(summary) {
+        if (qualityBadge && summary) {
+          window.sbQuality.renderQualityBadge(qualityBadge, summary);
+        }
+      },
+      onFloorViolation() {
+        // Student-side floor surface: hide the session, reveal the notice,
+        // hang up the call so no further RTP flows.
+        sessionSection.hidden = true;
+        if (floorNotice) floorNotice.hidden = false;
+        if (handle) handle.hangup();
+      },
+      onReconnectBanner(visible) {
+        if (reconnectBanner) reconnectBanner.hidden = !visible;
       },
     });
     window.addEventListener('beforeunload', () => { if (handle) handle.hangup(); });

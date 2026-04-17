@@ -125,6 +125,34 @@ test('non-string input passes through', () => {
   assert.equal(mungeSdpForOpusMusic(undefined), undefined);
 });
 
+// --- Sprint 4 §5.1 #34: FEC survives the munger across every fixture ------
+
+test('#34 useinbandfec=1 appears in the munged output for every Opus fixture', () => {
+  for (const [name, sdp] of Object.entries(SDP_FIXTURES)) {
+    if (typeof sdp !== 'string') continue;
+    if (!/\bopus\/48000\/2\b/i.test(sdp)) continue; // non-opus fixtures skip
+    const out = mungeSdpForOpusMusic(sdp);
+    assert.ok(
+      /useinbandfec=1/.test(out),
+      `fixture ${name} lost useinbandfec=1 after munging`
+    );
+  }
+});
+
+// --- Sprint 4 §5.1 #35: video m-section byte-identical after munger -------
+
+test('#35 video m-section passes through the munger unchanged', () => {
+  const { SDP_WITH_VIDEO } = require('../video.js');
+  const out = mungeSdpForOpusMusic(SDP_WITH_VIDEO);
+  function videoSection(s) {
+    const i = s.indexOf('m=video');
+    if (i === -1) return '';
+    const j = s.indexOf('m=', i + 1);
+    return j === -1 ? s.slice(i) : s.slice(i, j);
+  }
+  assert.equal(videoSection(out), videoSection(SDP_WITH_VIDEO));
+});
+
 // --- Helper -----------------------------------------------------------------
 
 function escapeRe(s) {

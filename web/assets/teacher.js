@@ -1,10 +1,11 @@
 // File: web/assets/teacher.js
 // Purpose: Teacher UI wiring. Student-supplied strings rendered via
 //          textContent only (R4 recommendation — no innerHTML to
-//          prevent XSS). Sprint 3: renders tier + tier_reason on
-//          each lobby entry, wires local-video preview, and attaches
-//          the mute/video-off/end-call controls.
-// Last updated: Sprint 3 (2026-04-17) -- +tier badge +controls +local preview
+//          prevent XSS). Sprint 4: threads onQuality /
+//          onFloorViolation / onReconnectBanner callbacks through
+//          to the signalling client; renders the quality badge and
+//          mirrors the student-side floor-violation notice.
+// Last updated: Sprint 4 (2026-04-17) -- +quality +floor +reconnect wiring
 
 'use strict';
 
@@ -16,6 +17,9 @@
   const emptyEl = document.getElementById('lobby-empty');
   const statusEl = document.getElementById('session-status');
   const localVideo = document.getElementById('local-video');
+  const qualityBadge = document.getElementById('quality-badge');
+  const reconnectBanner = document.getElementById('reconnect-banner');
+  const floorNotice = document.getElementById('floor-violation');
 
   // Proxy so list-item click handlers can reach the handle before
   // connectTeacher resolves.
@@ -61,6 +65,7 @@
     },
     onPeerConnected({ dataChannel, audioTrack, videoTrack }) {
       statusEl.textContent = 'Connected.';
+      if (qualityBadge) qualityBadge.hidden = false;
       if (videoTrack) {
         localVideo.srcObject = new MediaStream([videoTrack]);
       }
@@ -77,7 +82,24 @@
     onPeerDisconnected() {
       statusEl.textContent = 'Student disconnected.';
       if (controlsHandle) { controlsHandle.teardown(); controlsHandle = null; }
+      if (qualityBadge) qualityBadge.hidden = true;
+      if (reconnectBanner) reconnectBanner.hidden = true;
+      if (floorNotice) floorNotice.hidden = true;
       localVideo.srcObject = null;
+    },
+    onQuality(summary) {
+      if (qualityBadge && summary) {
+        window.sbQuality.renderQualityBadge(qualityBadge, summary);
+      }
+    },
+    onFloorViolation() {
+      // Teacher side: show the mirror notice so the teacher understands
+      // why the session ended. The session itself ends via onGiveUp
+      // once the student hangs up.
+      if (floorNotice) floorNotice.hidden = false;
+    },
+    onReconnectBanner(visible) {
+      if (reconnectBanner) reconnectBanner.hidden = !visible;
     },
   }).then((h) => {
     window._handle = h;

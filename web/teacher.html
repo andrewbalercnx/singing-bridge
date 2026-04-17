@@ -4,7 +4,7 @@
   Purpose: Teacher-side landing page. The sb:debug placeholder is
            replaced server-side with a <meta name="sb-debug"> tag
            when config.dev is true (empty string otherwise).
-  Last updated: Sprint 3 (2026-04-17) -- +video tiles +controls +tier badge
+  Last updated: Sprint 4 (2026-04-17) -- +quality badge +reconnect/floor notices
 -->
 <html lang="en">
 <head>
@@ -35,6 +35,11 @@
       </p>
       <p id="session-status">Waiting for a student.</p>
 
+      <div id="reconnect-banner" class="reconnect-banner" hidden>Reconnecting…</div>
+      <div id="floor-violation" class="floor-violation" hidden>
+        <p>This student's connection can't support the lesson.</p>
+      </div>
+
       <div class="tiles">
         <div class="tile remote">
           <video id="remote-video" autoplay playsinline></video>
@@ -49,6 +54,7 @@
         <button id="mute" type="button" aria-pressed="false">Mute</button>
         <button id="video-off" type="button" aria-pressed="false">Video off</button>
         <button id="hangup" type="button">End session</button>
+        <span id="quality-badge" class="quality-badge good" hidden>good</span>
       </div>
     </section>
 
@@ -61,6 +67,10 @@
     <script src="/assets/video.js"></script>
     <script src="/assets/debug-overlay.js"></script>
     <script src="/assets/controls.js"></script>
+    <script src="/assets/adapt.js"></script>
+    <script src="/assets/quality.js"></script>
+    <script src="/assets/reconnect.js"></script>
+    <script src="/assets/session-core.js"></script>
     <script src="/assets/signalling.js"></script>
     <script src="/assets/teacher.js"></script>
   </main>

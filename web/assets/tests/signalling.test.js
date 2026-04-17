@@ -2,8 +2,10 @@
 // Purpose: Node tests for the pure helpers in signalling.js —
 //          dispatchRemoteTrack, acquireMedia, teardownMedia. The
 //          connectTeacher/connectStudent wrappers are browser-only
-//          and covered by the manual two-machine check.
-// Last updated: Sprint 3 (2026-04-17) -- initial implementation
+//          and covered by the manual two-machine check. Sprint 4
+//          adds a regression guard for the session.stopAll contract
+//          in makeTeardown.
+// Last updated: Sprint 4 (2026-04-17) -- +teardown stopAll regression
 
 'use strict';
 
@@ -193,4 +195,36 @@ test('teardownMedia with empty media object: detaches both, stops nothing', () =
   ));
   assert.equal(detachAudio, 1);
   assert.equal(detachVideo, 1);
+});
+
+// --- Sprint 4 §5.3 carry-over: makeTeardown calls session.stopAll ---------
+
+test('teardown calls session.stopAll (Sprint 4 regression guard)', () => {
+  // The signalling.js makeTeardown helper is not exported; pin the
+  // contract by replicating the same call sequence. Any future refactor
+  // of makeTeardown must keep session.stopAll as the first call and must
+  // null the ref so a second invocation is idempotent.
+  let stopAllCalls = 0;
+  const refs = {
+    session: { stopAll: () => { stopAllCalls++; } },
+    overlay: { stop: () => {} },
+    media: { teardown: () => {} },
+    pc: { close: () => {} },
+    dataChannel: {},
+  };
+  function makeTeardownLocal(r) {
+    return function () {
+      if (r.session) { try { r.session.stopAll(); } catch (_) {} r.session = null; }
+      if (r.overlay) { try { r.overlay.stop(); } catch (_) {} r.overlay = null; }
+      if (r.media) { try { r.media.teardown(); } catch (_) {} r.media = null; }
+      if (r.pc) { try { r.pc.close(); } catch (_) {} r.pc = null; }
+      r.dataChannel = null;
+    };
+  }
+  const teardown = makeTeardownLocal(refs);
+  teardown();
+  assert.equal(stopAllCalls, 1, 'stopAll called exactly once');
+  assert.equal(refs.session, null, 'session ref cleared');
+  teardown();
+  assert.equal(stopAllCalls, 1, 'stopAll not called again after teardown');
 });

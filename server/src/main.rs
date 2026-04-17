@@ -30,7 +30,7 @@ async fn main() -> anyhow::Result<()> {
 
     let config = Config::dev_default();
     tokio::fs::create_dir_all(&config.dev_mail_dir).await.ok();
-    let mailer = Arc::new(DevMailer::new(&config.dev_mail_dir)?);
+    let mailer = Arc::new(DevMailer::new(&config.dev_mail_dir).await?);
 
     let pool = init_pool(&config.db_url).await?;
 

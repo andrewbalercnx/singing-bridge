@@ -62,6 +62,11 @@ pub async fn check_and_record(
         .execute(&mut *conn)
         .await?;
 
+    // If any of the queries above returned an error, the `?` unwound
+    // before this COMMIT ran and the connection drops with the
+    // transaction still open — sqlx then issues an implicit ROLLBACK
+    // when the connection is returned to the pool. That's the safety
+    // net for the error path; the happy path commits explicitly here.
     conn.execute("COMMIT").await?;
 
     if over_email || over_ip {

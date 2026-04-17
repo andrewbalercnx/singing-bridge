@@ -41,7 +41,7 @@ bidirectional full-fidelity A/V session.
 - Student on machine B visits URL, enters email; teacher sees them in lobby; teacher admits; data channel opens end-to-end and round-trips a "hello" message
 - Disconnect on either side cleans up lobby and session state correctly
 
-**Status:** PENDING
+**Status:** COMPLETE — 2026-04-17, commit `b91a8c1` (code review APPROVED R2)
 
 ---
 

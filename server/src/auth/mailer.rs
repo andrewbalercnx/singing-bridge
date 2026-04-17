@@ -40,15 +40,15 @@ pub struct DevMailer {
 }
 
 impl DevMailer {
-    pub fn new(dir: impl AsRef<Path>) -> Result<Self, std::io::Error> {
+    pub async fn new(dir: impl AsRef<Path>) -> Result<Self, std::io::Error> {
         let dir = dir.as_ref().to_path_buf();
-        std::fs::create_dir_all(&dir)?;
+        tokio::fs::create_dir_all(&dir).await?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let mut p = std::fs::metadata(&dir)?.permissions();
+            let mut p = tokio::fs::metadata(&dir).await?.permissions();
             p.set_mode(0o700);
-            std::fs::set_permissions(&dir, p)?;
+            tokio::fs::set_permissions(&dir, p).await?;
         }
         Ok(Self { dir })
     }

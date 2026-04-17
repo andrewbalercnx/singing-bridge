@@ -104,7 +104,7 @@ async fn run(
         candidate_teacher_id: candidate_teacher,
         slug: None,
         role: None,
-        tx: tx.clone(),
+        tx,
         pump,
     };
 

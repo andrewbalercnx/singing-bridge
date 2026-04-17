@@ -92,7 +92,7 @@ pub async fn spawn_app_with(opts: TestOpts) -> TestApp {
     config.signup_rate_limit_per_ip = opts.signup_rate_limit_per_ip;
 
     let pool = init_pool(&config.db_url).await.unwrap();
-    let mailer: Arc<dyn Mailer> = Arc::new(DevMailer::new(&config.dev_mail_dir).unwrap());
+    let mailer: Arc<dyn Mailer> = Arc::new(DevMailer::new(&config.dev_mail_dir).await.unwrap());
     let shutdown = CancellationToken::new();
 
     let state = Arc::new(AppState {

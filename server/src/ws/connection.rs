@@ -2,10 +2,12 @@
 // Purpose: ConnContext — per-connection state carried through the inbound
 //          loop. Owns the pump JoinHandle for the life of the connection.
 // Role: Bag of state; no side-effecting functions here.
-// Exports: ConnContext, PreJoin
+// Exports: ConnContext
 // Depends: tokio, protocol, state
 // Invariants: `pump` is joined-or-aborted exactly once, by cleanup() (§4.8).
-// Last updated: Sprint 1 (2026-04-17) -- initial implementation
+//             `tx` is the sole handler-owned sender; cleanup drops it so the
+//             pump's rx.recv() returns None and the task exits cleanly.
+// Last updated: Sprint 1 (2026-04-17) -- R2 cleanup; drop PreJoin reference.
 
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;

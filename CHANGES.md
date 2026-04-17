@@ -11,6 +11,33 @@
 > **Commit:** `<sha>`
 > ```
 
+## Sprint 2: High-fidelity bidirectional audio — 2026-04-17
+
+**Files changed:**
+- `web/assets/sdp.js` — SDP munger: upserts Opus music-mode fmtp params (stereo, maxaveragebitrate=128000, FEC, CBR=0); UMD shim for Node test runner.
+- `web/assets/tests/sdp.test.js` — 13 Node property + boundary tests for the SDP munger.
+- `web/assets/audio.js` — `startLocalAudio` (DSP-off getUserMedia), `attachRemoteAudio` (idempotent + autoplay recovery), `detachRemoteAudio`, pure `hasTrack` predicate.
+- `web/assets/tests/audio.test.js` — 6 Node tests for `hasTrack`.
+- `web/assets/debug-overlay.js` — dev-only live overlay (codec params, DSP flags, getStats); self-gated on `<meta name="sb-debug">`; PT-specific `parseOpusFmtp`; safe `setRow` via dataset traversal.
+- `web/assets/loopback.js` — mic→speaker round-trip measurement via AudioWorklet cross-correlation; `setupAudioGraph`, `schedulePulses`, `analyzeCapture` helpers.
+- `web/assets/loopback-worklet.js` — `AudioWorkletProcessor` that transfers captured blocks to main thread via MessagePort.
+- `web/assets/signalling.js` — wires bidirectional audio, SDP munge on every `setLocalDescription`, debug overlay lifecycle, `makeTeardown` factory.
+- `web/{teacher,student}.html` — add `<!-- sb:debug -->`, `#remote-audio`, `#unmute-audio`, headphones note, `#sb-debug`, three new `<script>` tags.
+- `web/loopback.html` — dev-only harness UI.
+- `server/src/http/teach.rs` — `inject_debug_marker` (strips comment in prod, injects meta in dev); `Cache-Control: private, no-store` + `Vary: Cookie`.
+- `server/src/http/loopback.rs` — dev-only `/loopback` route; 404 in prod.
+- `server/src/http/mod.rs` — register `/loopback`.
+- `server/tests/http_teach_debug_marker.rs` — 3 tests: dev student view, dev teacher view, prod (no marker, no comment).
+- `server/tests/http_loopback.rs` — 3 tests: dev serves HTML, prod returns 404, missing file returns error.
+- `server/tests/http_csp.rs` — dev/prod split; `verify_html_has_no_inline_script` extended to `/teach/:slug` + `/loopback`.
+- `server/tests/common/mod.rs` — `TestOpts.dev` field, `TestApp::get_html` helper.
+- `.github/workflows/ci.yml` — add `node --test web/assets/tests/*.test.js` step.
+- `package.json` — `{"private": true, "type": "commonjs"}` for UMD/Node compat.
+
+**Commit:** `ea612cf` (code review APPROVED R2)
+
+---
+
 ## Sprint 1: Signalling foundation + teacher identity + lobby — 2026-04-17
 
 **Files changed:**

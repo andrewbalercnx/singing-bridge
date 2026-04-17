@@ -62,7 +62,7 @@ bidirectional full-fidelity A/V session.
 - SDP inspection confirms Opus at 128 kbps, stereo, music mode, FEC on
 - One-way audio latency on LAN is measurably lower than WebRTC default configuration; exact number is recorded, not gated against
 
-**Status:** PENDING
+**Status:** COMPLETE — 2026-04-17, commit `ea612cf` (code review APPROVED R2)
 
 ---
 

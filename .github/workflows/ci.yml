@@ -5,7 +5,7 @@
 #   Ships to both the dev-container and the template repo via the
 #   template manifest; downstream projects inherit it on bootstrap.
 #
-# Last updated: Sprint 5 (2026-04-16) -- initial workflow.
+# Last updated: Sprint 2 (2026-04-17) -- add JS test step.
 
 name: CI
 

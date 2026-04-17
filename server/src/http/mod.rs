@@ -5,7 +5,7 @@
 // Depends: axum, tower-http, tower
 // Invariants: every HTML route carries the strict CSP; /auth/* carries
 //             Cache-Control: no-store.
-// Last updated: Sprint 1 (2026-04-17) -- initial implementation
+// Last updated: Sprint 2 (2026-04-17) -- add /loopback route
 
 pub mod loopback;
 pub mod security_headers;

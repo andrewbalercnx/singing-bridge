@@ -114,7 +114,7 @@ bidirectional full-fidelity A/V session.
 - Audio-to-teacher floor is respected; floor-violation surface fires correctly
 - Transient 2–3 s network drop is auto-recovered
 
-**Status:** PENDING
+**Status:** COMPLETE — 2026-04-17, commit `22a46bf` (code review APPROVED R3)
 
 ---
 

@@ -11,6 +11,31 @@
 > **Commit:** `<sha>`
 > ```
 
+## Sprint 4: Bandwidth adaptation + quality hardening — 2026-04-17
+
+**Files changed:**
+- `web/assets/adapt.js` — NEW: pure four-rung degradation ladder (studentVideo/teacherVideo/teacherAudio/studentAudio); `initLadderState`, `decideNextRung`, `encodingParamsForRung`, `floorViolated`; state machine split into `stepVideoRung` + `stepAudioRung` + `stepFloorBreach` helpers; student audio rung 1 writes both `maxBitrate=96000` AND `minBitrate=96000`.
+- `web/assets/quality.js` — NEW: pure `summariseStats(stats, prevStats)` with multi-SSRC tiebreak by `packetsSent`; `qualityTierFromSummary` with strict `>` threshold semantics; `renderQualityBadge` (textContent + className only); `STATS_FIXTURES`.
+- `web/assets/reconnect.js` — NEW: pure `onIceStateEvent` with full `(phase, iceState)` transition table; `healthy→watching→restarting→giveup` with direct `healthy→giveup` on `failed`/`closed`; `STANDARD_FLICKER`, `STRAIGHT_TO_FAILED`, `CLOSED_FROM_HEALTHY` fixtures; browser `startReconnectWatcher` with injectable clock.
+- `web/assets/session-core.js` — NEW: UMD pure `applyActions` (sole `setParameters` site; swallows rejections with `console.warn` logging; never touches `track.enabled`); browser `startSessionSubsystems(pc, senders, role, callbacks) → { stopAll() }` drives the 2 s adapt/quality/reconnect loop.
+- `web/assets/signalling.js` — priority hints at transceiver creation; `wireBidirectionalMedia` returns `audioSender`/`videoSender`; after data channel opens delegates to session-core; ICE-restart re-offer path on `call_restart_ice` (student only, via `pc.restartIce()` + new offer); `makeTeardown` moved to pure factory and calls `stopAll()`; Google STUN annotated as Sprint-5-to-replace.
+- `web/assets/video.js` — `verifyVideoFeedback(sdp)` pure helper; `SDP_WITH_VIDEO`, `SDP_WITH_VIDEO_SAFARI`, `SDP_NO_VIDEO` fixtures.
+- `web/assets/student.js` / `teacher.js` — thread `onQuality` / `onFloorViolation` / `onReconnectBanner` callbacks; render quality badge; student hides session + hangs up on floor violation; teacher mirrors notice. Teacher session handle moved off `window` into closure.
+- `web/student.html` / `web/teacher.html` — `#quality-badge`, `#reconnect-banner`, `#floor-violation`; new `<script>` load order: adapt → quality → reconnect → session-core → signalling.
+- `web/assets/styles.css` — quality-badge (good/fair/poor), reconnect-banner, floor-violation with light/dark themes.
+- `tests/netem/impair.sh` + `clear.sh` + `README.md` — NEW: Linux-only manual harness (`tc netem`); input-validated LOSS/JITTER/IFACE; defaults 2% loss / 20 ms jitter / 10 ms delay on `lo`.
+- `knowledge/runbook/netem.md` — NEW: procedure + expected observables at 2% (exit criterion) and 10% (floor-violation pressure test).
+- `web/assets/tests/adapt.test.js` — NEW: 27 tests covering §5.1 #1–#18 + §5.2 failure paths + `floorViolationEmitted` reset-and-re-fire.
+- `web/assets/tests/quality.test.js` — NEW: deltas, multi-SSRC tiebreak (two-snapshot fixture), threshold + boundary equality, byte-counter reset, inbound-only summary, `t.after()` globals cleanup.
+- `web/assets/tests/reconnect.test.js` — NEW: happy path, idempotent disconnect, direct arcs for `watching+failed/closed` and `restarting+failed/closed`, terminal giveup, dead-field guard (no `retryCount`).
+- `web/assets/tests/session-core.test.js` — NEW: `applyActions` routing, exact parameter forwarding, rejection recovery (Proxy-based `.enabled`-never-accessed guard).
+- `web/assets/tests/sdp.test.js`, `video.test.js`, `signalling.test.js` — extensions: FEC survival across fixtures, video m-section byte-identical, Chrome/Safari/absent SDP feedback fixtures, real `makeTeardown` regression guard (exported from pure factory, exercises production function).
+- `server/tests/ws_signal_relay.rs` — `ice_restart_offer_relays_opaquely` pins server payload-opacity under ICE restart.
+- `server/tests/http_teach_debug_marker.rs` — asserts `#quality-badge`/`#reconnect-banner`/`#floor-violation` on both views (including prod) + script load-order for the new modules on both pages.
+- `scripts/index-codebase.py`, `scripts/indexers/typescript.py` — header maintenance (bumped Last updated, fixed stale file-path comment).
+
+**Commit:** `22a46bf`
+
 ## Sprint 3: Video track + two-tile UI + browser-compat gating — 2026-04-17
 
 **Files changed:**

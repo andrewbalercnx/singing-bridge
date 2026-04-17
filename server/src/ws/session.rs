@@ -81,10 +81,5 @@ async fn send_error(
     code: ErrorCode,
     message: impl Into<String>,
 ) {
-    let _ = tx
-        .send(PumpDirective::Send(ServerMsg::Error {
-            code,
-            message: message.into(),
-        }))
-        .await;
+    super::pump_send_error(tx, code, message).await;
 }

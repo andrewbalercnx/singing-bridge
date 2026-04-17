@@ -41,12 +41,6 @@ impl EntryId {
     }
 }
 
-impl Default for EntryId {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct LobbyEntryView {
     pub id: EntryId,

@@ -69,16 +69,22 @@ pub async fn resolve_teacher_from_cookie(
     let raw = extract_cookie(headers, SESSION_COOKIE_NAME)?;
     let hash = cookie_hash(&raw);
     let now = time::OffsetDateTime::now_utc().unix_timestamp();
-    let row: Option<(magic_link::TeacherId,)> = sqlx::query_as(
+    match sqlx::query_as::<_, (magic_link::TeacherId,)>(
         "SELECT teacher_id FROM sessions WHERE cookie_hash = ? AND expires_at > ?",
     )
     .bind(&hash)
     .bind(now)
     .fetch_optional(pool)
     .await
-    .ok()
-    .flatten();
-    row.map(|(tid,)| tid)
+    {
+        Ok(row) => row.map(|(tid,)| tid),
+        Err(e) => {
+            // Log the failure — an unauth'd response is the safe fallback,
+            // but silent DB errors would hide outages.
+            tracing::error!(error = %e, "sessions lookup failed");
+            None
+        }
+    }
 }
 
 fn extract_cookie(headers: &HeaderMap, name: &str) -> Option<String> {

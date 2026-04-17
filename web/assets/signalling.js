@@ -2,6 +2,7 @@
 // Purpose: Browser-side WebSocket + RTCPeerConnection glue. Two entry points —
 //          connectTeacher and connectStudent — sharing the framing logic.
 // Role: Only place that speaks the wire protocol on the client side.
+// Exports: window.signallingClient.{connectTeacher, connectStudent}
 // Last updated: Sprint 1 (2026-04-17) -- initial implementation
 
 'use strict';

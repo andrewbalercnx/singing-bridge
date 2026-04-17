@@ -10,15 +10,16 @@
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
+use crate::auth::magic_link::TeacherId;
 use crate::state::{ConnectionId, SlugKey};
 use crate::ws::protocol::{PumpDirective, Role};
 
-/// Marker used solely to keep the PreJoin phase namable in tests; no data.
-pub struct PreJoin;
-
 pub struct ConnContext {
     pub id: ConnectionId,
-    pub candidate_teacher_id: Option<i64>,
+    /// Cookie-derived teacher identity, if any. Resolved to a concrete
+    /// `Role` only after the first `LobbyWatch` / `LobbyJoin` and only if
+    /// the slug is owned by this teacher (R4 #46).
+    pub candidate_teacher_id: Option<TeacherId>,
     pub slug: Option<SlugKey>,
     pub role: Option<Role>,
     pub tx: mpsc::Sender<PumpDirective>,

@@ -11,11 +11,15 @@
 use std::borrow::Cow;
 
 use axum::{
-    http::StatusCode,
+    http::{header, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
     Json,
 };
 use serde::Serialize;
+
+/// Rate-limit Retry-After window advertised on 429 responses. Matches the
+/// sliding-window cap in Config::signup_rate_limit_window_secs.
+pub const RATE_LIMIT_RETRY_AFTER_SECS: u64 = 600;
 
 pub type Result<T> = std::result::Result<T, AppError>;
 
@@ -74,17 +78,31 @@ impl AppError {
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         let (status, code) = self.parts();
-        if matches!(
-            self,
-            AppError::Sqlx(_) | AppError::Io(_) | AppError::Internal(_)
-        ) {
+        // Redact internal error details from the response body so schema /
+        // stack information never leaves the server (R1 code-review
+        // finding #50). We still log the full error server-side.
+        let (message, log_internal) = match &self {
+            AppError::Sqlx(_) | AppError::Io(_) | AppError::Internal(_) => {
+                (String::from("internal error"), true)
+            }
+            other => (other.to_string(), false),
+        };
+        if log_internal {
             tracing::error!(error = %self, "internal error");
         }
         let body = ErrorBody {
             code,
-            message: self.to_string(),
+            message,
             suggestion: None,
         };
-        (status, Json(body)).into_response()
+        let mut resp = (status, Json(body)).into_response();
+        if matches!(self, AppError::TooManyRequests) {
+            resp.headers_mut().insert(
+                header::RETRY_AFTER,
+                HeaderValue::from_str(&RATE_LIMIT_RETRY_AFTER_SECS.to_string())
+                    .unwrap_or_else(|_| HeaderValue::from_static("600")),
+            );
+        }
+        resp
     }
 }

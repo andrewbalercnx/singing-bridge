@@ -128,6 +128,14 @@ async fn signup_rate_limit_per_ip() {
     let _ = app.signup("b@example.test", "slug-two").await;
     let r = app.signup("c@example.test", "slug-three").await;
     assert_eq!(r.status(), 429);
+    // R1 code-review finding #56: 429 must carry Retry-After.
+    let retry = r
+        .headers()
+        .get(reqwest::header::RETRY_AFTER)
+        .expect("Retry-After")
+        .to_str()
+        .unwrap();
+    assert!(retry.parse::<u32>().is_ok(), "Retry-After should be seconds");
     app.shutdown().await;
 }
 

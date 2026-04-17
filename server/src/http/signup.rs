@@ -58,94 +58,135 @@ pub async fn post_signup(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(form): Json<SignupForm>,
 ) -> Result<Response> {
+    let (email, slug) = validate_signup_input(&form)?;
+    enforce_signup_rate_limit(&state, &email, addr.ip().to_string()).await?;
+
+    let teacher_id = match resolve_or_create_teacher(&state, &email, &slug).await? {
+        ResolveTeacher::Id(tid) => tid,
+        ResolveTeacher::SlugConflict => return Ok(slug_conflict_response(&slug)),
+    };
+
+    issue_and_mail_magic_link(&state, teacher_id, &email).await?;
+    Ok((StatusCode::OK, Json(SignupOk { message: "check your email" })).into_response())
+}
+
+fn validate_signup_input(form: &SignupForm) -> Result<(String, String)> {
     let email = form.email.trim().to_ascii_lowercase();
-    if email.is_empty() || !email.contains('@') || email.len() > crate::ws::protocol::MAX_EMAIL_LEN {
+    if email.is_empty() || !email.contains('@') || email.len() > crate::ws::protocol::MAX_EMAIL_LEN
+    {
         return Err(AppError::BadRequest("invalid email".into()));
     }
     let slug = validate_slug(&form.slug)?;
+    Ok((email, slug))
+}
 
+async fn enforce_signup_rate_limit(
+    state: &Arc<AppState>,
+    email: &str,
+    peer_ip: String,
+) -> Result<()> {
     let limits = rate_limit::Limits {
         per_email: state.config.signup_rate_limit_per_email,
         per_ip: state.config.signup_rate_limit_per_ip,
         window_secs: state.config.signup_rate_limit_window_secs,
     };
-    rate_limit::check_and_record(&state.db, &email, &addr.ip().to_string(), &limits).await?;
+    rate_limit::check_and_record(&state.db, email, &peer_ip, &limits).await
+}
 
-    // Existing teacher?
+enum ResolveTeacher {
+    Id(magic_link::TeacherId),
+    SlugConflict,
+}
+
+async fn resolve_or_create_teacher(
+    state: &Arc<AppState>,
+    email: &str,
+    slug: &str,
+) -> Result<ResolveTeacher> {
     let existing: Option<(magic_link::TeacherId, String)> =
         sqlx::query_as("SELECT id, slug FROM teachers WHERE email = ?")
-            .bind(&email)
+            .bind(email)
             .fetch_optional(&state.db)
             .await?;
 
-    let teacher_id = match existing {
-        Some((tid, _existing_slug)) => {
-            let now = time::OffsetDateTime::now_utc().unix_timestamp();
-            let (active,): (i64,) =
-                sqlx::query_as("SELECT COUNT(*) FROM sessions WHERE teacher_id = ? AND expires_at > ?")
-                    .bind(tid)
-                    .bind(now)
-                    .fetch_one(&state.db)
-                    .await?;
-            if active > 0 {
-                return Err(AppError::SessionInProgress);
-            }
+    if let Some((tid, _)) = existing {
+        return rebind_existing_teacher(state, tid, slug).await;
+    }
+    create_new_teacher(state, email, slug).await
+}
 
-            // Slug collision? (someone else holds it)
-            let taken: Option<(magic_link::TeacherId,)> = sqlx::query_as(
-                "SELECT id FROM teachers WHERE slug = ? AND id != ?",
-            )
-            .bind(&slug)
+async fn rebind_existing_teacher(
+    state: &Arc<AppState>,
+    tid: magic_link::TeacherId,
+    slug: &str,
+) -> Result<ResolveTeacher> {
+    let now = time::OffsetDateTime::now_utc().unix_timestamp();
+    let (active,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM sessions WHERE teacher_id = ? AND expires_at > ?")
+            .bind(tid)
+            .bind(now)
+            .fetch_one(&state.db)
+            .await?;
+    if active > 0 {
+        return Err(AppError::SessionInProgress);
+    }
+    let taken: Option<(magic_link::TeacherId,)> =
+        sqlx::query_as("SELECT id FROM teachers WHERE slug = ? AND id != ?")
+            .bind(slug)
             .bind(tid)
             .fetch_optional(&state.db)
             .await?;
-            if taken.is_some() {
-                let suggestions = suggest_alternatives(&slug);
-                let body = ConflictBody {
-                    code: "slug_taken",
-                    message: "that slug is taken",
-                    suggestions,
-                };
-                return Ok((StatusCode::CONFLICT, Json(body)).into_response());
-            }
+    if taken.is_some() {
+        return Ok(ResolveTeacher::SlugConflict);
+    }
+    sqlx::query("UPDATE teachers SET slug = ? WHERE id = ?")
+        .bind(slug)
+        .bind(tid)
+        .execute(&state.db)
+        .await?;
+    magic_link::invalidate_pending(&state.db, tid).await?;
+    Ok(ResolveTeacher::Id(tid))
+}
 
-            // Rebind + invalidate any outstanding links.
-            sqlx::query("UPDATE teachers SET slug = ? WHERE id = ?")
-                .bind(&slug)
-                .bind(tid)
-                .execute(&state.db)
-                .await?;
-            magic_link::invalidate_pending(&state.db, tid).await?;
-            tid
-        }
-        None => {
-            let taken: Option<(magic_link::TeacherId,)> =
-                sqlx::query_as("SELECT id FROM teachers WHERE slug = ?")
-                    .bind(&slug)
-                    .fetch_optional(&state.db)
-                    .await?;
-            if taken.is_some() {
-                let suggestions = suggest_alternatives(&slug);
-                let body = ConflictBody {
-                    code: "slug_taken",
-                    message: "that slug is taken",
-                    suggestions,
-                };
-                return Ok((StatusCode::CONFLICT, Json(body)).into_response());
-            }
-            let created = time::OffsetDateTime::now_utc().unix_timestamp();
-            let (tid,): (magic_link::TeacherId,) = sqlx::query_as(
-                "INSERT INTO teachers (email, slug, created_at) VALUES (?, ?, ?) RETURNING id",
-            )
-            .bind(&email)
-            .bind(&slug)
-            .bind(created)
-            .fetch_one(&state.db)
+async fn create_new_teacher(
+    state: &Arc<AppState>,
+    email: &str,
+    slug: &str,
+) -> Result<ResolveTeacher> {
+    let taken: Option<(magic_link::TeacherId,)> =
+        sqlx::query_as("SELECT id FROM teachers WHERE slug = ?")
+            .bind(slug)
+            .fetch_optional(&state.db)
             .await?;
-            tid
-        }
-    };
+    if taken.is_some() {
+        return Ok(ResolveTeacher::SlugConflict);
+    }
+    let created = time::OffsetDateTime::now_utc().unix_timestamp();
+    let (tid,): (magic_link::TeacherId,) = sqlx::query_as(
+        "INSERT INTO teachers (email, slug, created_at) VALUES (?, ?, ?) RETURNING id",
+    )
+    .bind(email)
+    .bind(slug)
+    .bind(created)
+    .fetch_one(&state.db)
+    .await?;
+    Ok(ResolveTeacher::Id(tid))
+}
 
+fn slug_conflict_response(slug: &str) -> Response {
+    let body = ConflictBody {
+        code: "slug_taken",
+        message: "that slug is taken",
+        suggestions: suggest_alternatives(slug),
+    };
+    (StatusCode::CONFLICT, Json(body)).into_response()
+}
+
+async fn issue_and_mail_magic_link(
+    state: &Arc<AppState>,
+    teacher_id: magic_link::TeacherId,
+    email: &str,
+) -> Result<()> {
     let link = magic_link::issue(&state.db, teacher_id, state.config.magic_link_ttl_secs).await?;
     let mut verify_url = state
         .config
@@ -153,14 +194,12 @@ pub async fn post_signup(
         .join("/auth/verify")
         .map_err(|e| AppError::Internal(format!("url: {e}").into()))?;
     verify_url.set_fragment(Some(&format!("token={}", link.raw_token)));
-
     state
         .mailer
-        .send_magic_link(&email, &verify_url)
+        .send_magic_link(email, &verify_url)
         .await
         .map_err(|e: MailerError| AppError::Internal(format!("mailer: {e}").into()))?;
-
-    Ok((StatusCode::OK, Json(SignupOk { message: "check your email" })).into_response())
+    Ok(())
 }
 
 pub async fn get_verify() -> Response {

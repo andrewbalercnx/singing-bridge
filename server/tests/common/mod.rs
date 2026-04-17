@@ -58,6 +58,22 @@ pub async fn spawn_app() -> TestApp {
     spawn_app_with(TestOpts::default()).await
 }
 
+/// Search upward from the current working directory for the workspace-root
+/// `web/` directory. Used by the test harness — kept tiny so `spawn_app_with`
+/// stays focused on wiring.
+fn locate_web_dir() -> std::path::PathBuf {
+    let mut probe = std::env::current_dir().expect("cwd");
+    loop {
+        let candidate = probe.join("web").join("teacher.html");
+        if candidate.exists() {
+            return probe.join("web");
+        }
+        if !probe.pop() {
+            panic!("could not locate web/ dir from {:?}", std::env::current_dir());
+        }
+    }
+}
+
 pub async fn spawn_app_with(opts: TestOpts) -> TestApp {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -69,26 +85,7 @@ pub async fn spawn_app_with(opts: TestOpts) -> TestApp {
     config.base_url = base_url.clone();
     config.db_url = "sqlite::memory:".into();
     config.dev_mail_dir = mail_dir.path().to_path_buf();
-    config.static_dir = std::env::current_dir()
-        .unwrap()
-        .parent()
-        .unwrap_or_else(|| std::path::Path::new("."))
-        .join("web");
-    // Also try sibling workspace root web/ if running from server/.
-    if !config.static_dir.join("teacher.html").exists() {
-        config.static_dir = std::env::current_dir().unwrap().join("web");
-    }
-    // Fall back further: search upward for `web/teacher.html`.
-    let mut probe = std::env::current_dir().unwrap();
-    while !probe.join("web").join("teacher.html").exists() {
-        if !probe.pop() {
-            break;
-        }
-    }
-    if probe.join("web").join("teacher.html").exists() {
-        config.static_dir = probe.join("web");
-    }
-
+    config.static_dir = locate_web_dir();
     config.lobby_cap_per_room = opts.lobby_cap_per_room;
     config.max_active_rooms = opts.max_active_rooms;
     config.signup_rate_limit_per_email = opts.signup_rate_limit_per_email;
@@ -103,6 +100,7 @@ pub async fn spawn_app_with(opts: TestOpts) -> TestApp {
         config: config.clone(),
         mailer,
         rooms: DashMap::new(),
+        active_rooms: std::sync::atomic::AtomicUsize::new(0),
         shutdown: shutdown.clone(),
     });
 

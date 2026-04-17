@@ -27,7 +27,14 @@
     }
     const body = await res.json();
     history.replaceState(null, '', '/auth/verify');
-    location.href = body.redirect;
+    // Only follow same-origin relative paths — never a full URL. This
+    // protects against a compromised server trying to redirect us offsite.
+    const target = String(body.redirect || '');
+    if (!target.startsWith('/') || target.startsWith('//')) {
+      if (status) status.textContent = 'Invalid redirect.';
+      return;
+    }
+    location.href = target;
   } catch (_) {
     if (status) status.textContent = 'Network error.';
   }

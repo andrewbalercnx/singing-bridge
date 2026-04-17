@@ -39,6 +39,7 @@ async fn main() -> anyhow::Result<()> {
         config: config.clone(),
         mailer,
         rooms: DashMap::new(),
+        active_rooms: std::sync::atomic::AtomicUsize::new(0),
         shutdown: CancellationToken::new(),
     });
 

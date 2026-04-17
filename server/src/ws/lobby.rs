@@ -27,14 +27,7 @@ async fn send_error(
     code: ErrorCode,
     message: impl Into<String>,
 ) {
-    send(
-        tx,
-        ServerMsg::Error {
-            code,
-            message: message.into(),
-        },
-    )
-    .await;
+    super::pump_send_error(tx, code, message).await;
 }
 
 pub async fn join_lobby(
@@ -114,20 +107,29 @@ pub async fn watch_lobby(state: &Arc<AppState>, ctx: &ConnContext, slug: &SlugKe
     true
 }
 
-pub async fn admit(state: &Arc<AppState>, ctx: &ConnContext, entry_id: EntryId) {
-    let Some(slug) = ctx.slug.as_ref() else {
-        return;
-    };
-    let Some(room) = state.room(slug) else {
-        return;
-    };
+enum AdmitOutcome {
+    Ok {
+        student_tx: mpsc::Sender<PumpDirective>,
+        lobby_update: ServerMsg,
+    },
+    SessionInProgress,
+    EntryNotFound,
+    NoRoom,
+}
 
+pub async fn admit(state: &Arc<AppState>, ctx: &ConnContext, entry_id: EntryId) {
     let outcome = {
+        let Some(slug) = ctx.slug.as_ref() else {
+            return;
+        };
+        let Some(room) = state.room(slug) else {
+            return;
+        };
         let mut rs = room.write().await;
         if rs.active_session.is_some() {
-            None::<(mpsc::Sender<PumpDirective>, ServerMsg, Vec<LobbyEntryViewOut>)>
+            AdmitOutcome::SessionInProgress
         } else if let Some(pos) = rs.lobby.iter().position(|e| e.id == entry_id) {
-            let entry = rs.lobby.swap_remove(pos);
+            let entry = rs.lobby.remove(pos);
             let student_tx = entry.conn.tx.clone();
             rs.active_session = Some(ActiveSession {
                 student: entry,
@@ -139,35 +141,24 @@ pub async fn admit(state: &Arc<AppState>, ctx: &ConnContext, entry_id: EntryId) 
                 .as_ref()
                 .map(|s| s.student.id == entry_id)
                 .unwrap_or(false));
-            let updated_lobby = rs
-                .lobby_view()
-                .into_iter()
-                .map(|v| LobbyEntryViewOut(v))
-                .collect();
-            Some((
+            let lobby_update = ServerMsg::LobbyState {
+                entries: rs.lobby_view(),
+            };
+            AdmitOutcome::Ok {
                 student_tx,
-                ServerMsg::Admitted { entry_id },
-                updated_lobby,
-            ))
+                lobby_update,
+            }
         } else {
-            send_error_sync(&ctx.tx, ErrorCode::EntryNotFound, "entry not found");
-            None
+            AdmitOutcome::EntryNotFound
         }
     };
 
     match outcome {
-        None if ctx.role == Some(Role::Teacher) => {
-            // Either session-in-progress or entry-not-found. Entry-not-found
-            // already buffered via send_error_sync; detect session-in-progress
-            // by re-checking.
-            let rs = room.read().await;
-            if rs.active_session.is_some() {
-                drop(rs);
-                send_error(&ctx.tx, ErrorCode::SessionInProgress, "session in progress").await;
-            }
-        }
-        Some((student_tx, admitted_msg, updated_lobby)) => {
-            send(&student_tx, admitted_msg).await;
+        AdmitOutcome::Ok {
+            student_tx,
+            lobby_update,
+        } => {
+            send(&student_tx, ServerMsg::Admitted { entry_id }).await;
             send(
                 &student_tx,
                 ServerMsg::PeerConnected {
@@ -182,15 +173,15 @@ pub async fn admit(state: &Arc<AppState>, ctx: &ConnContext, entry_id: EntryId) 
                 },
             )
             .await;
-            send(
-                &ctx.tx,
-                ServerMsg::LobbyState {
-                    entries: updated_lobby.into_iter().map(|v| v.0).collect(),
-                },
-            )
-            .await;
+            send(&ctx.tx, lobby_update).await;
         }
-        None => {}
+        AdmitOutcome::SessionInProgress => {
+            send_error(&ctx.tx, ErrorCode::SessionInProgress, "session in progress").await;
+        }
+        AdmitOutcome::EntryNotFound => {
+            send_error(&ctx.tx, ErrorCode::EntryNotFound, "entry not found").await;
+        }
+        AdmitOutcome::NoRoom => {}
     }
 }
 
@@ -205,7 +196,7 @@ pub async fn reject(state: &Arc<AppState>, ctx: &ConnContext, entry_id: EntryId)
     let outcome = {
         let mut rs = room.write().await;
         if let Some(pos) = rs.lobby.iter().position(|e| e.id == entry_id) {
-            let entry = rs.lobby.swap_remove(pos);
+            let entry = rs.lobby.remove(pos);
             let student_tx = entry.conn.tx.clone();
             let updated = ServerMsg::LobbyState {
                 entries: rs.lobby_view(),
@@ -236,17 +227,3 @@ pub async fn reject(state: &Arc<AppState>, ctx: &ConnContext, entry_id: EntryId)
     }
 }
 
-// Non-async helper that queues an error via try_send; used inside a lock
-// region only when we want to avoid an await. Falls back silently if the
-// channel is full, which here means the caller's own channel is saturated
-// and they will be torn down anyway.
-fn send_error_sync(tx: &mpsc::Sender<PumpDirective>, code: ErrorCode, message: &str) {
-    let _ = tx.try_send(PumpDirective::Send(ServerMsg::Error {
-        code,
-        message: message.into(),
-    }));
-}
-
-// Wrapper to keep the `outcome` tuple typed consistently across the `if let`
-// arms without naming a long LobbyEntryView path in the match scrutinee.
-struct LobbyEntryViewOut(crate::ws::protocol::LobbyEntryView);

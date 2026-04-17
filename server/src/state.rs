@@ -11,9 +11,11 @@
 //             from async fns).
 // Last updated: Sprint 1 (2026-04-17) -- initial implementation
 
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
+use dashmap::mapref::entry::Entry;
 use dashmap::DashMap;
 use sqlx::SqlitePool;
 use tokio::sync::{mpsc, RwLock};
@@ -93,7 +95,6 @@ impl LobbyEntry {
 
 pub struct ActiveSession {
     pub student: LobbyEntry,
-    #[allow(dead_code)]
     pub started_at: Instant,
 }
 
@@ -140,6 +141,12 @@ pub struct AppState {
     pub config: Config,
     pub mailer: Arc<dyn Mailer>,
     pub rooms: DashMap<SlugKey, Arc<RwLock<RoomState>>>,
+    /// Authoritative counter for the room cap. Incremented inside the
+    /// single-winner `Entry::Vacant` branch of `room_or_insert`; we compare-
+    /// and-rollback on overshoot so no concurrent path ever observes a
+    /// count > max_active_rooms. Kept separate from `rooms.len()`, which is
+    /// only eventually consistent under concurrent inserts across shards.
+    pub active_rooms: AtomicUsize,
     pub shutdown: CancellationToken,
 }
 
@@ -150,18 +157,23 @@ impl AppState {
         self.rooms.get(slug).map(|r| Arc::clone(r.value()))
     }
 
-    /// Look up or insert a room. Enforces MAX_ACTIVE_ROOMS.
+    /// Look up or insert a room. Enforces MAX_ACTIVE_ROOMS atomically across
+    /// concurrent insertions of distinct slugs (R1 code-review finding #46).
     pub fn room_or_insert(&self, slug: SlugKey) -> Result<Arc<RwLock<RoomState>>> {
-        if !self.rooms.contains_key(&slug) && self.rooms.len() >= self.config.max_active_rooms {
-            return Err(AppError::ServiceUnavailable);
+        match self.rooms.entry(slug) {
+            Entry::Occupied(e) => Ok(Arc::clone(e.get())),
+            Entry::Vacant(e) => {
+                // Atomically reserve a slot. Rollback if over-cap.
+                let prev = self.active_rooms.fetch_add(1, Ordering::AcqRel);
+                if prev >= self.config.max_active_rooms {
+                    self.active_rooms.fetch_sub(1, Ordering::AcqRel);
+                    return Err(AppError::ServiceUnavailable);
+                }
+                let arc = Arc::new(RwLock::new(RoomState::default()));
+                e.insert(Arc::clone(&arc));
+                Ok(arc)
+            }
         }
-        let arc = self
-            .rooms
-            .entry(slug)
-            .or_insert_with(|| Arc::new(RwLock::new(RoomState::default())))
-            .value()
-            .clone();
-        Ok(arc)
     }
 }
 

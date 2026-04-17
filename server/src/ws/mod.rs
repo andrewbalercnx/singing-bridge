@@ -32,9 +32,9 @@ use futures_util::sink::SinkExt;
 use std::net::SocketAddr;
 use tokio::sync::mpsc;
 
-use crate::auth::resolve_teacher_from_cookie;
+use crate::auth::{magic_link::TeacherId, resolve_teacher_from_cookie};
 use crate::state::{AppState, ConnectionId, RemovalKind, SlugKey};
-use crate::ws::connection::{ConnContext, PreJoin};
+use crate::ws::connection::ConnContext;
 use crate::ws::protocol::{
     ClientMsg, ErrorCode, PumpDirective, Role, ServerMsg, MAX_BROWSER_LEN, MAX_DEVICE_CLASS_LEN,
     MAX_EMAIL_LEN, MAX_SIGNAL_PAYLOAD_BYTES,
@@ -68,7 +68,7 @@ pub async fn ws_upgrade(
 async fn run(
     sock: WebSocket,
     state: Arc<AppState>,
-    candidate_teacher: Option<i64>,
+    candidate_teacher: Option<TeacherId>,
 ) {
     let (mut ws_tx, mut ws_rx) = sock.split();
     let (tx, mut rx) = mpsc::channel::<PumpDirective>(64);
@@ -114,7 +114,7 @@ async fn run(
     cleanup(&state, ctx, result).await;
 }
 
-enum LoopExit {
+pub(crate) enum LoopExit {
     Normal,
     ShuttingDown,
 }
@@ -176,8 +176,17 @@ async fn close_malformed(ctx: &ConnContext, reason: &'static str) {
 }
 
 async fn send_error(ctx: &ConnContext, code: ErrorCode, message: impl Into<String>) {
-    let _ = ctx
-        .tx
+    pump_send_error(&ctx.tx, code, message).await;
+}
+
+/// Shared helper used by lobby, session, and the dispatcher so the error
+/// shape is built in one place.
+pub(crate) async fn pump_send_error(
+    tx: &mpsc::Sender<PumpDirective>,
+    code: ErrorCode,
+    message: impl Into<String>,
+) {
+    let _ = tx
         .send(PumpDirective::Send(ServerMsg::Error {
             code,
             message: message.into(),
@@ -197,96 +206,130 @@ async fn handle_client_msg(
             email,
             browser,
             device_class,
-        } => {
-            if ctx.slug.is_some() {
-                send_error(ctx, ErrorCode::AlreadyJoined, "already joined").await;
-                return true;
-            }
-            if email.len() > MAX_EMAIL_LEN
-                || browser.len() > MAX_BROWSER_LEN
-                || device_class.len() > MAX_DEVICE_CLASS_LEN
-            {
-                send_error(ctx, ErrorCode::FieldTooLong, "field too long").await;
-                return true;
-            }
-            let key = match SlugKey::new(&slug) {
-                Ok(k) => k,
-                Err(_) => {
-                    send_error(ctx, ErrorCode::SlugInvalid, "slug invalid").await;
-                    return true;
-                }
-            };
-            if !slug_exists(state, &key).await {
-                send_error(ctx, ErrorCode::NotOwner, "no such room").await;
-                return true;
-            }
-
-            ctx.slug = Some(key.clone());
-            ctx.role = Some(Role::Student);
-
-            lobby::join_lobby(state, ctx, &key, email, browser, device_class).await
-        }
-        ClientMsg::LobbyWatch { slug } => {
-            if ctx.slug.is_some() {
-                send_error(ctx, ErrorCode::AlreadyJoined, "already joined").await;
-                return true;
-            }
-            let key = match SlugKey::new(&slug) {
-                Ok(k) => k,
-                Err(_) => {
-                    send_error(ctx, ErrorCode::SlugInvalid, "slug invalid").await;
-                    return true;
-                }
-            };
-            let owned = owns_slug(state, ctx.candidate_teacher_id, &key).await;
-            if !owned {
-                send_error(ctx, ErrorCode::NotOwner, "not slug owner").await;
-                let _ = ctx
-                    .tx
-                    .send(PumpDirective::Close {
-                        code: 1008,
-                        reason: "not_slug_owner".into(),
-                    })
-                    .await;
-                return false;
-            }
-
-            ctx.slug = Some(key.clone());
-            ctx.role = Some(Role::Teacher);
-            lobby::watch_lobby(state, ctx, &key).await
-        }
+        } => handle_lobby_join(ctx, state, slug, email, browser, device_class).await,
+        ClientMsg::LobbyWatch { slug } => handle_lobby_watch(ctx, state, slug).await,
         ClientMsg::LobbyAdmit { slug, entry_id } => {
-            if !require_joined(ctx, &slug).await {
-                return true;
-            }
-            if ctx.role != Some(Role::Teacher) {
-                send_error(ctx, ErrorCode::NotOwner, "teacher only").await;
-                return true;
-            }
-            lobby::admit(state, ctx, entry_id).await;
-            true
+            handle_lobby_admit(ctx, state, &slug, entry_id).await
         }
         ClientMsg::LobbyReject { slug, entry_id } => {
-            if !require_joined(ctx, &slug).await {
-                return true;
-            }
-            if ctx.role != Some(Role::Teacher) {
-                send_error(ctx, ErrorCode::NotOwner, "teacher only").await;
-                return true;
-            }
-            lobby::reject(state, ctx, entry_id).await;
-            true
+            handle_lobby_reject(ctx, state, &slug, entry_id).await
         }
-        ClientMsg::Signal { to, payload } => {
-            let payload_len = serde_json::to_vec(&payload)
-                .map(|v| v.len())
-                .unwrap_or(usize::MAX);
-            if payload_len > MAX_SIGNAL_PAYLOAD_BYTES {
-                send_error(ctx, ErrorCode::PayloadTooLarge, "payload > 16 KiB").await;
-                return true;
-            }
-            session::relay(state, ctx, to, payload).await;
-            true
+        ClientMsg::Signal { to, payload } => handle_signal(ctx, state, to, payload).await,
+    }
+}
+
+async fn handle_lobby_join(
+    ctx: &mut ConnContext,
+    state: &Arc<AppState>,
+    slug: String,
+    email: String,
+    browser: String,
+    device_class: String,
+) -> bool {
+    if ctx.slug.is_some() {
+        send_error(ctx, ErrorCode::AlreadyJoined, "already joined").await;
+        return true;
+    }
+    if email.len() > MAX_EMAIL_LEN
+        || browser.len() > MAX_BROWSER_LEN
+        || device_class.len() > MAX_DEVICE_CLASS_LEN
+    {
+        send_error(ctx, ErrorCode::FieldTooLong, "field too long").await;
+        return true;
+    }
+    let Some(key) = parse_slug_or_err(ctx, &slug).await else {
+        return true;
+    };
+    if !slug_exists(state, &key).await {
+        send_error(ctx, ErrorCode::NotOwner, "no such room").await;
+        return true;
+    }
+    ctx.slug = Some(key.clone());
+    ctx.role = Some(Role::Student);
+    lobby::join_lobby(state, ctx, &key, email, browser, device_class).await
+}
+
+async fn handle_lobby_watch(ctx: &mut ConnContext, state: &Arc<AppState>, slug: String) -> bool {
+    if ctx.slug.is_some() {
+        send_error(ctx, ErrorCode::AlreadyJoined, "already joined").await;
+        return true;
+    }
+    let Some(key) = parse_slug_or_err(ctx, &slug).await else {
+        return true;
+    };
+    if !owns_slug(state, ctx.candidate_teacher_id, &key).await {
+        send_error(ctx, ErrorCode::NotOwner, "not slug owner").await;
+        let _ = ctx
+            .tx
+            .send(PumpDirective::Close {
+                code: 1008,
+                reason: "not_slug_owner".into(),
+            })
+            .await;
+        return false;
+    }
+    ctx.slug = Some(key.clone());
+    ctx.role = Some(Role::Teacher);
+    lobby::watch_lobby(state, ctx, &key).await
+}
+
+async fn handle_lobby_admit(
+    ctx: &ConnContext,
+    state: &Arc<AppState>,
+    msg_slug: &str,
+    entry_id: crate::ws::protocol::EntryId,
+) -> bool {
+    if !require_joined(ctx, msg_slug).await {
+        return true;
+    }
+    if ctx.role != Some(Role::Teacher) {
+        send_error(ctx, ErrorCode::NotOwner, "teacher only").await;
+        return true;
+    }
+    lobby::admit(state, ctx, entry_id).await;
+    true
+}
+
+async fn handle_lobby_reject(
+    ctx: &ConnContext,
+    state: &Arc<AppState>,
+    msg_slug: &str,
+    entry_id: crate::ws::protocol::EntryId,
+) -> bool {
+    if !require_joined(ctx, msg_slug).await {
+        return true;
+    }
+    if ctx.role != Some(Role::Teacher) {
+        send_error(ctx, ErrorCode::NotOwner, "teacher only").await;
+        return true;
+    }
+    lobby::reject(state, ctx, entry_id).await;
+    true
+}
+
+async fn handle_signal(
+    ctx: &ConnContext,
+    state: &Arc<AppState>,
+    to: Role,
+    payload: serde_json::Value,
+) -> bool {
+    let payload_len = serde_json::to_vec(&payload)
+        .map(|v| v.len())
+        .unwrap_or(usize::MAX);
+    if payload_len > MAX_SIGNAL_PAYLOAD_BYTES {
+        send_error(ctx, ErrorCode::PayloadTooLarge, "payload > 16 KiB").await;
+        return true;
+    }
+    session::relay(state, ctx, to, payload).await;
+    true
+}
+
+async fn parse_slug_or_err(ctx: &ConnContext, raw: &str) -> Option<SlugKey> {
+    match SlugKey::new(raw) {
+        Ok(k) => Some(k),
+        Err(_) => {
+            send_error(ctx, ErrorCode::SlugInvalid, "slug invalid").await;
+            None
         }
     }
 }
@@ -337,7 +380,15 @@ async fn owns_slug(state: &AppState, teacher_id: Option<i64>, slug: &SlugKey) ->
     matches!(row, Ok((n,)) if n > 0)
 }
 
-async fn cleanup(state: &AppState, mut ctx: ConnContext, _result: LoopExit) {
+async fn cleanup(state: &AppState, mut ctx: ConnContext, result: LoopExit) {
+    // Shutdown path already enqueued ServerShutdown + Close into the pump;
+    // normal exit is a peer-initiated disconnect. Room-state cleanup runs
+    // the same way in both cases.
+    let exit_kind = match result {
+        LoopExit::Normal => "normal",
+        LoopExit::ShuttingDown => "shutdown",
+    };
+    tracing::debug!(exit = %exit_kind, conn = ctx.id.0, "ws exit");
     if let Some(slug) = ctx.slug.clone() {
         if let Some(room) = state.room(&slug) {
             // Collect up to two messages to send to the teacher after the
@@ -393,6 +444,4 @@ async fn cleanup(state: &AppState, mut ctx: ConnContext, _result: LoopExit) {
             let _ = (&mut ctx.pump).await;
         }
     }
-
-    let _ = PreJoin;
 }

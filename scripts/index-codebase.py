@@ -445,6 +445,7 @@ class CodebaseIndexer:
             "files": 0, "symbols": 0, "imports": 0,
             "endpoints": 0, "models": 0, "fields": 0, "tests": 0,
         }
+        self._skipped_no_treesitter: list[str] = []
 
     def clear(self):
         """Drop all data for a fresh rebuild."""
@@ -539,7 +540,8 @@ class CodebaseIndexer:
         try:
             from indexers.rust import index_rust_file
         except ImportError:
-            return  # Optional dependency; skip silently.
+            self._skipped_no_treesitter.append(rel_path)
+            return
 
         try:
             source = filepath.read_text(encoding="utf-8", errors="replace")
@@ -963,6 +965,14 @@ class CodebaseIndexer:
         db_size = DB_PATH.stat().st_size / 1024
         print(f"\n  Database size: {db_size:.0f} KB")
         print(f"  Location: {DB_PATH}")
+
+        if self._skipped_no_treesitter:
+            n = len(self._skipped_no_treesitter)
+            exts = sorted(set(Path(p).suffix for p in self._skipped_no_treesitter))
+            print(f"\n  ⚠️  {n} file(s) skipped ({', '.join(exts)}): "
+                  f"tree-sitter-languages not installed")
+            print(f"     Fix: pip3 install 'tree-sitter<0.22' tree-sitter-languages"
+                  f" && python3 scripts/index-codebase.py")
 
     def run_query(self, sql: str):
         """Execute an arbitrary SQL query and print results."""

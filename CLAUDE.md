@@ -59,6 +59,7 @@ working in that directory.
 ### Tier 3: Deep reference (`knowledge/`)
 
 - `knowledge/decisions/0001-mvp-architecture.md` — foundational ADR: browser-only clients, teacher magic-link auth, lobby admission, AEC-off + music-mode Opus, bidirectional fidelity, bandwidth degradation order, Azure + Cloudflare deployment. Read before proposing changes to the session model, codec settings, or infra shape.
+- `knowledge/architecture/signalling.md` — how the `/ws` signalling protocol works: tagged-union `ClientMsg` / `ServerMsg`, single-writer pump (`PumpDirective::Close` carries every close code), slug-aware role resolution, `tokio::sync::RwLock` room state with the no-`.await`-under-guard rule, atomic room cap. Read before touching `server/src/ws/*` or the protocol.
 
 ## Sprint process
 

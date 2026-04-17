@@ -115,7 +115,9 @@ impl RoomState {
     /// notify the peer).
     pub fn remove_by_connection(&mut self, conn: ConnectionId) -> Option<RemovalKind> {
         if let Some(pos) = self.lobby.iter().position(|e| e.conn.id == conn) {
-            self.lobby.swap_remove(pos);
+            // Stable `remove` so disconnect-driven lobby updates preserve
+            // the teacher's visible entry order (R2 code-review #81).
+            self.lobby.remove(pos);
             return Some(RemovalKind::FromLobby);
         }
         if self

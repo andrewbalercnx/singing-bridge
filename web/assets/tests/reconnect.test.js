@@ -78,15 +78,17 @@ test('#28 repeated disconnected: second returns effect "none"', () => {
   assert.equal(trace[1].phase, 'watching');
 });
 
-// --- §5.1 #29 Pure function does not encode role --------------------------
+// --- §5.1 #29 Purity: same input → same effect ----------------------------
 
-test('#29 pure function emits call_restart_ice regardless of role', () => {
-  // The pure function has no `role` parameter; this test confirms the
-  // contract: same input → same effect, always call_restart_ice.
+test('#29 onIceStateEvent is pure: repeated identical input → identical effect', () => {
+  // No hidden state, no time dependence: calling onIceStateEvent twice with
+  // the same (state, iceState) must return identical effects. This pins
+  // the purity property that session-core.js depends on.
   const r1 = onIceStateEvent({ phase: 'watching' }, '<watch-timer-fire>');
   const r2 = onIceStateEvent({ phase: 'watching' }, '<watch-timer-fire>');
   assert.equal(r1.effect, 'call_restart_ice');
   assert.equal(r2.effect, 'call_restart_ice');
+  assert.deepEqual(r1.next, r2.next);
 });
 
 // --- Direct arc coverage for every failure transition ---------------------

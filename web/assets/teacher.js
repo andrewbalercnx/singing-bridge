@@ -60,6 +60,8 @@
   // Admit/Reject buttons read it via handleProxy, which is also
   // closure-scoped below.
   let sessionHandle = null;
+
+  window.signallingClient.connectTeacher({
     slug,
     onLobbyUpdate(entries) {
       listEl.replaceChildren();

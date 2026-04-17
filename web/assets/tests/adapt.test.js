@@ -29,7 +29,7 @@ function bad(kind) {
 function good(kind) {
   return { kind: kind, dir: 'outbound', lossFraction: 0.005, rttMs: 80, outBitrate: 1000000 };
 }
-function drive(state, sampleFn, role, ticks) {
+function drive(state, sampleFn, ticks) {
   let s = state;
   let lastActions = [];
   for (let i = 0; i < ticks; i++) {
@@ -100,8 +100,7 @@ test('#4 decideNextRung is pure (same input → deep-equal output)', () => {
 test('#5 student: audio stays 0 while video advances to terminal', () => {
   const vLen = LADDER.studentVideo.length;
   const { state } = drive(
-    initLadderState('student'), bad, 'student',
-    DEGRADE_SAMPLES * (vLen - 1)
+    initLadderState('student'), bad, DEGRADE_SAMPLES * (vLen - 1)
   );
   assert.equal(state.videoRung, vLen - 1);
   assert.equal(state.audioRung, 0);
@@ -112,10 +111,9 @@ test('#5 student: audio stays 0 while video advances to terminal', () => {
 test('#6 student: audio advances after video exhausted', () => {
   const vLen = LADDER.studentVideo.length;
   const prime = drive(
-    initLadderState('student'), bad, 'student',
-    DEGRADE_SAMPLES * (vLen - 1)
+    initLadderState('student'), bad, DEGRADE_SAMPLES * (vLen - 1)
   );
-  const { state } = drive(prime.state, bad, 'student', DEGRADE_SAMPLES);
+  const { state } = drive(prime.state, bad, DEGRADE_SAMPLES);
   assert.equal(state.videoRung, vLen - 1);
   assert.equal(state.audioRung, 1);
 });
@@ -125,8 +123,7 @@ test('#6 student: audio advances after video exhausted', () => {
 test('#6a teacher: audio stays 0 while video advances to terminal', () => {
   const vLen = LADDER.teacherVideo.length;
   const { state } = drive(
-    initLadderState('teacher'), bad, 'teacher',
-    DEGRADE_SAMPLES * (vLen - 1)
+    initLadderState('teacher'), bad, DEGRADE_SAMPLES * (vLen - 1)
   );
   assert.equal(state.videoRung, vLen - 1);
   assert.equal(state.audioRung, 0);
@@ -137,7 +134,7 @@ test('#6a teacher: audio stays 0 while video advances to terminal', () => {
 test('#6b teacher: audio advances after video exhausted; no floor_violation emitted', () => {
   const vLen = LADDER.teacherVideo.length;
   const aLen = LADDER.teacherAudio.length;
-  const prime = drive(initLadderState('teacher'), bad, 'teacher', DEGRADE_SAMPLES * (vLen - 1));
+  const prime = drive(initLadderState('teacher'), bad, DEGRADE_SAMPLES * (vLen - 1));
   let s = prime.state;
   let sawFloorViolation = false;
   // Drive enough bad ticks to reach teacher audio terminal rung (3).
@@ -169,13 +166,13 @@ test('#7 hysteresis: alternating good/bad for 20 ticks does not change rungs', (
 test('#8 upgrade requires IMPROVE_SAMPLES, not DEGRADE_SAMPLES', () => {
   // Prime to video rung 2.
   let s = initLadderState('student');
-  const primed = drive(s, bad, 'student', DEGRADE_SAMPLES * 2);
+  const primed = drive(s, bad, DEGRADE_SAMPLES * 2);
   assert.ok(primed.state.videoRung >= 2);
   // 4 good ticks: no upgrade (IMPROVE_SAMPLES is 8).
-  const partial = drive(primed.state, good, 'student', 4);
+  const partial = drive(primed.state, good, 4);
   assert.equal(partial.state.videoRung, primed.state.videoRung);
   // 8 good ticks: upgrade by 1.
-  const full = drive(primed.state, good, 'student', IMPROVE_SAMPLES);
+  const full = drive(primed.state, good, IMPROVE_SAMPLES);
   assert.equal(full.state.videoRung, primed.state.videoRung - 1);
 });
 
@@ -187,8 +184,8 @@ test('#9 student: floorBreachStreak emits exactly one floor_violation', () => {
   // Prime to studentAudio rung 1 (terminal). That's (vLen - 1) video transitions
   // to exhaust video, plus DEGRADE_SAMPLES more ticks to advance audio to rung 1.
   let s = initLadderState('student');
-  s = drive(s, bad, 'student', DEGRADE_SAMPLES * (vLen - 1)).state;
-  s = drive(s, bad, 'student', DEGRADE_SAMPLES).state;
+  s = drive(s, bad, DEGRADE_SAMPLES * (vLen - 1)).state;
+  s = drive(s, bad, DEGRADE_SAMPLES).state;
   assert.equal(s.audioRung, saLen - 1);
   // Now count floor_violation emissions over FLOOR_SAMPLES + 10 bad ticks.
   // The streak starts at 1 (the tick that advanced audio to terminal), so
@@ -347,8 +344,8 @@ test('floorViolationEmitted resets on sustained good audio and re-fires on next 
   // Prime to studentAudio rung 1 then emit floor_violation.
   const vLen = LADDER.studentVideo.length;
   let s = initLadderState('student');
-  s = drive(s, bad, 'student', DEGRADE_SAMPLES * (vLen - 1)).state;
-  s = drive(s, bad, 'student', DEGRADE_SAMPLES).state;
+  s = drive(s, bad, DEGRADE_SAMPLES * (vLen - 1)).state;
+  s = drive(s, bad, DEGRADE_SAMPLES).state;
   // Drive enough bad ticks to trip the first floor_violation.
   let firstEmitted = 0;
   for (let i = 0; i < FLOOR_SAMPLES + 2; i++) {

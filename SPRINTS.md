@@ -224,7 +224,7 @@ _Protocol_
 - Chat with no active session returns `ChatNotInSession` error
 - LobbyMessage to unknown entry_id returns `EntryNotFound` error
 
-**Status:** PENDING
+**Status:** COMPLETE — 2026-04-18, commit `2de1433` (code review APPROVED R4)
 
 ---
 

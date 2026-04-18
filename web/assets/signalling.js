@@ -21,7 +21,7 @@
 //             is the sole sender.setParameters mutation site AFTER
 //             session subsystems start; priority hints at transceiver
 //             creation are the only pre-session setParameters calls.
-// Last updated: Sprint 6 (2026-04-18) -- recording message handlers (RecordStart/Consent/Stop)
+// Last updated: Sprint 7 (2026-04-18) -- onChat/onLobbyMessage callbacks + sendChat/sendLobbyMessage helpers
 
 (function (root, factory) {
   'use strict';

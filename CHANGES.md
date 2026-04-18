@@ -33,6 +33,21 @@
 
 **Commit:** `8b57461`
 
+## Sprint 7: In-session chat + lobby messaging — 2026-04-18
+
+**Files changed:**
+- `server/src/ws/protocol.rs` — `ClientMsg::Chat`, `ClientMsg::LobbyMessage`, `ServerMsg::Chat`, `ServerMsg::LobbyMessage`; `MAX_CHAT_CHARS`/`MAX_CHAT_BYTES` constants; unit tests extended
+- `server/src/ws/mod.rs` — `handle_chat` + `handle_lobby_message` + `validate_chat_text`; conn.id identity checks; dispatch branches
+- `server/tests/ws_chat.rs` — 8 integration tests: relay, validation, empty/oversized rejection, no-session, lobby message delivery and error paths
+- `web/teacher.html` — chat panel (log + form) inside session section
+- `web/student.html` — chat panel inside session section; lobby-message-banner in lobby-status
+- `web/assets/signalling.js` — `onChat`/`onLobbyMessage` callbacks; `sendChat`/`sendLobbyMessage` in returned handles
+- `web/assets/teacher.js` — `appendChat` (You/Student labels); chat form wiring; lobby-msg-form in `renderEntry`; panel show/hide on peer events
+- `web/assets/student.js` — `appendChat` (Teacher/You labels); `onChat`/`onLobbyMessage` callbacks; chat form wiring; panel show/hide; lobby banner with 8s auto-hide
+- `web/assets/tests/chat.test.js` — 11 JS unit tests: label rendering, XSS safety, serialisation, banner, panel visibility
+
+**Commit:** `2de1433`
+
 ## Sprint 5: Azure + Cloudflare deployment + TURN + session log — 2026-04-18
 
 **Files changed:**

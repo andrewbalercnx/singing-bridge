@@ -14,7 +14,7 @@ param imageName string = 'singing-bridge:latest'
 param logWorkspaceCustomerId string
 @secure()
 param logWorkspaceKey string
-param storageAccountName string = 'sbprodstorage${uniqueString(resourceGroup().id)}'
+param storageAccountName string = 'sbprod${uniqueString(resourceGroup().id)}'
 
 // ---- Cloudflare published IPv4 ranges (update when CF publishes new ranges) ----
 // Source: https://www.cloudflare.com/ips-v4

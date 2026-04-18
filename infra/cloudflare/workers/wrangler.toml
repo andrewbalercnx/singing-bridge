@@ -1,0 +1,13 @@
+# File: infra/cloudflare/workers/wrangler.toml
+# Purpose: Wrangler config for the magic-link-relay Cloudflare Worker.
+# Last updated: Sprint 5 (2026-04-18) -- initial implementation
+
+name = "singing-bridge-mail"
+main = "magic-link-relay.js"
+compatibility_date = "2024-01-01"
+account_id = "992ef301adbac0561940a8d3884d9e03"
+
+[vars]
+MAIL_FROM = "noreply@singing.rcnx.io"
+DKIM_DOMAIN = ""
+DKIM_SELECTOR = ""

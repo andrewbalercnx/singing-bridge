@@ -17,7 +17,7 @@ param adminSshPublicKey string
 param turnSharedSecret string
 param maintainerIp string  // SSH allow-list; restrict to VPN/home IP
 
-var vmSize = 'Standard_B1s'
+var vmSize = 'Standard_D2als_v7'
 
 // ---- Static public IP ----
 resource publicIp 'Microsoft.Network/publicIPAddresses@2023-04-01' = {

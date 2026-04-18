@@ -156,6 +156,14 @@ pub enum ServerMsg {
     },
     Admitted {
         entry_id: EntryId,
+        /// TURN/STUN ICE servers for the student's RTCPeerConnection.
+        /// Absent in dev (no TURN host configured). Students MUST use these
+        /// credentials instead of calling /turn-credentials directly.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        ice_servers: Option<serde_json::Value>,
+        /// TURN credential TTL in seconds. Absent when ice_servers is None.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        ttl: Option<i64>,
     },
     Rejected {
         reason: String,
@@ -233,6 +241,8 @@ mod tests {
             ServerMsg::LobbyState { entries: vec![] },
             ServerMsg::Admitted {
                 entry_id: EntryId::new(),
+                ice_servers: None,
+                ttl: None,
             },
             ServerMsg::Rejected {
                 reason: "teacher_rejected".into(),

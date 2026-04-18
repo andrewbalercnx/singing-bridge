@@ -6,8 +6,7 @@
 // Invariants: from_env() calls parse_env() then validate_prod_config() for SB_ENV=prod.
 //             In prod: HTTPS required, secrets present, pepper ≥ 32 bytes.
 //             Secure cookie flag only omitted when dev=true.
-// Last updated: Sprint 5 (2026-04-18) -- env-driven config, turn/mailer/session-log fields
-#![allow(dead_code)]
+// Last updated: Sprint 5 (2026-04-18) -- env-driven config, turn/mailer/session-log fields, R1 fixes
 
 use std::net::SocketAddr;
 
@@ -219,10 +218,19 @@ fn validate_prod_config(c: &Config) -> Result<(), ConfigError> {
     if secret.len() < 32 {
         return Err(ConfigError::TooShort("SB_TURN_SHARED_SECRET", 32));
     }
-    let _worker_url = c
+    let worker_url = c
         .cf_worker_url
         .as_ref()
         .ok_or(ConfigError::Missing("SB_CF_WORKER_URL"))?;
+    // Must be HTTPS to prevent bearer token transmission over plaintext.
+    let worker_parsed = Url::parse(worker_url)
+        .map_err(|e| ConfigError::Invalid("SB_CF_WORKER_URL", format!("{e}")))?;
+    if worker_parsed.scheme() != "https" {
+        return Err(ConfigError::Invalid(
+            "SB_CF_WORKER_URL",
+            "must use HTTPS scheme".into(),
+        ));
+    }
     let _worker_secret = c
         .cf_worker_secret
         .as_ref()
@@ -284,6 +292,19 @@ mod tests {
         c.cf_worker_secret = Some(SecretString::new("x".repeat(32)));
         c.session_log_pepper = Some(SecretString::new("y".repeat(32)));
         assert!(validate_prod_config(&c).is_ok());
+    }
+
+    #[test]
+    fn prod_http_cf_worker_url_errors() {
+        let mut c = Config::dev_default();
+        c.dev = false;
+        c.base_url = Url::parse("https://singing.rcnx.io").unwrap();
+        c.turn_shared_secret = Some(SecretString::new("a".repeat(32)));
+        c.cf_worker_url = Some("http://mail.example.com".into()); // HTTP!
+        c.cf_worker_secret = Some(SecretString::new("x".repeat(32)));
+        c.session_log_pepper = Some(SecretString::new("y".repeat(32)));
+        let err = validate_prod_config(&c).unwrap_err();
+        assert!(matches!(err, ConfigError::Invalid("SB_CF_WORKER_URL", _)));
     }
 
     #[test]

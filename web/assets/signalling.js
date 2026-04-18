@@ -78,14 +78,20 @@
   };
   Signalling.prototype.close = function () { try { this.sock.close(); } catch (_) {} };
 
-  async function makePeerConnection() {
+  async function makePeerConnection(preloadedIceServers) {
     var iceServers;
-    try {
-      iceServers = await window.sbIce.fetchIceServers();
-    } catch (_) {
-      // Fall back to Google STUN if the credential fetch fails so the
-      // call can still proceed in degraded mode.
-      iceServers = [{ urls: 'stun:stun.l.google.com:19302' }];
+    if (preloadedIceServers) {
+      // Use credentials delivered via WS (ServerMsg::Admitted for students,
+      // or explicitly pre-populated for teachers).
+      iceServers = preloadedIceServers;
+    } else {
+      try {
+        // Teacher fetches via /turn-credentials (session-cookie auth).
+        iceServers = await window.sbIce.fetchIceServers();
+      } catch (_) {
+        // Fall back to Google STUN if the credential fetch fails.
+        iceServers = [{ urls: 'stun:stun.l.google.com:19302' }];
+      }
     }
     return new RTCPeerConnection({ iceServers: iceServers });
   }
@@ -228,7 +234,7 @@
     var detect = detectTier();
 
     sig.on('peer_connected', async function () {
-      refs.pc = makePeerConnection();
+      refs.pc = await makePeerConnection();
       refs.media = await wireBidirectionalMedia(refs.pc, detect);
       refs.overlay = window.sbDebug.startDebugOverlay(refs.pc, { localTrack: refs.media.audio.track });
       refs.pc.onicecandidate = function (ev) {
@@ -309,8 +315,14 @@
 
     var refs = { pc: null, media: null, overlay: null, dataChannel: null, session: null };
     var teardownSession = makeTeardown(refs);
+    var admittedIceServers = null;
 
-    sig.on('admitted', function () { if (onAdmitted) onAdmitted(); });
+    sig.on('admitted', function (m) {
+      // Store TURN credentials delivered in the WS handshake so that
+      // makePeerConnection can use them without an unauthenticated HTTP fetch.
+      if (m.ice_servers) admittedIceServers = m.ice_servers;
+      if (onAdmitted) onAdmitted();
+    });
     sig.on('rejected', function (m) {
       if (onRejected) onRejected(m.reason);
       sig.close();
@@ -319,7 +331,7 @@
       if (m.code === 'blocked' && onBlocked) onBlocked(m.message);
     });
     sig.on('peer_connected', async function () {
-      refs.pc = makePeerConnection();
+      refs.pc = await makePeerConnection(admittedIceServers);
       refs.media = await wireBidirectionalMedia(refs.pc, detect);
       refs.overlay = window.sbDebug.startDebugOverlay(refs.pc, { localTrack: refs.media.audio.track });
       refs.pc.onicecandidate = function (ev) {

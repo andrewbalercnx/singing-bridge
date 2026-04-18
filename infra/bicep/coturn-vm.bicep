@@ -121,8 +121,9 @@ resource nic 'Microsoft.Network/networkInterfaces@2023-04-01' = {
   }
 }
 
-// Cloud-init with coturn config. TURN secret is injected at deploy time.
-var cloudInit = base64('''
+// Cloud-init with coturn config. TURN secret injected via Bicep replace()
+// because raw triple-quoted strings cannot interpolate variables.
+var cloudInitTemplate = '''
 #cloud-config
 package_update: true
 packages:
@@ -164,7 +165,9 @@ runcmd:
   - ufw allow 5349/tcp
   - ufw --force enable
   - systemctl enable --now coturn
-''')
+'''
+
+var cloudInit = base64(replace(cloudInitTemplate, 'TURN_SECRET_PLACEHOLDER', turnSharedSecret))
 
 // ---- VM ----
 resource vm 'Microsoft.Compute/virtualMachines@2023-03-01' = {

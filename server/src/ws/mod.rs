@@ -8,7 +8,8 @@
 // Invariants: no unwrap/expect in this module. Origin must match base_url.
 //             Role is decided on the first LobbyJoin/LobbyWatch and immutable
 //             thereafter. SessionMetrics rate-limited to 1 frame per 5 s.
-// Last updated: Sprint 5 (2026-04-18) -- peer IP, rate limit, SessionMetrics, block
+//             loss_bp clamped to [0, 10000] before persist (100% = 10000 bp).
+// Last updated: Sprint 5 (2026-04-18) -- peer IP, rate limit, SessionMetrics, block, R1 fixes
 
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 
@@ -67,16 +68,10 @@ pub fn resolve_peer_ip(config: &Config, headers: &HeaderMap, addr: SocketAddr) -
     }
     // Fall through to X-Forwarded-For first token.
     if let Some(xff_ip) = headers
-        .get(header::FORWARDED)
+        .get("X-Forwarded-For")
         .and_then(|v| v.to_str().ok())
-        .and_then(|_| None::<IpAddr>) // FORWARDED not XFF; handled below
-        .or_else(|| {
-            headers
-                .get("X-Forwarded-For")
-                .and_then(|v| v.to_str().ok())
-                .and_then(|s| s.split(',').next())
-                .and_then(|s| s.trim().parse::<IpAddr>().ok())
-        })
+        .and_then(|s| s.split(',').next())
+        .and_then(|s| s.trim().parse::<IpAddr>().ok())
     {
         return xff_ip;
     }
@@ -386,6 +381,9 @@ async fn handle_session_metrics(
     loss_bp: u16,
     rtt_ms: u16,
 ) -> bool {
+    // Clamp to valid domain before persisting (malformed client input guard).
+    let loss_bp = loss_bp.min(10_000); // 100% = 10_000 basis points
+
     // Rate-limit: 1 frame per 5 s per connection.
     let now = std::time::Instant::now();
     if let Some(last) = ctx.last_metrics_at {
@@ -515,9 +513,9 @@ async fn cleanup(state: &AppState, mut ctx: ConnContext, result: LoopExit) {
             let log_id = {
                 let rs = room.read().await;
                 rs.active_session.as_ref().and_then(|s| {
-                    if s.student.conn.id == ctx.id
-                        || state.rooms.get(&slug).is_some() // teacher side
-                    {
+                    let is_student = s.student.conn.id == ctx.id;
+                    let is_teacher = rs.teacher_conn.as_ref().map(|c| c.id) == Some(ctx.id);
+                    if is_student || is_teacher {
                         s.log_id.clone()
                     } else {
                         None

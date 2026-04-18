@@ -6,16 +6,15 @@
 // Invariants: check_and_inc acquires the DashMap shard lock, mutates the
 //             bucket, and releases it — never holds a lock across .await.
 //             Per-IP bucket is inserted lazily. 0 limit = disabled (all pass).
-// Last updated: Sprint 5 (2026-04-18) -- initial implementation
-#![allow(dead_code)]
+// Last updated: Sprint 5 (2026-04-18) -- initial implementation, R1 fixes
 
 use std::net::IpAddr;
 
 use dashmap::DashMap;
 
 pub struct WsJoinBucket {
-    pub count: u32,
-    pub window_start_unix: i64,
+    count: u32,
+    window_start_unix: i64,
 }
 
 impl Default for WsJoinBucket {

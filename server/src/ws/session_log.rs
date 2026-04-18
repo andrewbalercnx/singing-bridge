@@ -8,8 +8,7 @@
 //             raw email or IP is persisted. close_row is first-writer-wins
 //             (WHERE ended_at IS NULL), so concurrent calls are safe.
 //             record_peak is a no-op if the row is missing or already closed.
-// Last updated: Sprint 5 (2026-04-18) -- initial implementation
-#![allow(dead_code)]
+// Last updated: Sprint 5 (2026-04-18) -- initial implementation, R1 fixes
 
 use sha2::{Digest, Sha256};
 use sqlx::SqlitePool;
@@ -117,7 +116,7 @@ pub async fn record_peak(
     sqlx::query(
         "UPDATE session_log \
          SET peak_loss_bp = MAX(peak_loss_bp, ?), peak_rtt_ms = MAX(peak_rtt_ms, ?) \
-         WHERE id = ?",
+         WHERE id = ? AND ended_at IS NULL",
     )
     .bind(loss_bp as i32)
     .bind(rtt_ms as i32)

@@ -39,8 +39,6 @@ param cfIpRanges array = [
 
 // Secrets passed as secure parameters (never logged by ARM).
 @secure()
-param sbJwtSecret string
-@secure()
 param sbTurnSharedSecret string
 @secure()
 param sbCfWorkerUrl string

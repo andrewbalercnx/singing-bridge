@@ -7,8 +7,7 @@
 //             the file content but are bounded by the TTL + single-use consume.
 //             CloudflareWorkerMailer never sends `from` in the request body;
 //             the Worker takes `from` from its own env config only.
-// Last updated: Sprint 5 (2026-04-18) -- add CloudflareWorkerMailer
-#![allow(dead_code)]
+// Last updated: Sprint 5 (2026-04-18) -- add CloudflareWorkerMailer, R1 fixes
 
 use std::path::{Path, PathBuf};
 

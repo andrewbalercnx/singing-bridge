@@ -9,8 +9,7 @@
 //             XOR between lobby and active_session.
 //             Blocked IP → close 1008 "blocked". Plain reject → close 1000.
 //             Block-with-ttl → close 1008 "blocked".
-// Last updated: Sprint 5 (2026-04-18) -- block list, session log open_row
-#![allow(dead_code)]
+// Last updated: Sprint 5 (2026-04-18) -- block list, session log open_row, R1 fixes
 
 use std::net::IpAddr;
 use std::sync::Arc;
@@ -303,7 +302,13 @@ pub async fn admit(state: &Arc<AppState>, ctx: &ConnContext, entry_id: EntryId) 
             started_at,
             teacher_id,
         } => {
-            send(&student_tx, ServerMsg::Admitted { entry_id }).await;
+            // Compute TURN credentials for the student (teacher fetches separately via cookie).
+            let now_unix = time::OffsetDateTime::now_utc().unix_timestamp();
+            let (ice_servers, ttl) = match crate::http::turn::build_ice_servers(&state.config, now_unix) {
+                Some((ice, t)) => (Some(ice), Some(t)),
+                None => (None, None),
+            };
+            send(&student_tx, ServerMsg::Admitted { entry_id, ice_servers, ttl }).await;
             send(
                 &student_tx,
                 ServerMsg::PeerConnected {
@@ -337,13 +342,26 @@ pub async fn admit(state: &Arc<AppState>, ctx: &ConnContext, entry_id: EntryId) 
                 .await
                 {
                     Ok(()) => {
-                        // Re-acquire write to store the log_id.
+                        // Re-acquire write to store the log_id. If the session
+                        // ended (disconnect race) before we got back in, close
+                        // the orphaned row immediately.
+                        let mut orphan = true;
                         if let Some(slug) = ctx.slug.as_ref() {
                             if let Some(room) = state.room(slug) {
                                 let mut rs = room.write().await;
                                 if let Some(ref mut session) = rs.active_session {
-                                    session.log_id = Some(log_id);
+                                    session.log_id = Some(log_id.clone());
+                                    orphan = false;
                                 }
+                            }
+                        }
+                        if orphan {
+                            let ended_at = time::OffsetDateTime::now_utc().unix_timestamp();
+                            if let Err(e) = session_log::close_row(
+                                &state.db, &log_id, ended_at,
+                                session_log::EndedReason::Disconnect,
+                            ).await {
+                                tracing::warn!(error = %e, "session_log orphan close failed");
                             }
                         }
                     }

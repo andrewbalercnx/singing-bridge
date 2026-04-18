@@ -166,6 +166,7 @@ def _emit_metrics(
     verdict: str | None,
     tracker_file: Path,
     security_bypassed: bool = False,
+    prompt_token_estimates: dict | None = None,
 ) -> None:
     """Append one per-round metrics row. Helpers own the schema math;
     this function is the wiring layer."""
@@ -197,6 +198,8 @@ def _emit_metrics(
         "security_bypassed": bool(security_bypassed),
         "verdict": verdict or "UNKNOWN",
     }
+    if prompt_token_estimates:
+        record.update(prompt_token_estimates)
     _write_metrics_row(
         repo_root / "council" / f"metrics_Sprint{sprint}.jsonl", record
     )
@@ -2125,6 +2128,36 @@ def _print_next_steps(
         print("  Options: cut scope, override with higher max_rounds, or accept Known Debt.")
 
 
+def _estimate_prompt_tokens(
+    active_members: list[dict],
+    materials: str,
+    sprint: str,
+    round_num: int,
+    review_type: str,
+    tracker_content: str | None,
+) -> dict:
+    """Estimate input/output token budget before running the council.
+
+    Uses char-count ÷ 4 as a token approximation (accurate to ~10% for
+    English + code). Returns a dict ready to merge into the metrics record.
+    """
+    sample_sys, sample_usr = build_council_prompt(
+        active_members[0], materials, sprint, "estimate", round_num,
+        review_type, tracker_content=tracker_content,
+    )
+    # All members share identical materials; only the system prompt (lens)
+    # differs slightly. Use the first member as representative.
+    input_tokens_per_member = (len(sample_sys) + len(sample_usr)) // 4
+    max_output_per_member = active_members[0].get("max_tokens", 4096)
+    return {
+        "est_input_tokens_per_member": input_tokens_per_member,
+        "est_input_tokens_total": input_tokens_per_member * len(active_members),
+        "est_max_output_tokens_total": max_output_per_member * len(active_members),
+        "est_materials_tokens": len(materials) // 4,
+        "active_lens_count": len(active_members),
+    }
+
+
 def _safe_emit_metrics(
     repo_root: Path, sprint: str, review_type: str, round_num: int,
     *,
@@ -2134,6 +2167,7 @@ def _safe_emit_metrics(
     verdict: str | None,
     tracker_file: Path,
     security_bypassed: bool,
+    prompt_token_estimates: dict | None = None,
 ) -> None:
     """Wrapper around _emit_metrics that never raises into main()."""
     try:
@@ -2147,6 +2181,7 @@ def _safe_emit_metrics(
             verdict=verdict,
             tracker_file=tracker_file,
             security_bypassed=security_bypassed,
+            prompt_token_estimates=prompt_token_estimates or {},
         )
     except Exception as exc:  # noqa: BLE001
         print(f"  [warn] metrics emit failed: {exc}", file=sys.stderr)
@@ -2222,6 +2257,10 @@ def main():
     # Read findings tracker (needed by both council members and consolidator)
     tracker_file = repo_root / f"FINDINGS_Sprint{sprint}.md"
     tracker_content = tracker_file.read_text() if tracker_file.exists() else None
+
+    prompt_token_estimates = _estimate_prompt_tokens(
+        active_members, materials, sprint, round_num, review_type, tracker_content,
+    )
 
     council_dir = _prepare_council_dir(repo_root, config)
     member_labels = {m["role"]: m["label"] for m in active_members}
@@ -2309,6 +2348,7 @@ def main():
         verdict=verdict,
         tracker_file=tracker_file,
         security_bypassed=security_bypassed,
+        prompt_token_estimates=prompt_token_estimates,
     )
     _print_next_steps(
         verdict, review_type, sprint, title,

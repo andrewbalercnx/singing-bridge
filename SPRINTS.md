@@ -188,7 +188,7 @@ _Infrastructure_
 - Teacher recording library shows the recording; sort by date and by student each work; delete removes the entry from the list; blob is gone after the grace period
 - Re-sending the link from the library delivers a fresh email with the same token (or a new one if the old one was disabled)
 
-**Status:** PENDING
+**Status:** COMPLETE — 2026-04-18, commit `8b57461` (code review APPROVED R4)
 
 ---
 

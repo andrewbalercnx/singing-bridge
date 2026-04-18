@@ -11,6 +11,28 @@
 > **Commit:** `<sha>`
 > ```
 
+## Sprint 6: Session Recording — 2026-04-18
+
+**Files changed:**
+- `server/migrations/0003_recordings.sql` — recordings + recording_gate_attempts tables; failed_attempts column; token_hash BLOB UNIQUE (no token_hex persisted)
+- `server/src/blob.rs` — BlobStore trait (#[async_trait], put/delete/get); DevBlobStore (flat-file, path traversal defense); blob.rs module
+- `server/src/cleanup.rs` — run_one_cleanup_cycle (BLOB_GRACE_SECS=86400, gate_attempt_ttl_secs param); cleanup_loop with CancellationToken; 4 tests
+- `server/src/config.rs` — recording_max_bytes, dev_blob_dir, gate_rate_limit_max_attempts, gate_rate_limit_window_secs fields
+- `server/src/state.rs` — AppState gains blob: Arc<dyn BlobStore>; RoomState gains recording_active + consent_pending bools
+- `server/src/http/mod.rs` — recording + gate routes wired; DefaultBodyLimit::disable() on upload route
+- `server/src/http/recordings.rs` — post_upload (streaming, magic-byte validation, blob compensation); get_list (sort by date/student, status from failed_attempts); post_send (always rotate token, teacher_id guard); delete_recording (soft-delete); get_recordings_page; get_dev_blob (debug only)
+- `server/src/http/recording_gate.rs` — post_verify: per-IP rate limit (DB), per-token lockout, constant-time email hash compare, 403+JSON errors (wrong_email/disabled), attempt INSERT outside transaction
+- `server/src/auth/mailer.rs` — send_recording_link + send_token_disabled_notification added to Mailer trait; DevMailer + CloudflareWorkerMailer impls
+- `server/src/ws/mod.rs` — RecordStart/RecordConsent/RecordStop/RecordingStopped/RecordingActive handlers; consent_pending flag; RecordStop cancels pending consent
+- `server/src/main.rs` — blob store init; cleanup_loop spawn; config.gate_rate_limit_window_secs passed to cleanup
+- `web/assets/recorder.js` — MediaRecorder composite (Web Audio API mix + video); streaming upload with X-Student-Email header
+- `web/assets/teacher.js` — RecordStart/RecordStop UI; admit captures lastStudentEmail; onRecordConsentResult passes tracks
+- `web/assets/student.js` — RecordConsentRequest UI; 30s auto-decline timeout
+- `web/assets/recording-gate.js` — email gate form; 403+JSON body parsing (wrong_email/disabled); 429 rate limit message
+- `web/recording.html` / `web/recordings.html` — student playback gate page; teacher recording library page
+
+**Commit:** `8b57461`
+
 ## Sprint 5: Azure + Cloudflare deployment + TURN + session log — 2026-04-18
 
 **Files changed:**

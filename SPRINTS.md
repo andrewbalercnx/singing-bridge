@@ -140,7 +140,7 @@ bidirectional full-fidelity A/V session.
 - Rate limit and lobby cap enforced under synthetic load
 - Session log entries reconcile with observed sessions; no raw PII on disk
 
-**Status:** PENDING
+**Status:** COMPLETE
 
 ---
 

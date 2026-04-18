@@ -3,7 +3,7 @@
 //          threads onQuality / onFloorViolation / onReconnectBanner
 //          callbacks through to the signalling client; renders the
 //          quality badge and floor-violation notice.
-// Last updated: Sprint 4 (2026-04-17) -- +quality +floor +reconnect wiring
+// Last updated: Sprint 5 (2026-04-18) -- onBlocked + blocked-notice wiring
 
 'use strict';
 

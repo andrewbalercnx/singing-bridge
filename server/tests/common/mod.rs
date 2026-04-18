@@ -1,7 +1,7 @@
 // File: server/tests/common/mod.rs
 // Purpose: Shared test harness — spawn_app, dev-mail reader, WS client.
 // Role: Keep integration-test bodies short and behaviour-focused.
-// Last updated: Sprint 3 (2026-04-17) -- get_html uses fresh client (no cookie jar)
+// Last updated: Sprint 5 (2026-04-18) -- AppState fields updated for rate limits + session log
 
 #![allow(dead_code)]
 

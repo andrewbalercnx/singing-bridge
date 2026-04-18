@@ -11,6 +11,37 @@
 > **Commit:** `<sha>`
 > ```
 
+## Sprint 5: Azure + Cloudflare deployment + TURN + session log — 2026-04-18
+
+**Files changed:**
+- `server/src/config.rs` — Config::from_env() decomposed into parse_env() + validate_prod_config(); HTTPS validation for cf_worker_url; session_log_pepper; ws_join_rate_limit fields
+- `server/src/auth/secret.rs` — SecretString::PartialEq now uses HMAC-SHA256 for true constant-time on length mismatch; removed unused is_empty()
+- `server/src/auth/mailer.rs` — CloudflareWorkerMailer (reqwest, bearer auth, from-from-env); removed broad dead_code allow
+- `server/src/ws/protocol.rs` — ServerMsg::Admitted gains optional ice_servers + ttl fields for TURN delivery via WS
+- `server/src/ws/session_log.rs` — hash_email + open_row + record_peak (AND ended_at IS NULL) + close_row; removed broad dead_code allow
+- `server/src/ws/rate_limit.rs` — WsJoinBucket + check_and_inc + sweep_stale; fields made private; removed broad dead_code allow
+- `server/src/ws/mod.rs` — resolve_peer_ip (CF-IP > XFF > socket); cleanup() tautological condition fixed; loss_bp clamped to 10_000; dead Forwarded-header code removed
+- `server/src/ws/lobby.rs` — admit() sends ice_servers in Admitted; orphan log-row closed on disconnect race; removed broad dead_code allow
+- `server/src/state.rs` — BlockEntry + BLOCK_LIST_CAP=256; ActiveSession with AtomicU16 peaks; Arc<DashMap> rate limit maps + sweeper handle
+- `server/src/http/turn.rs` — /turn-credentials requires teacher session cookie (401 otherwise); build_ice_servers extracted; turns:// removed; removed broad dead_code allow
+- `server/src/http/health.rs` — /healthz returns {status:"ok"}/200 or 503 after shutdown
+- `infra/bicep/container-app.bicep` — CF IP allow-list in ipSecurityRestrictions; min=max=1 replica; secrets via secretRef; removed unused sbJwtSecret param
+- `infra/bicep/coturn-vm.bicep` — coturn VM + static IP + NSG; cloud-init uses replace() to inject TURN secret; SSRF denied-peer-ip ranges; 0600 turnserver.conf
+- `infra/cloudflare/workers/magic-link-relay.js` — CF Worker with timing-safe bearer auth; from from env only
+- `web/assets/ice.js` — TURN credential fetcher with 10s pre-expiry cache; createFetcher() for test isolation
+- `web/assets/signalling.js` — makePeerConnection awaited; students use admitted ice_servers; teacher fetches via /turn-credentials with cookie
+- `web/assets/student.js` — onBlocked callback wires #blocked-notice
+- `web/assets/teacher.js` — rejectAndBlock(id, ttlSecs) + "Reject & block" button
+- `web/student.html` / `teacher.html` — ice.js script tag added
+- `Dockerfile` — two-stage rust:1.82-bookworm → distroless/cc-debian12; USER 65532
+- `.github/workflows/deploy.yml` — OIDC federation (client-id/tenant-id/subscription-id); no long-lived secrets
+- `scripts/check-bicep.sh` — CI guard: asserts min=max=1 replica in container-app.bicep
+- `knowledge/runbook/deploy.md` — one-time bootstrap + per-release deploy + CF IP refresh
+- `knowledge/runbook/rollback.md` — revision list, activate/deactivate, migration compat
+- `knowledge/runbook/incident-turn-down.md` — coturn restart, cert renewal, VM unreachable
+
+**Commit:** `c96a125`
+
 ## Sprint 4: Bandwidth adaptation + quality hardening — 2026-04-17
 
 **Files changed:**

@@ -22,6 +22,7 @@
   const qualityBadge = document.getElementById('quality-badge');
   const reconnectBanner = document.getElementById('reconnect-banner');
   const floorNotice = document.getElementById('floor-violation');
+  const blockedNotice = document.getElementById('blocked-notice');
 
   // Landing-page browser-compat gate.
   const detect = window.sbBrowser.detectBrowser(navigator.userAgent, {
@@ -60,6 +61,10 @@
       onRejected(reason) {
         lobbyStatus.hidden = true;
         errEl.textContent = `Rejected: ${reason}`;
+      },
+      onBlocked(_reason) {
+        lobbyStatus.hidden = true;
+        if (blockedNotice) blockedNotice.hidden = false;
       },
       onPeerConnected({ dataChannel, audioTrack, videoTrack }) {
         sessionSection.hidden = false;

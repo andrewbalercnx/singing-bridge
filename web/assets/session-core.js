@@ -16,7 +16,7 @@
 //             rejections are swallowed + logged (never rethrown);
 //             stopAll() clears every timer started by
 //             startSessionSubsystems (adapt interval, reconnect watcher).
-// Last updated: Sprint 4 (2026-04-17) -- initial implementation
+// Last updated: Sprint 5 (2026-04-18) -- metricsSink every 5th adapt tick
 
 (function (root, factory) {
   'use strict';
@@ -40,9 +40,12 @@
     var ladderState = adapt.initLadderState(role);
     var prevStats = null;
     var stopped = false;
+    var tickCount = 0;
+    var lastSummary = null;
 
     function tick() {
       if (stopped || !pc) return;
+      tickCount++;
       Promise.resolve()
         .then(function () { return pc.getStats(); })
         .then(function (stats) {
@@ -50,6 +53,7 @@
           var samples = quality.summariseStats(stats, prevStats);
           prevStats = stats;
           var summary = quality.qualityTierFromSummary(samples);
+          lastSummary = summary;
           if (callbacks.onQuality) callbacks.onQuality(summary);
 
           var outbound = samples.filter(function (s) { return s.dir === 'outbound'; });
@@ -60,6 +64,14 @@
             if (res.actions[i].type === 'floor_violation' && callbacks.onFloorViolation) {
               callbacks.onFloorViolation();
             }
+          }
+
+          // Every 5th tick (~10 s at 2 s interval): push session metrics.
+          if (tickCount % 5 === 0 && callbacks.metricsSink && lastSummary) {
+            callbacks.metricsSink({
+              loss_bp: Math.round((lastSummary.lossFraction || 0) * 10000),
+              rtt_ms: Math.round(lastSummary.rttMs || 0),
+            });
           }
         })
         .catch(function () { /* non-critical */ });

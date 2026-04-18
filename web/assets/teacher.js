@@ -5,7 +5,7 @@
 //          onFloorViolation / onReconnectBanner callbacks through
 //          to the signalling client; renders the quality badge and
 //          mirrors the student-side floor-violation notice.
-// Last updated: Sprint 4 (2026-04-17) -- +quality +floor +reconnect wiring
+// Last updated: Sprint 5 (2026-04-18) -- Reject & block button
 
 'use strict';
 
@@ -27,6 +27,7 @@
   const handleProxy = {
     admit(id) { if (sessionHandle) sessionHandle.admit(id); },
     reject(id) { if (sessionHandle) sessionHandle.reject(id); },
+    rejectAndBlock(id) { if (sessionHandle) sessionHandle.rejectAndBlock(id, 600); },
   };
 
   function renderEntry(entry) {
@@ -51,7 +52,11 @@
     reject.type = 'button';
     reject.textContent = 'Reject';
     reject.addEventListener('click', () => handleProxy.reject(entry.id));
-    li.append(document.createTextNode(' '), admit, reject);
+    const rejectAndBlock = document.createElement('button');
+    rejectAndBlock.type = 'button';
+    rejectAndBlock.textContent = 'Reject & block (10 min)';
+    rejectAndBlock.addEventListener('click', () => handleProxy.rejectAndBlock(entry.id));
+    li.append(document.createTextNode(' '), admit, reject, rejectAndBlock);
     return li;
   }
 

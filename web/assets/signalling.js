@@ -21,7 +21,7 @@
 //             is the sole sender.setParameters mutation site AFTER
 //             session subsystems start; priority hints at transceiver
 //             creation are the only pre-session setParameters calls.
-// Last updated: Sprint 4 (2026-04-17) -- adapt/quality/reconnect wiring
+// Last updated: Sprint 5 (2026-04-18) -- ice.js TURN, session_metrics, rejectAndBlock, onBlocked
 
 (function (root, factory) {
   'use strict';
@@ -78,14 +78,16 @@
   };
   Signalling.prototype.close = function () { try { this.sock.close(); } catch (_) {} };
 
-  function makePeerConnection() {
-    // Sprint 4 note: Google STUN is a pre-production placeholder. It leaks
-    // the client's public IP to Google once at ICE gather time and again
-    // on every ICE restart. Sprint 5 brings up coturn (ADR-0001 §Infra)
-    // at singing.rcnx.io and this will be swapped for our own STUN/TURN.
-    return new RTCPeerConnection({
-      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
-    });
+  async function makePeerConnection() {
+    var iceServers;
+    try {
+      iceServers = await window.sbIce.fetchIceServers();
+    } catch (_) {
+      // Fall back to Google STUN if the credential fetch fails so the
+      // call can still proceed in degraded mode.
+      iceServers = [{ urls: 'stun:stun.l.google.com:19302' }];
+    }
+    return new RTCPeerConnection({ iceServers: iceServers });
   }
 
   async function setMungedLocalDescription(pc, desc) {
@@ -171,6 +173,9 @@
     var sessionCallbacks = {
       onQuality: callbacks.onQuality,
       onFloorViolation: callbacks.onFloorViolation,
+      metricsSink: function (metrics) {
+        sig.send({ type: 'session_metrics', loss_bp: metrics.loss_bp, rtt_ms: metrics.rtt_ms });
+      },
       onReconnectEffect: function (effect) {
         if (effect === 'schedule_watch') {
           if (callbacks.onReconnectBanner) callbacks.onReconnectBanner(true);
@@ -271,6 +276,9 @@
     return {
       admit: function (entryId) { sig.send({ type: 'lobby_admit', slug: slug, entry_id: entryId }); },
       reject: function (entryId) { sig.send({ type: 'lobby_reject', slug: slug, entry_id: entryId }); },
+      rejectAndBlock: function (entryId, ttlSecs) {
+        sig.send({ type: 'lobby_reject', slug: slug, entry_id: entryId, block_ttl_secs: ttlSecs || 600 });
+      },
       hangup: function () { teardownSession(); sig.close(); },
     };
   }
@@ -280,6 +288,7 @@
     var email = args.email;
     var onAdmitted = args.onAdmitted;
     var onRejected = args.onRejected;
+    var onBlocked = args.onBlocked;
     var onPeerDisconnected = args.onPeerDisconnected;
     var onPeerConnected = args.onPeerConnected;
     var onQuality = args.onQuality;
@@ -305,6 +314,9 @@
     sig.on('rejected', function (m) {
       if (onRejected) onRejected(m.reason);
       sig.close();
+    });
+    sig.on('error', function (m) {
+      if (m.code === 'blocked' && onBlocked) onBlocked(m.message);
     });
     sig.on('peer_connected', async function () {
       refs.pc = makePeerConnection();

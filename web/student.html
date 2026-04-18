@@ -4,7 +4,7 @@
   Purpose: Student join form + session UI. The sb:debug placeholder
            is replaced server-side with a <meta name="sb-debug"> tag
            when config.dev is true (empty string otherwise).
-  Last updated: Sprint 4 (2026-04-17) -- +quality badge +reconnect/floor notices
+  Last updated: Sprint 6 (2026-04-18) -- recording consent banner + REC indicator
 -->
 <html lang="en">
 <head>
@@ -50,6 +50,18 @@
 
     <section id="session" hidden>
       <div id="reconnect-banner" class="reconnect-banner" hidden>Reconnecting…</div>
+
+      <!-- Recording consent banner (shown when teacher starts recording) -->
+      <div id="consent-banner" class="consent-banner" hidden>
+        <p>Your teacher wants to record this lesson.</p>
+        <button id="consent-accept" type="button">Allow recording</button>
+        <button id="consent-decline" type="button">Decline</button>
+        <span id="consent-countdown"></span>
+      </div>
+
+      <!-- REC indicator (visible while recording active) -->
+      <span id="rec-indicator" class="rec-indicator" hidden aria-label="Recording active">REC</span>
+
       <div class="tiles">
         <div class="tile remote">
           <video id="remote-video" autoplay playsinline></video>
@@ -66,6 +78,7 @@
         <button id="hangup" type="button">End call</button>
         <span id="quality-badge" class="quality-badge good" hidden>good</span>
       </div>
+
     </section>
 
     <section id="floor-violation" class="floor-violation" hidden>

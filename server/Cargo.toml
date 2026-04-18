@@ -14,7 +14,9 @@ workspace = true
 [dependencies]
 axum = { version = "0.7", features = ["ws", "macros"] }
 tokio = { version = "1.38", features = ["full"] }
-tokio-util = { version = "0.7", features = ["rt"] }
+tokio-util = { version = "0.7", features = ["io", "rt"] }
+bytes = "1"
+futures = "0.3"
 tower = "0.4"
 tower-http = { version = "0.5", features = ["fs", "trace", "set-header"] }
 hyper = "1"

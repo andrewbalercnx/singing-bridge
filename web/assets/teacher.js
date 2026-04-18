@@ -5,13 +5,15 @@
 //          onFloorViolation / onReconnectBanner callbacks through
 //          to the signalling client; renders the quality badge and
 //          mirrors the student-side floor-violation notice.
-// Last updated: Sprint 5 (2026-04-18) -- Reject & block button
+// Last updated: Sprint 6 (2026-04-18) -- recording button, consent, post-session send modal
 
 'use strict';
 
 (function () {
   const slug = location.pathname.replace(/^\/teach\//, '');
   document.getElementById('room-heading').textContent = `Your room: ${slug}`;
+  const recordingsLink = document.getElementById('recordings-link');
+  if (recordingsLink) recordingsLink.href = `/teach/${slug}/recordings`;
 
   const listEl = document.getElementById('lobby-list');
   const emptyEl = document.getElementById('lobby-empty');
@@ -20,6 +22,93 @@
   const qualityBadge = document.getElementById('quality-badge');
   const reconnectBanner = document.getElementById('reconnect-banner');
   const floorNotice = document.getElementById('floor-violation');
+  const recordBtn = document.getElementById('record');
+  const recIndicator = document.getElementById('rec-indicator');
+  const sendModal = document.getElementById('send-recording-modal');
+  const sendForm = document.getElementById('send-recording-form');
+  const sendEmailEl = document.getElementById('send-recording-email');
+  const sendStatus = document.getElementById('send-recording-status');
+  const sendDismiss = document.getElementById('send-recording-dismiss');
+
+  // Recording state
+  let recorderHandle = null;
+  let recordStartTime = null;
+  let lastStudentEmail = '';
+
+  function setRecordState(state) {
+    if (!recordBtn) return;
+    recordBtn.dataset.state = state;
+    const labels = { idle: 'Record', 'waiting-consent': 'Waiting…', recording: 'Stop recording', stopped: 'Record' };
+    recordBtn.textContent = labels[state] || 'Record';
+    recordBtn.disabled = state === 'waiting-consent';
+    if (recIndicator) recIndicator.hidden = state !== 'recording';
+  }
+
+  if (recordBtn) {
+    recordBtn.addEventListener('click', () => {
+      const state = recordBtn.dataset.state;
+      if (state === 'idle' || state === 'stopped') {
+        if (sessionHandle) sessionHandle.startRecording(slug);
+        setRecordState('waiting-consent');
+      } else if (state === 'recording') {
+        if (sessionHandle) sessionHandle.stopRecording(slug);
+        stopRecorder();
+      }
+    });
+  }
+
+  if (sendDismiss) {
+    sendDismiss.addEventListener('click', () => {
+      if (sendModal) sendModal.close();
+    });
+  }
+
+  if (sendForm) {
+    sendForm.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const pendingId = sendForm.dataset.recordingId;
+      if (!pendingId) return;
+      const email = sendEmailEl.value.trim();
+      sendStatus.hidden = false;
+      sendStatus.textContent = 'Sending…';
+      fetch('/api/recordings/' + pendingId + '/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ override_email: email }),
+      }).then(r => {
+        if (!r.ok) throw new Error('send failed ' + r.status);
+        sendStatus.textContent = 'Sent!';
+        setTimeout(() => { if (sendModal) sendModal.close(); }, 1500);
+      }).catch(err => {
+        sendStatus.textContent = 'Error: ' + err.message;
+      });
+    });
+  }
+
+  function stopRecorder() {
+    if (!recorderHandle) return;
+    const startTime = recordStartTime;
+    recorderHandle.stop().then(blob => {
+      recorderHandle = null;
+      recordStartTime = null;
+      setRecordState('stopped');
+      const durationS = startTime ? Math.round((Date.now() - startTime) / 1000) : undefined;
+      return window.sbRecorder.uploadRecording({
+        blob,
+        studentEmail: lastStudentEmail,
+        durationS,
+      });
+    }).then(result => {
+      if (sendModal && sendEmailEl) {
+        sendEmailEl.value = lastStudentEmail;
+        sendForm.dataset.recordingId = result.id;
+        if (sendStatus) sendStatus.hidden = true;
+        sendModal.showModal();
+      }
+    }).catch(err => {
+      console.error('recording upload failed', err);
+    });
+  }
 
   // Proxy so list-item click handlers can reach the handle before
   // connectTeacher resolves. Reads the closure-scoped sessionHandle
@@ -71,11 +160,17 @@
     onLobbyUpdate(entries) {
       listEl.replaceChildren();
       emptyEl.hidden = entries.length > 0;
-      for (const entry of entries) listEl.append(renderEntry(entry));
+      for (const entry of entries) {
+        listEl.append(renderEntry(entry));
+        // Track most recent student email for recording upload.
+        if (entries.length > 0) lastStudentEmail = entries[0].email;
+      }
     },
-    onPeerConnected({ dataChannel, audioTrack, videoTrack }) {
+    onPeerConnected({ dataChannel, audioTrack, videoTrack, studentEmail }) {
       statusEl.textContent = 'Connected.';
+      if (studentEmail) lastStudentEmail = studentEmail;
       if (qualityBadge) qualityBadge.hidden = false;
+      setRecordState('idle');
       if (videoTrack) {
         localVideo.srcObject = new MediaStream([videoTrack]);
       }
@@ -95,6 +190,9 @@
       if (qualityBadge) qualityBadge.hidden = true;
       if (reconnectBanner) reconnectBanner.hidden = true;
       if (floorNotice) floorNotice.hidden = true;
+      // If recording was active, stop it.
+      if (recorderHandle) stopRecorder();
+      setRecordState('idle');
       localVideo.srcObject = null;
     },
     onQuality(summary) {
@@ -103,13 +201,32 @@
       }
     },
     onFloorViolation() {
-      // Teacher side: show the mirror notice so the teacher understands
-      // why the session ended. The session itself ends via onGiveUp
-      // once the student hangs up.
       if (floorNotice) floorNotice.hidden = false;
     },
     onReconnectBanner(visible) {
       if (reconnectBanner) reconnectBanner.hidden = !visible;
+    },
+    onRecordConsentResult(granted) {
+      if (granted) {
+        // Student consented — start the actual MediaRecorder.
+        setRecordState('recording');
+        recordStartTime = Date.now();
+        if (window.sbRecorder && controlsHandle) {
+          const localStream = localVideo.srcObject;
+          const remoteAudio = document.getElementById('remote-audio');
+          const remoteStream = remoteAudio && remoteAudio.srcObject;
+          recorderHandle = window.sbRecorder.start({
+            localStream,
+            remoteStream,
+          });
+        }
+      } else {
+        setRecordState('idle');
+      }
+    },
+    onRecordingStopped() {
+      if (recorderHandle) stopRecorder();
+      else setRecordState('idle');
     },
   }).then((h) => {
     sessionHandle = h;

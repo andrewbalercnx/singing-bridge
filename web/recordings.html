@@ -1,0 +1,47 @@
+<!doctype html>
+<!--
+  File: web/recordings.html
+  Purpose: Teacher recording library — list, sort, send link, delete.
+  Last updated: Sprint 6 (2026-04-18) -- initial implementation
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>singing-bridge — recordings</title>
+  <link rel="stylesheet" href="/assets/styles.css">
+</head>
+<body>
+  <main class="recordings-page">
+    <h1>Recordings</h1>
+
+    <nav><a id="back-link" href="#">← Back to room</a></nav>
+
+    <div class="sort-controls">
+      <span>Sort by:</span>
+      <button id="sort-date" type="button" class="sort-active" aria-pressed="true">Date</button>
+      <button id="sort-student" type="button" aria-pressed="false">Student</button>
+    </div>
+
+    <ul id="recordings-list" aria-live="polite"></ul>
+    <p id="recordings-empty" hidden>No recordings yet.</p>
+    <p id="recordings-error" class="error" hidden></p>
+
+    <!-- Send-link modal -->
+    <dialog id="send-modal">
+      <form id="send-form" method="dialog">
+        <h2>Send recording link</h2>
+        <label>Recipient email
+          <input type="email" id="send-email" autocomplete="off" required>
+        </label>
+        <div class="modal-actions">
+          <button type="submit" id="send-confirm">Send</button>
+          <button type="button" id="send-cancel">Cancel</button>
+        </div>
+        <p id="send-error" class="error" hidden></p>
+      </form>
+    </dialog>
+
+    <script src="/assets/recordings.js"></script>
+  </main>
+</body>
+</html>

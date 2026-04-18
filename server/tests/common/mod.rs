@@ -1,7 +1,7 @@
 // File: server/tests/common/mod.rs
 // Purpose: Shared test harness — spawn_app, dev-mail reader, WS client.
 // Role: Keep integration-test bodies short and behaviour-focused.
-// Last updated: Sprint 5 (2026-04-18) -- AppState fields updated for rate limits + session log
+// Last updated: Sprint 6 (2026-04-18) -- add blob to TestOpts + AppState; make_two_teachers helper
 
 #![allow(dead_code)]
 
@@ -14,6 +14,7 @@ use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
 use singing_bridge_server::{
     auth::mailer::{DevMailer, Mailer},
+    blob::{BlobStore, DevBlobStore},
     config::Config,
     db::init_pool,
     http::router,
@@ -30,6 +31,7 @@ pub struct TestApp {
     pub addr: SocketAddr,
     pub base_url: Url,
     pub mail_dir: TempDir,
+    pub blob_dir: TempDir,
     pub shutdown: CancellationToken,
     pub server_handle: tokio::task::JoinHandle<()>,
     pub state: Arc<AppState>,
@@ -44,6 +46,8 @@ pub struct TestOpts {
     pub dev: bool,
     /// Override the static file directory (defaults to the workspace `web/`).
     pub static_dir: Option<std::path::PathBuf>,
+    /// Override blob store (defaults to a temp-dir DevBlobStore).
+    pub blob: Option<Arc<dyn BlobStore>>,
 }
 
 impl Default for TestOpts {
@@ -55,6 +59,7 @@ impl Default for TestOpts {
             signup_rate_limit_per_ip: 999_999,
             dev: true,
             static_dir: None,
+            blob: None,
         }
     }
 }
@@ -99,6 +104,11 @@ pub async fn spawn_app_with(opts: TestOpts) -> TestApp {
 
     let pool = init_pool(&config.db_url).await.unwrap();
     let mailer: Arc<dyn Mailer> = Arc::new(DevMailer::new(&config.dev_mail_dir).await.unwrap());
+    let blob_dir = tempfile::tempdir().unwrap();
+    let blob: Arc<dyn BlobStore> = match opts.blob {
+        Some(b) => b,
+        None => Arc::new(DevBlobStore::new(blob_dir.path()).await.unwrap()),
+    };
     let shutdown = CancellationToken::new();
 
     let ws_join_rate_limits = std::sync::Arc::new(DashMap::new());
@@ -112,6 +122,7 @@ pub async fn spawn_app_with(opts: TestOpts) -> TestApp {
         db: pool,
         config: config.clone(),
         mailer,
+        blob,
         rooms: DashMap::new(),
         active_rooms: std::sync::atomic::AtomicUsize::new(0),
         shutdown: shutdown.clone(),
@@ -145,6 +156,7 @@ pub async fn spawn_app_with(opts: TestOpts) -> TestApp {
         addr,
         base_url,
         mail_dir,
+        blob_dir,
         shutdown,
         server_handle,
         state,
@@ -286,6 +298,32 @@ impl TestApp {
 pub type Ws = tokio_tungstenite::WebSocketStream<
     tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
 >;
+
+/// A teacher with a signed-in session cookie and their room slug.
+pub struct TeacherFixture {
+    pub email: String,
+    pub slug: String,
+    pub cookie: String,
+}
+
+/// Sign up two teachers in the given app and return their fixtures.
+/// Useful for cross-teacher authorization tests.
+pub async fn make_two_teachers(app: &TestApp) -> (TeacherFixture, TeacherFixture) {
+    let cookie_a = app.signup_teacher("teacher_a@test.com", "room-a").await;
+    let cookie_b = app.signup_teacher("teacher_b@test.com", "room-b").await;
+    (
+        TeacherFixture {
+            email: "teacher_a@test.com".into(),
+            slug: "room-a".into(),
+            cookie: cookie_a,
+        },
+        TeacherFixture {
+            email: "teacher_b@test.com".into(),
+            slug: "room-b".into(),
+            cookie: cookie_b,
+        },
+    )
+}
 
 pub async fn send_ws(ws: &mut Ws, msg: &serde_json::Value) {
     ws.send(Message::Text(msg.to_string())).await.unwrap();

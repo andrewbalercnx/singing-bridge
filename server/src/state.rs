@@ -5,12 +5,12 @@
 // Role: Single source of truth for live connections and lobby membership.
 // Exports: AppState, RoomState, LobbyEntry, ActiveSession, ClientHandle,
 //          ConnectionId, SlugKey, BlockEntry, BLOCK_LIST_CAP
-// Depends: tokio, dashmap, sqlx, tokio_util, async trait mailer
+// Depends: tokio, dashmap, sqlx, tokio_util, async trait mailer, blob
 // Invariants: RoomState is `tokio::sync::RwLock`; callers MUST use
 //             AppState::room / ::room_or_insert (no direct DashMap access
 //             from async fns). BLOCK_LIST_CAP enforced on every block insert;
 //             oldest entry evicted when cap is reached (FIFO).
-// Last updated: Sprint 5 (2026-04-18) -- block list, session log ids, atomic peaks
+// Last updated: Sprint 6 (2026-04-18) -- add recording_active, BlobStore
 
 use std::net::IpAddr;
 use std::sync::atomic::{AtomicU16, AtomicUsize, Ordering};
@@ -25,6 +25,7 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use crate::auth::mailer::Mailer;
+use crate::blob::BlobStore;
 use crate::auth::secret::SecretString;
 use crate::config::Config;
 use crate::error::{AppError, Result};
@@ -127,6 +128,7 @@ pub struct RoomState {
     pub lobby: Vec<LobbyEntry>,
     pub active_session: Option<ActiveSession>,
     pub blocked: Vec<BlockEntry>,
+    pub recording_active: bool,
 }
 
 impl RoomState {
@@ -184,6 +186,7 @@ pub struct AppState {
     pub db: SqlitePool,
     pub config: Config,
     pub mailer: Arc<dyn Mailer>,
+    pub blob: Arc<dyn BlobStore>,
     pub rooms: DashMap<SlugKey, Arc<RwLock<RoomState>>>,
     /// Authoritative counter for the room cap. Incremented inside the
     /// single-winner `Entry::Vacant` branch of `room_or_insert`; we compare-

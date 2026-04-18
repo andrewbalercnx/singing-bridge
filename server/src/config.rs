@@ -67,6 +67,12 @@ pub struct Config {
     pub lobby_block_default_ttl_secs: i64,
     // Session log
     pub session_log_pepper: Option<SecretString>,
+    // Recording
+    pub dev_blob_dir: std::path::PathBuf,
+    pub recording_max_bytes: u64,
+    pub recording_link_ttl_secs: i64,
+    pub gate_rate_limit_per_ip: usize,
+    pub gate_rate_limit_window_secs: i64,
 }
 
 impl Config {
@@ -99,6 +105,11 @@ impl Config {
             ws_join_rate_limit_window_secs: 60,
             lobby_block_default_ttl_secs: 600,
             session_log_pepper: None, // dev: use compile-time constant in session_log.rs
+            dev_blob_dir: std::path::PathBuf::from("dev-blobs"),
+            recording_max_bytes: 512 * 1024 * 1024,
+            recording_link_ttl_secs: 900,
+            gate_rate_limit_per_ip: 10,
+            gate_rate_limit_window_secs: 300,
         }
     }
 
@@ -171,6 +182,7 @@ impl Config {
                     ConfigError::Invalid("SB_WS_JOIN_RATE_LIMIT_WINDOW_SECS", format!("{e}"))
                 })?;
 
+        let dev_blob_dir = data_dir.join("dev-blobs");
         Ok(Self {
             bind,
             base_url,
@@ -199,6 +211,11 @@ impl Config {
             ws_join_rate_limit_window_secs,
             lobby_block_default_ttl_secs: 600,
             session_log_pepper,
+            dev_blob_dir,
+            recording_max_bytes: 512 * 1024 * 1024,
+            recording_link_ttl_secs: 900,
+            gate_rate_limit_per_ip: 10,
+            gate_rate_limit_window_secs: 300,
         })
     }
 

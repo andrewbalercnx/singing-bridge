@@ -9,7 +9,7 @@
 //             Role is decided on the first LobbyJoin/LobbyWatch and immutable
 //             thereafter. SessionMetrics rate-limited to 1 frame per 5 s.
 //             loss_bp clamped to [0, 10000] before persist (100% = 10000 bp).
-// Last updated: Sprint 5 (2026-04-18) -- peer IP, rate limit, SessionMetrics, block, R1 fixes
+// Last updated: Sprint 6 (2026-04-18) -- RecordStart/Consent/Stop handlers
 
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 
@@ -261,6 +261,11 @@ async fn handle_client_msg(
             handle_session_metrics(ctx, state, loss_bp, rtt_ms).await
         }
         ClientMsg::Signal { to, payload } => handle_signal(ctx, state, to, payload).await,
+        ClientMsg::RecordStart { slug } => handle_record_start(ctx, state, &slug).await,
+        ClientMsg::RecordConsent { slug, granted } => {
+            handle_record_consent(ctx, state, &slug, granted).await
+        }
+        ClientMsg::RecordStop { slug } => handle_record_stop(ctx, state, &slug).await,
     }
 }
 
@@ -445,6 +450,124 @@ async fn handle_signal(
     true
 }
 
+async fn handle_record_start(
+    ctx: &ConnContext,
+    state: &Arc<AppState>,
+    msg_slug: &str,
+) -> bool {
+    if !require_joined(ctx, msg_slug).await {
+        return true;
+    }
+    if ctx.role != Some(Role::Teacher) {
+        send_error(ctx, ErrorCode::NotOwner, "teacher only").await;
+        return true;
+    }
+    let Some(slug) = ctx.slug.as_ref() else { return true };
+    let Some(room) = state.room(slug) else { return true };
+
+    let student_tx = {
+        let rs = room.write().await;
+        let Some(session) = rs.active_session.as_ref() else {
+            drop(rs);
+            send_error(ctx, ErrorCode::NotInSession, "no active session").await;
+            return true;
+        };
+        if rs.recording_active {
+            drop(rs);
+            send_error(ctx, ErrorCode::RecordAlreadyActive, "recording already active").await;
+            return true;
+        }
+        session.student.conn.tx.clone()
+    };
+
+    let _ = student_tx
+        .send(PumpDirective::Send(ServerMsg::RecordConsentRequest))
+        .await;
+    true
+}
+
+async fn handle_record_consent(
+    ctx: &ConnContext,
+    state: &Arc<AppState>,
+    msg_slug: &str,
+    granted: bool,
+) -> bool {
+    if !require_joined(ctx, msg_slug).await {
+        return true;
+    }
+    let Some(slug) = ctx.slug.as_ref() else { return true };
+    let Some(room) = state.room(slug) else { return true };
+
+    let (teacher_tx_opt, student_tx_opt) = {
+        let mut rs = room.write().await;
+        let has_session = rs.active_session.is_some();
+        if !has_session {
+            drop(rs);
+            send_error(ctx, ErrorCode::NotInSession, "no active session").await;
+            return true;
+        }
+        let student_id = rs.active_session.as_ref().unwrap().student.conn.id;
+        if student_id != ctx.id {
+            drop(rs);
+            send_error(ctx, ErrorCode::NotInSession, "not the session student").await;
+            return true;
+        }
+        let teacher_tx = rs.teacher_conn.as_ref().map(|c| c.tx.clone());
+        let student_tx = rs.active_session.as_ref().map(|s| s.student.conn.tx.clone());
+        if granted {
+            rs.recording_active = true;
+        }
+        (teacher_tx, student_tx)
+    };
+
+    if let Some(ttx) = teacher_tx_opt {
+        let _ = ttx
+            .send(PumpDirective::Send(ServerMsg::RecordConsentResult { granted }))
+            .await;
+        if granted {
+            let _ = ttx.send(PumpDirective::Send(ServerMsg::RecordingActive)).await;
+        }
+    }
+    if granted {
+        if let Some(stx) = student_tx_opt {
+            let _ = stx.send(PumpDirective::Send(ServerMsg::RecordingActive)).await;
+        }
+    }
+    true
+}
+
+async fn handle_record_stop(
+    ctx: &ConnContext,
+    state: &Arc<AppState>,
+    msg_slug: &str,
+) -> bool {
+    if !require_joined(ctx, msg_slug).await {
+        return true;
+    }
+    if ctx.role != Some(Role::Teacher) {
+        send_error(ctx, ErrorCode::NotOwner, "teacher only").await;
+        return true;
+    }
+    let Some(slug) = ctx.slug.as_ref() else { return true };
+    let Some(room) = state.room(slug) else { return true };
+
+    let (teacher_tx, student_tx) = {
+        let mut rs = room.write().await;
+        rs.recording_active = false;
+        let teacher_tx = rs.teacher_conn.as_ref().map(|c| c.tx.clone());
+        let student_tx = rs.active_session.as_ref().map(|s| s.student.conn.tx.clone());
+        (teacher_tx, student_tx)
+    };
+
+    if let Some(ttx) = teacher_tx {
+        let _ = ttx.send(PumpDirective::Send(ServerMsg::RecordingStopped)).await;
+    }
+    if let Some(stx) = student_tx {
+        let _ = stx.send(PumpDirective::Send(ServerMsg::RecordingStopped)).await;
+    }
+    true
+}
+
 async fn parse_slug_or_err(ctx: &ConnContext, raw: &str) -> Option<SlugKey> {
     match SlugKey::new(raw) {
         Ok(k) => Some(k),
@@ -540,10 +663,28 @@ async fn cleanup(state: &AppState, mut ctx: ConnContext, result: LoopExit) {
                         && rs.teacher_conn.as_ref().map(|c| c.id) == Some(ctx.id)
                     {
                         rs.teacher_conn = None;
+                        // Teacher disconnect: reset recording state, notify student.
+                        if rs.recording_active {
+                            rs.recording_active = false;
+                            if let Some(student_tx) =
+                                rs.active_session.as_ref().map(|s| s.student.conn.tx.clone())
+                            {
+                                outbound.push((student_tx, ServerMsg::RecordingStopped));
+                            }
+                        }
                     } else {
                         match rs.remove_by_connection(ctx.id) {
                             Some(RemovalKind::FromActiveSession) => {
-                                if let Some(teacher_tx) =
+                                // Student disconnect: reset recording state, notify teacher.
+                                if rs.recording_active {
+                                    rs.recording_active = false;
+                                    if let Some(teacher_tx) =
+                                        rs.teacher_conn.as_ref().map(|c| c.tx.clone())
+                                    {
+                                        outbound.push((teacher_tx.clone(), ServerMsg::RecordingStopped));
+                                        outbound.push((teacher_tx, ServerMsg::PeerDisconnected));
+                                    }
+                                } else if let Some(teacher_tx) =
                                     rs.teacher_conn.as_ref().map(|c| c.tx.clone())
                                 {
                                     outbound.push((teacher_tx, ServerMsg::PeerDisconnected));

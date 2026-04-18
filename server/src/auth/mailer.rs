@@ -7,7 +7,7 @@
 //             the file content but are bounded by the TTL + single-use consume.
 //             CloudflareWorkerMailer never sends `from` in the request body;
 //             the Worker takes `from` from its own env config only.
-// Last updated: Sprint 5 (2026-04-18) -- add CloudflareWorkerMailer, R1 fixes
+// Last updated: Sprint 6 (2026-04-18) -- add send_recording_link to trait + all impls
 
 use std::path::{Path, PathBuf};
 
@@ -34,18 +34,12 @@ pub enum MailerError {
 #[async_trait]
 pub trait Mailer: Send + Sync + 'static {
     async fn send_magic_link(&self, to: &str, url: &Url) -> Result<(), MailerError>;
+    async fn send_recording_link(&self, to: &str, url: &Url) -> Result<(), MailerError>;
 }
 
 // ---------------------------------------------------------------------------
 // DevMailer
 // ---------------------------------------------------------------------------
-
-#[derive(Serialize)]
-struct DevMailEntry<'a> {
-    to: &'a str,
-    url: &'a str,
-    issued_at: i64,
-}
 
 pub struct DevMailer {
     dir: PathBuf,
@@ -76,14 +70,31 @@ impl DevMailer {
 #[async_trait]
 impl Mailer for DevMailer {
     async fn send_magic_link(&self, to: &str, url: &Url) -> Result<(), MailerError> {
-        tracing::info!(%to, %url, "dev magic link");
-        let entry = DevMailEntry {
+        self.write_entry(to, "magic_link", url).await
+    }
+
+    async fn send_recording_link(&self, to: &str, url: &Url) -> Result<(), MailerError> {
+        self.write_entry(to, "recording_link", url).await
+    }
+}
+
+impl DevMailer {
+    async fn write_entry(&self, to: &str, kind: &str, url: &Url) -> Result<(), MailerError> {
+        tracing::info!(%to, %url, kind, "dev mail");
+        #[derive(Serialize)]
+        struct Entry<'a> {
+            to: &'a str,
+            kind: &'a str,
+            url: &'a str,
+            issued_at: i64,
+        }
+        let entry = Entry {
             to,
+            kind,
             url: url.as_str(),
             issued_at: time::OffsetDateTime::now_utc().unix_timestamp(),
         };
         let line = format!("{}\n", serde_json::to_string(&entry)?);
-
         let path = self.file_for(to);
         let mut opts = tokio::fs::OpenOptions::new();
         opts.create(true).append(true);
@@ -102,7 +113,8 @@ impl Mailer for DevMailer {
 // CloudflareWorkerMailer
 // ---------------------------------------------------------------------------
 
-const MAIL_SUBJECT: &str = "Your singing-bridge sign-in link";
+const MAIL_SUBJECT_MAGIC: &str = "Your singing-bridge sign-in link";
+const MAIL_SUBJECT_RECORDING: &str = "Your singing lesson recording";
 
 pub struct CloudflareWorkerMailer {
     worker_url: Url,
@@ -124,9 +136,19 @@ impl CloudflareWorkerMailer {
 #[async_trait]
 impl Mailer for CloudflareWorkerMailer {
     async fn send_magic_link(&self, to: &str, url: &Url) -> Result<(), MailerError> {
+        self.post(to, MAIL_SUBJECT_MAGIC, url).await
+    }
+
+    async fn send_recording_link(&self, to: &str, url: &Url) -> Result<(), MailerError> {
+        self.post(to, MAIL_SUBJECT_RECORDING, url).await
+    }
+}
+
+impl CloudflareWorkerMailer {
+    async fn post(&self, to: &str, subject: &str, url: &Url) -> Result<(), MailerError> {
         let body = serde_json::json!({
             "to": to,
-            "subject": MAIL_SUBJECT,
+            "subject": subject,
             "url": url.as_str(),
             // "from" is NOT included — the Worker reads MAIL_FROM from its own env config
         });
@@ -226,6 +248,6 @@ mod tests {
         let body: serde_json::Value = serde_json::from_slice(&reqs[0].body).unwrap();
         assert!(body.get("from").is_none(), "body must not include `from`");
         assert_eq!(body["to"], "user@example.com");
-        assert_eq!(body["subject"], MAIL_SUBJECT);
+        assert_eq!(body["subject"], MAIL_SUBJECT_MAGIC);
     }
 }

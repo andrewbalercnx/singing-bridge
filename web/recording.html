@@ -1,0 +1,41 @@
+<!doctype html>
+<!--
+  File: web/recording.html
+  Purpose: Student recording access gate — email verification + playback.
+  Last updated: Sprint 6 (2026-04-18) -- initial implementation
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>singing-bridge — recording</title>
+  <link rel="stylesheet" href="/assets/styles.css">
+</head>
+<body>
+  <main class="recording-gate">
+    <h1>Access your recording</h1>
+
+    <section id="gate-section">
+      <p>Enter the email address this link was sent to.</p>
+      <form id="gate-form">
+        <label>Email address
+          <input type="email" id="gate-email" name="email" autocomplete="email" required>
+        </label>
+        <button type="submit" id="gate-submit">Access recording</button>
+      </form>
+      <p id="gate-error" class="error" hidden></p>
+    </section>
+
+    <section id="player-section" hidden>
+      <p id="player-message">Loading recording…</p>
+      <video id="recording-player" controls preload="metadata"></video>
+    </section>
+
+    <p id="disabled-notice" class="error" hidden>
+      This link has been disabled after too many failed attempts.
+      Please contact your teacher to receive a new link.
+    </p>
+
+    <script src="/assets/recording-gate.js"></script>
+  </main>
+</body>
+</html>

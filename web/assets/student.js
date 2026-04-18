@@ -3,7 +3,7 @@
 //          threads onQuality / onFloorViolation / onReconnectBanner
 //          callbacks through to the signalling client; renders the
 //          quality badge and floor-violation notice.
-// Last updated: Sprint 5 (2026-04-18) -- onBlocked + blocked-notice wiring
+// Last updated: Sprint 6 (2026-04-18) -- recording consent banner + REC indicator
 
 'use strict';
 
@@ -23,6 +23,48 @@
   const reconnectBanner = document.getElementById('reconnect-banner');
   const floorNotice = document.getElementById('floor-violation');
   const blockedNotice = document.getElementById('blocked-notice');
+  const consentBanner = document.getElementById('consent-banner');
+  const consentAccept = document.getElementById('consent-accept');
+  const consentDecline = document.getElementById('consent-decline');
+  const consentCountdown = document.getElementById('consent-countdown');
+  const recIndicator = document.getElementById('rec-indicator');
+
+  let consentTimer = null;
+
+  function showConsentBanner(onResponse) {
+    if (!consentBanner) return;
+    consentBanner.hidden = false;
+    let remaining = 30;
+    if (consentCountdown) consentCountdown.textContent = `(${remaining}s)`;
+    consentTimer = setInterval(() => {
+      remaining--;
+      if (consentCountdown) consentCountdown.textContent = `(${remaining}s)`;
+      if (remaining <= 0) {
+        clearInterval(consentTimer);
+        consentTimer = null;
+        hideConsentBanner();
+        onResponse(false);
+      }
+    }, 1000);
+
+    function respond(granted) {
+      clearInterval(consentTimer);
+      consentTimer = null;
+      hideConsentBanner();
+      onResponse(granted);
+    }
+
+    consentAccept.onclick = () => respond(true);
+    consentDecline.onclick = () => respond(false);
+  }
+
+  function hideConsentBanner() {
+    if (consentBanner) consentBanner.hidden = true;
+  }
+
+  function setRecIndicator(active) {
+    if (recIndicator) recIndicator.hidden = !active;
+  }
 
   // Landing-page browser-compat gate.
   const detect = window.sbBrowser.detectBrowser(navigator.userAgent, {
@@ -87,6 +129,8 @@
         sessionSection.hidden = true;
         if (qualityBadge) qualityBadge.hidden = true;
         if (reconnectBanner) reconnectBanner.hidden = true;
+        hideConsentBanner();
+        setRecIndicator(false);
         localVideo.srcObject = null;
         errEl.textContent = 'Teacher disconnected.';
       },
@@ -96,14 +140,24 @@
         }
       },
       onFloorViolation() {
-        // Student-side floor surface: hide the session, reveal the notice,
-        // hang up the call so no further RTP flows.
         sessionSection.hidden = true;
         if (floorNotice) floorNotice.hidden = false;
         if (handle) handle.hangup();
       },
       onReconnectBanner(visible) {
         if (reconnectBanner) reconnectBanner.hidden = !visible;
+      },
+      onRecordConsentRequest() {
+        showConsentBanner((granted) => {
+          if (handle) handle.sendRecordConsent(slug, granted);
+        });
+      },
+      onRecordingActive() {
+        setRecIndicator(true);
+      },
+      onRecordingStopped() {
+        setRecIndicator(false);
+        hideConsentBanner();
       },
     });
     window.addEventListener('beforeunload', () => { if (handle) handle.hangup(); });

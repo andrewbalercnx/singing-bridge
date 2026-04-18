@@ -8,7 +8,7 @@
 // Invariants: ServerMsg.Signal.from is server-filled; clients cannot spoof.
 //             Signal.payload ≤ 16 KiB independent of the 64 KiB frame cap.
 //             LobbyReject.block_ttl_secs is clamped [0, 86400] server-side.
-// Last updated: Sprint 5 (2026-04-18) -- SessionMetrics, Blocked/RateLimited, block_ttl_secs
+// Last updated: Sprint 6 (2026-04-18) -- recording messages (RecordStart/Consent/Stop + server counterparts)
 
 use std::borrow::Cow;
 
@@ -107,6 +107,7 @@ pub enum ErrorCode {
     FieldTooLong,
     Blocked,
     RateLimited,
+    RecordAlreadyActive,
     Internal,
 }
 
@@ -146,6 +147,16 @@ pub enum ClientMsg {
         to: Peer,
         payload: serde_json::Value,
     },
+    RecordStart {
+        slug: String,
+    },
+    RecordConsent {
+        slug: String,
+        granted: bool,
+    },
+    RecordStop {
+        slug: String,
+    },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -181,6 +192,12 @@ pub enum ServerMsg {
         code: ErrorCode,
         message: String,
     },
+    RecordConsentRequest,
+    RecordConsentResult {
+        granted: bool,
+    },
+    RecordingActive,
+    RecordingStopped,
 }
 
 /// Sole control channel for the outbound pump (§4.15). The pump owns the

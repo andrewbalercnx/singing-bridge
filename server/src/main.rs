@@ -7,7 +7,7 @@
 //             Selects mailer based on MailerKind. Spawns WS join rate sweeper
 //             and aborts it on shutdown. AppState.ws_join_rate_sweeper is
 //             always a valid JoinHandle for the life of the process.
-// Last updated: Sprint 5 (2026-04-18) -- from_env, sweeper, MailerKind selection
+// Last updated: Sprint 6 (2026-04-18) -- blob store, cleanup_loop
 
 use std::{net::SocketAddr, sync::Arc};
 
@@ -17,6 +17,8 @@ use url::Url;
 
 use singing_bridge_server::{
     auth::mailer::{CloudflareWorkerMailer, DevMailer, Mailer},
+    blob::{BlobStore, DevBlobStore},
+    cleanup::cleanup_loop,
     config::{Config, MailerKind},
     db::init_pool,
     http::router,
@@ -57,6 +59,22 @@ async fn main() -> anyhow::Result<()> {
     let pool = init_pool(&config.db_url).await?;
     let shutdown = CancellationToken::new();
 
+    // Blob store (dev-only for now; prod Azure is a future addition).
+    tokio::fs::create_dir_all(&config.dev_blob_dir).await.ok();
+    let blob: Arc<dyn BlobStore> = Arc::new(
+        DevBlobStore::new(&config.dev_blob_dir)
+            .await
+            .map_err(|e| anyhow::anyhow!("blob store init: {e}"))?,
+    );
+
+    // Spawn cleanup loop.
+    let cleanup_blob = Arc::clone(&blob);
+    let cleanup_db = pool.clone();
+    let cleanup_shutdown = shutdown.clone();
+    tokio::spawn(async move {
+        cleanup_loop(cleanup_db, cleanup_blob, cleanup_shutdown).await;
+    });
+
     let session_log_pepper = config.session_log_pepper.clone();
 
     // Spawn the WS join rate-limit sweeper. Use Arc<DashMap> so the sweeper
@@ -81,6 +99,7 @@ async fn main() -> anyhow::Result<()> {
         db: pool,
         config: config.clone(),
         mailer,
+        blob,
         rooms: DashMap::new(),
         active_rooms: std::sync::atomic::AtomicUsize::new(0),
         shutdown: shutdown.clone(),

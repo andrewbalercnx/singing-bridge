@@ -21,7 +21,7 @@
 //             is the sole sender.setParameters mutation site AFTER
 //             session subsystems start; priority hints at transceiver
 //             creation are the only pre-session setParameters calls.
-// Last updated: Sprint 5 (2026-04-18) -- ice.js TURN, session_metrics, rejectAndBlock, onBlocked
+// Last updated: Sprint 6 (2026-04-18) -- recording message handlers (RecordStart/Consent/Stop)
 
 (function (root, factory) {
   'use strict';
@@ -222,6 +222,8 @@
     var onQuality = args.onQuality;
     var onFloorViolation = args.onFloorViolation;
     var onReconnectBanner = args.onReconnectBanner;
+    var onRecordConsentResult = args.onRecordConsentResult;
+    var onRecordingStopped = args.onRecordingStopped;
 
     var sig = new Signalling(openWs());
     sig.send({ type: 'lobby_watch', slug: slug });
@@ -278,6 +280,15 @@
       teardownSession();
       if (onPeerDisconnected) onPeerDisconnected();
     });
+    sig.on('record_consent_result', function (m) {
+      if (onRecordConsentResult) onRecordConsentResult(m.granted);
+    });
+    sig.on('recording_active', function () {
+      // Teacher side: recording_active confirms student consented (also triggers onRecordConsentResult).
+    });
+    sig.on('recording_stopped', function () {
+      if (onRecordingStopped) onRecordingStopped();
+    });
 
     return {
       admit: function (entryId) { sig.send({ type: 'lobby_admit', slug: slug, entry_id: entryId }); },
@@ -285,6 +296,8 @@
       rejectAndBlock: function (entryId, ttlSecs) {
         sig.send({ type: 'lobby_reject', slug: slug, entry_id: entryId, block_ttl_secs: ttlSecs || 600 });
       },
+      startRecording: function (s) { sig.send({ type: 'record_start', slug: s }); },
+      stopRecording: function (s) { sig.send({ type: 'record_stop', slug: s }); },
       hangup: function () { teardownSession(); sig.close(); },
     };
   }
@@ -300,6 +313,9 @@
     var onQuality = args.onQuality;
     var onFloorViolation = args.onFloorViolation;
     var onReconnectBanner = args.onReconnectBanner;
+    var onRecordConsentRequest = args.onRecordConsentRequest;
+    var onRecordingActive = args.onRecordingActive;
+    var onRecordingStopped = args.onRecordingStopped;
 
     var detect = detectTier();
     var sig = new Signalling(openWs());
@@ -371,9 +387,21 @@
       teardownSession();
       if (onPeerDisconnected) onPeerDisconnected();
     });
+    sig.on('record_consent_request', function () {
+      if (onRecordConsentRequest) onRecordConsentRequest();
+    });
+    sig.on('recording_active', function () {
+      if (onRecordingActive) onRecordingActive();
+    });
+    sig.on('recording_stopped', function () {
+      if (onRecordingStopped) onRecordingStopped();
+    });
 
     return {
       hangup: function () { teardownSession(); sig.close(); },
+      sendRecordConsent: function (s, granted) {
+        sig.send({ type: 'record_consent', slug: s, granted: granted });
+      },
     };
   }
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {

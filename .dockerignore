@@ -1,0 +1,13 @@
+target/
+.git/
+dev-mail/
+data/
+*.md
+council/
+memory/
+scripts/
+Documentation/
+infra/
+tests/
+.github/
+knowledge/

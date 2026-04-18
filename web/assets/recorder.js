@@ -32,21 +32,24 @@
   /**
    * Start a recording session.
    *
-   * @param {Object} opts
-   * @param {MediaStream} opts.localStream  - teacher mic + video stream
-   * @param {MediaStream} opts.remoteStream - student audio stream
+   * @param {Object}      opts
+   * @param {MediaTrack}  opts.localAudioTrack  - teacher's own mic track
+   * @param {MediaStream} opts.localVideoStream - teacher's own camera stream (video only)
+   * @param {MediaStream} opts.remoteStream     - student audio stream
    * @returns {Object} handle with .stop() method that returns a Promise<Blob>
    */
   function start(opts) {
-    var localStream = opts.localStream;
+    var localAudioTrack = opts.localAudioTrack;
+    var localVideoStream = opts.localVideoStream;
     var remoteStream = opts.remoteStream;
 
     var ctx = new (window.AudioContext || window.webkitAudioContext)();
     var dest = ctx.createMediaStreamDestination();
 
     // Mix teacher mic into composite.
-    if (localStream) {
-      var localSource = ctx.createMediaStreamSource(localStream);
+    if (localAudioTrack) {
+      var localAudioStream = new MediaStream([localAudioTrack]);
+      var localSource = ctx.createMediaStreamSource(localAudioStream);
       localSource.connect(dest);
     }
     // Mix student audio into composite.
@@ -58,8 +61,8 @@
     // Build the composite stream: mixed audio + teacher video.
     var tracks = [];
     dest.stream.getAudioTracks().forEach(function (t) { tracks.push(t); });
-    if (localStream) {
-      localStream.getVideoTracks().forEach(function (t) { tracks.push(t); });
+    if (localVideoStream) {
+      localVideoStream.getVideoTracks().forEach(function (t) { tracks.push(t); });
     }
     var composite = new MediaStream(tracks);
 
@@ -104,12 +107,15 @@
     var studentEmail = opts.studentEmail;
     var durationS = opts.durationS;
 
-    var url = '/api/recordings/upload?student_email=' + encodeURIComponent(studentEmail);
-    if (durationS != null) url += '&duration_s=' + Math.round(durationS);
+    var url = '/api/recordings/upload';
+    if (durationS != null) url += '?duration_s=' + Math.round(durationS);
 
     return fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': blob.type || 'video/webm' },
+      headers: {
+        'Content-Type': blob.type || 'video/webm',
+        'X-Student-Email': studentEmail,
+      },
       body: blob,
     }).then(function (r) {
       if (!r.ok) throw new Error('upload failed: ' + r.status);

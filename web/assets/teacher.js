@@ -34,6 +34,7 @@
   let recorderHandle = null;
   let recordStartTime = null;
   let lastStudentEmail = '';
+  let localAudioTrack = null;
 
   function setRecordState(state) {
     if (!recordBtn) return;
@@ -136,7 +137,10 @@
     const admit = document.createElement('button');
     admit.type = 'button';
     admit.textContent = 'Admit';
-    admit.addEventListener('click', () => handleProxy.admit(entry.id));
+    admit.addEventListener('click', () => {
+      lastStudentEmail = entry.email;
+      handleProxy.admit(entry.id);
+    });
     const reject = document.createElement('button');
     reject.type = 'button';
     reject.textContent = 'Reject';
@@ -160,15 +164,11 @@
     onLobbyUpdate(entries) {
       listEl.replaceChildren();
       emptyEl.hidden = entries.length > 0;
-      for (const entry of entries) {
-        listEl.append(renderEntry(entry));
-        // Track most recent student email for recording upload.
-        if (entries.length > 0) lastStudentEmail = entries[0].email;
-      }
+      for (const entry of entries) listEl.append(renderEntry(entry));
     },
-    onPeerConnected({ dataChannel, audioTrack, videoTrack, studentEmail }) {
+    onPeerConnected({ dataChannel, audioTrack, videoTrack }) {
       statusEl.textContent = 'Connected.';
-      if (studentEmail) lastStudentEmail = studentEmail;
+      localAudioTrack = audioTrack;
       if (qualityBadge) qualityBadge.hidden = false;
       setRecordState('idle');
       if (videoTrack) {
@@ -186,6 +186,7 @@
     },
     onPeerDisconnected() {
       statusEl.textContent = 'Student disconnected.';
+      localAudioTrack = null;
       if (controlsHandle) { controlsHandle.teardown(); controlsHandle = null; }
       if (qualityBadge) qualityBadge.hidden = true;
       if (reconnectBanner) reconnectBanner.hidden = true;
@@ -212,11 +213,11 @@
         setRecordState('recording');
         recordStartTime = Date.now();
         if (window.sbRecorder && controlsHandle) {
-          const localStream = localVideo.srcObject;
           const remoteAudio = document.getElementById('remote-audio');
           const remoteStream = remoteAudio && remoteAudio.srcObject;
           recorderHandle = window.sbRecorder.start({
-            localStream,
+            localAudioTrack,
+            localVideoStream: localVideo.srcObject,
             remoteStream,
           });
         }

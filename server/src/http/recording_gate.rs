@@ -77,6 +77,25 @@ pub async fn post_verify(
     let peer_ip = crate::ws::resolve_peer_ip(&state.config, &headers, addr);
     let now = time::OffsetDateTime::now_utc().unix_timestamp();
 
+    // Decode token and compute hash before acquiring the transaction.
+    let token_bytes = match hex::decode(&token) {
+        Ok(b) => b,
+        Err(_) => return Err(AppError::NotFound),
+    };
+    let token_hash: Vec<u8> = {
+        let mut h = Sha256::new();
+        h.update(&token_bytes);
+        h.finalize().to_vec()
+    };
+    let provided_hash: Vec<u8> = {
+        let mut h = Sha256::new();
+        h.update(body.email.trim().to_lowercase().as_bytes());
+        h.finalize().to_vec()
+    };
+
+    // Begin exclusive transaction to make rate-limit check + attempt log + verify atomic.
+    let mut tx = state.db.begin().await?;
+
     // Per-IP rate limit: check recent attempts in the window.
     let window_start = now - state.config.gate_rate_limit_window_secs;
     let (ip_count,): (i64,) = sqlx::query_as(
@@ -84,7 +103,7 @@ pub async fn post_verify(
     )
     .bind(peer_ip.to_string())
     .bind(window_start)
-    .fetch_one(&state.db)
+    .fetch_one(&mut *tx)
     .await?;
 
     if ip_count >= state.config.gate_rate_limit_per_ip as i64 {
@@ -97,19 +116,8 @@ pub async fn post_verify(
     )
     .bind(peer_ip.to_string())
     .bind(now)
-    .execute(&state.db)
+    .execute(&mut *tx)
     .await?;
-
-    // Decode token and compute hash.
-    let token_bytes = match hex::decode(&token) {
-        Ok(b) => b,
-        Err(_) => return Err(AppError::NotFound),
-    };
-    let token_hash: Vec<u8> = {
-        let mut h = Sha256::new();
-        h.update(&token_bytes);
-        h.finalize().to_vec()
-    };
 
     // Look up recording by token hash (not deleted).
     let row: Option<(i64, Vec<u8>, Option<String>, i64)> = sqlx::query_as(
@@ -118,16 +126,13 @@ pub async fn post_verify(
          WHERE token_hash = ? AND deleted_at IS NULL",
     )
     .bind(&token_hash)
-    .fetch_optional(&state.db)
+    .fetch_optional(&mut *tx)
     .await?;
 
     let (id, stored_email_hash, blob_key, failed_attempts) =
         match row {
             Some(r) => r,
-            None => {
-                // Token not found or deleted — already logged the attempt above.
-                return Err(AppError::NotFound);
-            }
+            None => return Err(AppError::NotFound),
         };
 
     // Per-token lockout: reject if already at 3 failures.
@@ -136,42 +141,34 @@ pub async fn post_verify(
     }
 
     // Constant-time email comparison.
-    let provided_hash: Vec<u8> = {
-        let mut h = Sha256::new();
-        h.update(body.email.trim().to_lowercase().as_bytes());
-        h.finalize().to_vec()
-    };
     let email_match = stored_email_hash.as_slice().ct_eq(provided_hash.as_slice()).unwrap_u8() == 1;
 
     if !email_match {
-        // Increment failed_attempts and check for lockout crossing.
         let new_attempts = failed_attempts + 1;
-        sqlx::query(
-            "UPDATE recordings SET failed_attempts = ? WHERE id = ?",
-        )
-        .bind(new_attempts)
-        .bind(id)
-        .execute(&state.db)
-        .await?;
+        sqlx::query("UPDATE recordings SET failed_attempts = ? WHERE id = ?")
+            .bind(new_attempts)
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
 
         if new_attempts >= 3 {
-            // Notify teacher that the token is now disabled.
-            // Fire-and-forget: log failure but don't affect HTTP response.
             notify_teacher_token_disabled(&state, id).await;
             return Err(AppError::Forbidden);
         }
-
         return Err(AppError::Unauthorized);
     }
 
-    // Email matches. Set accessed_at if this is the first successful verify.
+    // Email matches. Set accessed_at on first successful verify.
     sqlx::query(
         "UPDATE recordings SET accessed_at = CASE WHEN accessed_at IS NULL THEN ? ELSE accessed_at END WHERE id = ?",
     )
     .bind(now)
     .bind(id)
-    .execute(&state.db)
+    .execute(&mut *tx)
     .await?;
+
+    tx.commit().await?;
 
     // Return blob URL.
     let blob_key = blob_key.ok_or(AppError::NotFound)?;
@@ -189,13 +186,13 @@ pub async fn post_verify(
 // ---------------------------------------------------------------------------
 
 fn is_valid_token(token: &str) -> bool {
-    token.len() == 64 && token.chars().all(|c| c.is_ascii_hexdigit())
+    token.len() == 64 && token.bytes().all(|b| b.is_ascii_digit() || matches!(b, b'a'..=b'f'))
 }
 
 async fn notify_teacher_token_disabled(state: &AppState, recording_id: i64) {
-    // Best-effort: look up teacher email and send notification.
-    let row: Option<(String, i64)> = sqlx::query_as(
-        "SELECT t.email, r.id FROM recordings r
+    // Best-effort: look up teacher email + slug and send notification.
+    let row: Option<(String, String)> = sqlx::query_as(
+        "SELECT t.email, t.slug FROM recordings r
          JOIN teachers t ON t.id = r.teacher_id
          WHERE r.id = ?",
     )
@@ -205,11 +202,11 @@ async fn notify_teacher_token_disabled(state: &AppState, recording_id: i64) {
     .ok()
     .flatten();
 
-    if let Some((teacher_email, _)) = row {
+    if let Some((teacher_email, slug)) = row {
         let notify_url = state
             .config
             .base_url
-            .join(&format!("teach/recordings"))
+            .join(&format!("teach/{slug}/recordings"))
             .unwrap_or_else(|_| state.config.base_url.clone());
         if let Err(e) = state
             .mailer

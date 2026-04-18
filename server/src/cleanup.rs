@@ -115,11 +115,14 @@ mod tests {
 
     async fn insert_recording(db: &SqlitePool, teacher_id: i64, blob_key: Option<&str>, deleted_at: Option<i64>) -> i64 {
         let now = time::OffsetDateTime::now_utc().unix_timestamp();
-        let token_hash: Vec<u8> = rand::random::<[u8; 32]>().to_vec();
+        let token_bytes: [u8; 32] = rand::random();
+        let token_hash: Vec<u8> = token_bytes.to_vec();
+        let token_hex = hex::encode(token_bytes);
         let email_hash: Vec<u8> = rand::random::<[u8; 32]>().to_vec();
         let (id,): (i64,) = sqlx::query_as(
-            "INSERT INTO recordings (teacher_id, student_email, student_email_hash, created_at, blob_key, token_hash, deleted_at)
-             VALUES (?, 'test@test.com', ?, ?, ?, ?, ?)
+            "INSERT INTO recordings
+               (teacher_id, student_email, student_email_hash, created_at, blob_key, token_hash, token_hex, deleted_at)
+             VALUES (?, 'test@test.com', ?, ?, ?, ?, ?, ?)
              RETURNING id",
         )
         .bind(teacher_id)
@@ -127,6 +130,7 @@ mod tests {
         .bind(now)
         .bind(blob_key)
         .bind(&token_hash)
+        .bind(&token_hex)
         .bind(deleted_at)
         .fetch_one(db)
         .await

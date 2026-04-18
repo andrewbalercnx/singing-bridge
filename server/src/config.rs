@@ -6,7 +6,7 @@
 // Invariants: from_env() calls parse_env() then validate_prod_config() for SB_ENV=prod.
 //             In prod: HTTPS required, secrets present, pepper ≥ 32 bytes.
 //             Secure cookie flag only omitted when dev=true.
-// Last updated: Sprint 5 (2026-04-18) -- env-driven config, turn/mailer/session-log fields, R1 fixes
+// Last updated: Sprint 6 (2026-04-18) -- recording config fields (dev_blob_dir, recording_max_bytes, gate rate-limit)
 
 use std::net::SocketAddr;
 

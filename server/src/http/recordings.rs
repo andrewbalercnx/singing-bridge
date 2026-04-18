@@ -6,8 +6,9 @@
 // Invariants: All endpoints require valid teacher session cookie; auth is by
 //             teacher_id from cookie, never by slug alone.
 //             Upload validates WebM magic bytes (\x1A\x45\xDF\xA3) and MIME type.
-//             Resend always issues a fresh token and resets failed_attempts.
-//             RecordingView excludes token_hash, blob_key, teacher_id, deleted_at.
+//             Resend reuses token_hex when failed_attempts < 3; rotates and resets
+//             failed_attempts only when the link is disabled (>= 3 failures).
+//             RecordingView excludes token_hash, token_hex, blob_key, teacher_id, deleted_at.
 //             Blob compensation: if DB insert fails after successful put, delete blob.
 // Last updated: Sprint 6 (2026-04-18) -- initial implementation
 
@@ -49,18 +50,12 @@ pub struct RecordingView {
     pub status: RecordingStatus,
 }
 
-#[derive(Serialize)]
-pub struct UploadResponse {
-    pub id: i64,
-}
-
 // ---------------------------------------------------------------------------
 // Upload
 // ---------------------------------------------------------------------------
 
 #[derive(Deserialize)]
 pub struct UploadQuery {
-    pub student_email: String,
     pub duration_s: Option<i64>,
 }
 
@@ -71,6 +66,14 @@ pub async fn post_upload(
     body: Body,
 ) -> Result<Response> {
     let teacher_id = require_auth(&state, &headers).await?;
+
+    let student_email = headers
+        .get("x-student-email")
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| AppError::BadRequest("X-Student-Email header required".into()))?
+        .to_string();
 
     // Validate Content-Type.
     let content_type = headers
@@ -100,7 +103,7 @@ pub async fn post_upload(
     rand::thread_rng().fill_bytes(&mut token_bytes);
     let token_hex = hex::encode(token_bytes);
     let token_hash: Vec<u8> = sha256_bytes(&token_bytes);
-    let email_hash: Vec<u8> = sha256_str(&q.student_email.to_lowercase());
+    let email_hash: Vec<u8> = sha256_str(&student_email.to_lowercase());
     let now = time::OffsetDateTime::now_utc().unix_timestamp();
 
     // Store blob (streaming from an in-memory cursor — bounded by recording_max_bytes).
@@ -115,17 +118,18 @@ pub async fn post_upload(
     // Insert DB row; compensate by deleting blob on failure.
     let insert: std::result::Result<(i64,), sqlx::Error> = sqlx::query_as(
         "INSERT INTO recordings
-           (teacher_id, student_email, student_email_hash, created_at, duration_s, blob_key, token_hash)
-         VALUES (?, ?, ?, ?, ?, ?, ?)
+           (teacher_id, student_email, student_email_hash, created_at, duration_s, blob_key, token_hash, token_hex)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
          RETURNING id",
     )
     .bind(teacher_id)
-    .bind(&q.student_email)
+    .bind(&student_email)
     .bind(&email_hash)
     .bind(now)
     .bind(q.duration_s)
     .bind(&key)
     .bind(&token_hash)
+    .bind(&token_hex)
     .fetch_one(&state.db)
     .await;
 
@@ -225,8 +229,8 @@ pub async fn post_send(
     let teacher_id = require_auth(&state, &headers).await?;
 
     // Fetch recording row (ownership verified by teacher_id).
-    let row: Option<(String, i64)> = sqlx::query_as(
-        "SELECT student_email, failed_attempts
+    let row: Option<(String, i64, String)> = sqlx::query_as(
+        "SELECT student_email, failed_attempts, token_hex
          FROM recordings
          WHERE id = ? AND teacher_id = ? AND deleted_at IS NULL",
     )
@@ -235,7 +239,7 @@ pub async fn post_send(
     .fetch_optional(&state.db)
     .await?;
 
-    let (student_email, failed_attempts) = row.ok_or(AppError::NotFound)?;
+    let (student_email, failed_attempts, existing_token_hex) = row.ok_or(AppError::NotFound)?;
 
     // Recipient: DB value by default; override if non-empty.
     let recipient = match &body.override_email {
@@ -243,25 +247,42 @@ pub async fn post_send(
         _ => student_email,
     };
 
-    // Always issue a fresh token on send (re-enables a disabled link).
-    let mut token_bytes = [0u8; 32];
-    rand::thread_rng().fill_bytes(&mut token_bytes);
-    let token_hex = hex::encode(token_bytes);
-    let new_hash = sha256_bytes(&token_bytes);
-    let new_email_hash = sha256_str(&recipient.to_lowercase());
-
-    let _ = failed_attempts; // reset in DB below
-    sqlx::query(
-        "UPDATE recordings
-         SET token_hash = ?, student_email = ?, student_email_hash = ?, failed_attempts = 0
-         WHERE id = ?",
-    )
-    .bind(&new_hash)
-    .bind(&recipient)
-    .bind(&new_email_hash)
-    .bind(id)
-    .execute(&state.db)
-    .await?;
+    // Rotate token only when the link is disabled (>= 3 failures); otherwise reuse.
+    let token_hex = if failed_attempts >= 3 {
+        let mut token_bytes = [0u8; 32];
+        rand::thread_rng().fill_bytes(&mut token_bytes);
+        let new_hex = hex::encode(token_bytes);
+        let new_hash = sha256_bytes(&token_bytes);
+        let new_email_hash = sha256_str(&recipient.to_lowercase());
+        sqlx::query(
+            "UPDATE recordings
+             SET token_hash = ?, token_hex = ?, student_email = ?, student_email_hash = ?,
+                 failed_attempts = 0
+             WHERE id = ?",
+        )
+        .bind(&new_hash)
+        .bind(&new_hex)
+        .bind(&recipient)
+        .bind(&new_email_hash)
+        .bind(id)
+        .execute(&state.db)
+        .await?;
+        new_hex
+    } else {
+        // Link still live — update email if overridden, but keep existing token.
+        let new_email_hash = sha256_str(&recipient.to_lowercase());
+        sqlx::query(
+            "UPDATE recordings
+             SET student_email = ?, student_email_hash = ?
+             WHERE id = ?",
+        )
+        .bind(&recipient)
+        .bind(&new_email_hash)
+        .bind(id)
+        .execute(&state.db)
+        .await?;
+        existing_token_hex
+    };
 
     // Build access URL and send email.
     let recording_url = state

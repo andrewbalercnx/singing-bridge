@@ -843,7 +843,7 @@ def _render_source_file(path: str, repo_root: Path) -> str:
     """Render one source file as a code-fenced section. Shared between
     tracked and untracked rendering so they can't diverge."""
     full_path = repo_root / path
-    content = read_file_safe(full_path, max_lines=300)
+    content = read_file_safe(full_path, max_lines=200)
     ext = Path(path).suffix.lstrip(".")
     return f"### {path}\n```{ext}\n{content}\n```"
 
@@ -866,7 +866,7 @@ def gather_code_materials(
 
     plan_file = repo_root / f"PLAN_Sprint{sprint}.md"
     if plan_file.exists():
-        content = read_file_safe(plan_file, max_lines=700)
+        content = read_file_safe(plan_file, max_lines=350)
         sections.append(f"### {plan_file.name} (approved plan)\n```\n{content}\n```")
 
     changes_file = repo_root / "CHANGES.md"
@@ -892,7 +892,7 @@ def gather_code_materials(
             if f not in source_files:
                 source_files.append(f)
 
-    for f in source_files[:25]:
+    for f in source_files[:15]:
         sections.append(_render_source_file(f, repo_root))
 
     # Compute the insertion anchor so the banner (if any) stays first.
@@ -2177,6 +2177,14 @@ def main():
 
     config_path = repo_root / "scripts" / "council-config.json"
     config = load_config(config_path)
+
+    # Honour auto_lenses_code_default from config unless --lenses was
+    # given explicitly on the CLI (explicit always wins).
+    if (review_type == "code"
+            and not ns.lenses
+            and not ns.auto_lenses
+            and config["council"].get("auto_lenses_code_default", False)):
+        ns.auto_lenses = True
 
     # Sprint 6: resolve selective routing. Compute changed paths for
     # --auto-lenses before we filter active members.

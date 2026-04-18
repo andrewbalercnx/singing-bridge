@@ -192,6 +192,42 @@ _Infrastructure_
 
 ---
 
+## Sprint 7: In-session chat + lobby messaging
+
+**Goal:** Teacher and admitted student can exchange text messages during a session; teacher can also send a one-way message to a student waiting in the lobby.
+
+**Deliverables:**
+
+_In-session chat (bidirectional)_
+- A chat panel is visible on both teacher and student session pages
+- Either party can type and send a message; it appears on both sides in real time
+- Messages are ephemeral — no persistence, lost on disconnect
+- Text capped at 500 characters; server rejects oversized messages with `PayloadTooLarge`
+
+_Lobby messaging (one-way, teacher → waiting student)_
+- Each lobby entry in the teacher UI gains a "Message" inline action
+- Teacher types a short message and sends; it is delivered to that student's WebSocket connection before admission
+- Student receives it as a banner/toast ("Message from your teacher: …")
+- Student cannot reply until admitted
+
+_Protocol_
+- New `ClientMsg::Chat { text: String }` — relayed between teacher and admitted student
+- New `ClientMsg::LobbyMessage { entry_id: EntryId, text: String }` — teacher sends to a specific lobby entry
+- New `ServerMsg::Chat { from: Role, text: String }` — delivered to the other party in session
+- New `ServerMsg::LobbyMessage { text: String }` — delivered to the waiting student
+- New `ErrorCode::ChatNotInSession` — teacher/student sends Chat with no active session
+
+**Exit criteria:**
+- Teacher sends a chat message during a session; student sees it immediately, and vice versa
+- Teacher sends a lobby message to a waiting student; student sees the banner before admission
+- Message over 500 chars is rejected with `PayloadTooLarge` error
+- Chat with no active session returns `ChatNotInSession` error
+- LobbyMessage to unknown entry_id returns `EntryNotFound` error
+
+**Status:** PENDING
+
+---
+
 ## Open items (noted, not blocking MVP)
 
 - Persistent "my students" list for the teacher — deliberately out of MVP

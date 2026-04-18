@@ -4,7 +4,7 @@
   Purpose: Student join form + session UI. The sb:debug placeholder
            is replaced server-side with a <meta name="sb-debug"> tag
            when config.dev is true (empty string otherwise).
-  Last updated: Sprint 6 (2026-04-18) -- recording consent banner + REC indicator
+  Last updated: Sprint 7 (2026-04-18) -- lobby message banner + chat panel
 -->
 <html lang="en">
 <head>
@@ -46,6 +46,9 @@
 
     <section id="lobby-status" hidden>
       <p>Waiting to be admitted…</p>
+      <div id="lobby-message-banner" hidden role="status" aria-live="polite">
+        <span id="lobby-message-text"></span>
+      </div>
     </section>
 
     <section id="session" hidden>
@@ -77,6 +80,16 @@
         <button id="video-off" type="button" aria-pressed="false">Video off</button>
         <button id="hangup" type="button">End call</button>
         <span id="quality-badge" class="quality-badge good" hidden>good</span>
+      </div>
+
+      <!-- In-session chat -->
+      <div id="chat-panel" hidden aria-label="Chat">
+        <h3>Chat</h3>
+        <ul id="chat-log" aria-live="polite"></ul>
+        <form id="chat-form">
+          <input id="chat-input" type="text" maxlength="500" placeholder="Message…" autocomplete="off">
+          <button type="submit">Send</button>
+        </form>
       </div>
 
     </section>

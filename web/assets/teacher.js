@@ -5,7 +5,7 @@
 //          onFloorViolation / onReconnectBanner callbacks through
 //          to the signalling client; renders the quality badge and
 //          mirrors the student-side floor-violation notice.
-// Last updated: Sprint 6 (2026-04-18) -- recording button, consent, post-session send modal
+// Last updated: Sprint 7 (2026-04-18) -- chat panel + lobby message form
 
 'use strict';
 
@@ -29,6 +29,12 @@
   const sendEmailEl = document.getElementById('send-recording-email');
   const sendStatus = document.getElementById('send-recording-status');
   const sendDismiss = document.getElementById('send-recording-dismiss');
+
+  // Chat elements
+  const chatPanel = document.getElementById('chat-panel');
+  const chatLog = document.getElementById('chat-log');
+  const chatForm = document.getElementById('chat-form');
+  const chatInput = document.getElementById('chat-input');
 
   // Recording state
   let recorderHandle = null;
@@ -83,6 +89,31 @@
       }).catch(err => {
         sendStatus.textContent = 'Error: ' + err.message;
       });
+    });
+  }
+
+  function appendChat(from, text) {
+    if (!chatLog) return;
+    const li = document.createElement('li');
+    li.className = 'chat-msg from-' + from;
+    const label = document.createElement('span');
+    label.className = 'chat-label';
+    label.textContent = from === 'teacher' ? 'You' : 'Student';
+    const body = document.createElement('span');
+    body.className = 'chat-body';
+    body.textContent = text;
+    li.append(label, document.createTextNode(': '), body);
+    chatLog.appendChild(li);
+    chatLog.scrollTop = chatLog.scrollHeight;
+  }
+
+  if (chatForm) {
+    chatForm.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const text = chatInput ? chatInput.value.trim() : '';
+      if (!text || !sessionHandle) return;
+      sessionHandle.sendChat(text);
+      if (chatInput) chatInput.value = '';
     });
   }
 
@@ -150,6 +181,33 @@
     rejectAndBlock.textContent = 'Reject & block (10 min)';
     rejectAndBlock.addEventListener('click', () => handleProxy.rejectAndBlock(entry.id));
     li.append(document.createTextNode(' '), admit, reject, rejectAndBlock);
+
+    // Lobby message inline form.
+    const msgForm = document.createElement('form');
+    msgForm.className = 'lobby-msg-form';
+    const msgInput = document.createElement('input');
+    msgInput.type = 'text';
+    msgInput.maxLength = 500;
+    msgInput.placeholder = 'Send a message…';
+    msgInput.autocomplete = 'off';
+    const msgBtn = document.createElement('button');
+    msgBtn.type = 'submit';
+    msgBtn.textContent = 'Send';
+    const msgStatus = document.createElement('span');
+    msgStatus.className = 'lobby-msg-status';
+    msgStatus.hidden = true;
+    msgForm.append(msgInput, msgBtn, msgStatus);
+    msgForm.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const text = msgInput.value.trim();
+      if (!text || !sessionHandle) return;
+      sessionHandle.sendLobbyMessage(entry.id, text);
+      msgInput.value = '';
+      msgStatus.textContent = 'Sent ✓';
+      msgStatus.hidden = false;
+      setTimeout(() => { msgStatus.hidden = true; }, 2000);
+    });
+    li.append(msgForm);
     return li;
   }
 
@@ -166,10 +224,14 @@
       emptyEl.hidden = entries.length > 0;
       for (const entry of entries) listEl.append(renderEntry(entry));
     },
+    onChat({ from, text }) {
+      appendChat(from, text);
+    },
     onPeerConnected({ dataChannel, audioTrack, videoTrack }) {
       statusEl.textContent = 'Connected.';
       localAudioTrack = audioTrack;
       if (qualityBadge) qualityBadge.hidden = false;
+      if (chatPanel) chatPanel.hidden = false;
       setRecordState('idle');
       if (videoTrack) {
         localVideo.srcObject = new MediaStream([videoTrack]);
@@ -189,6 +251,8 @@
       localAudioTrack = null;
       if (controlsHandle) { controlsHandle.teardown(); controlsHandle = null; }
       if (qualityBadge) qualityBadge.hidden = true;
+      if (chatPanel) chatPanel.hidden = true;
+      if (chatLog) chatLog.replaceChildren();
       if (reconnectBanner) reconnectBanner.hidden = true;
       if (floorNotice) floorNotice.hidden = true;
       // If recording was active, stop it.

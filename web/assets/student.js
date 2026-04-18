@@ -3,7 +3,7 @@
 //          threads onQuality / onFloorViolation / onReconnectBanner
 //          callbacks through to the signalling client; renders the
 //          quality badge and floor-violation notice.
-// Last updated: Sprint 6 (2026-04-18) -- recording consent banner + REC indicator
+// Last updated: Sprint 7 (2026-04-18) -- lobby message banner + in-session chat
 
 'use strict';
 
@@ -28,8 +28,30 @@
   const consentDecline = document.getElementById('consent-decline');
   const consentCountdown = document.getElementById('consent-countdown');
   const recIndicator = document.getElementById('rec-indicator');
+  const lobbyMsgBanner = document.getElementById('lobby-message-banner');
+  const lobbyMsgText = document.getElementById('lobby-message-text');
+  const chatPanel = document.getElementById('chat-panel');
+  const chatLog = document.getElementById('chat-log');
+  const chatForm = document.getElementById('chat-form');
+  const chatInput = document.getElementById('chat-input');
 
   let consentTimer = null;
+  let lobbyMsgTimer = null;
+
+  function appendChat(from, text) {
+    if (!chatLog) return;
+    const li = document.createElement('li');
+    li.className = 'chat-msg from-' + from;
+    const label = document.createElement('span');
+    label.className = 'chat-label';
+    label.textContent = from === 'teacher' ? 'Teacher' : 'You';
+    const body = document.createElement('span');
+    body.className = 'chat-body';
+    body.textContent = text;
+    li.append(label, document.createTextNode(': '), body);
+    chatLog.appendChild(li);
+    chatLog.scrollTop = chatLog.scrollHeight;
+  }
 
   function showConsentBanner(onResponse) {
     if (!consentBanner) return;
@@ -94,6 +116,16 @@
     // by which time `handle` is populated. Guarded explicitly so the
     // safety does not depend on an unstated sequencing invariant.
     let handle = null;
+    if (chatForm) {
+      chatForm.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const text = chatInput ? chatInput.value.trim() : '';
+        if (!text || !handle) return;
+        handle.sendChat(text);
+        if (chatInput) chatInput.value = '';
+      });
+    }
+
     handle = await window.signallingClient.connectStudent({
       slug,
       email,
@@ -108,8 +140,19 @@
         lobbyStatus.hidden = true;
         if (blockedNotice) blockedNotice.hidden = false;
       },
+      onChat({ from, text }) {
+        appendChat(from, text);
+      },
+      onLobbyMessage({ text }) {
+        if (!lobbyMsgText || !lobbyMsgBanner) return;
+        lobbyMsgText.textContent = text;
+        lobbyMsgBanner.hidden = false;
+        if (lobbyMsgTimer) clearTimeout(lobbyMsgTimer);
+        lobbyMsgTimer = setTimeout(() => { lobbyMsgBanner.hidden = true; }, 8000);
+      },
       onPeerConnected({ dataChannel, audioTrack, videoTrack }) {
         sessionSection.hidden = false;
+        if (chatPanel) chatPanel.hidden = false;
         if (qualityBadge) qualityBadge.hidden = false;
         if (videoTrack) {
           localVideo.srcObject = new MediaStream([videoTrack]);
@@ -127,6 +170,8 @@
       onPeerDisconnected() {
         if (controlsHandle) { controlsHandle.teardown(); controlsHandle = null; }
         sessionSection.hidden = true;
+        if (chatPanel) chatPanel.hidden = true;
+        if (chatLog) chatLog.replaceChildren();
         if (qualityBadge) qualityBadge.hidden = true;
         if (reconnectBanner) reconnectBanner.hidden = true;
         hideConsentBanner();

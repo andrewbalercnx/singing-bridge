@@ -224,6 +224,7 @@
     var onReconnectBanner = args.onReconnectBanner;
     var onRecordConsentResult = args.onRecordConsentResult;
     var onRecordingStopped = args.onRecordingStopped;
+    var onChat = args.onChat;
 
     var sig = new Signalling(openWs());
     sig.send({ type: 'lobby_watch', slug: slug });
@@ -289,6 +290,9 @@
     sig.on('recording_stopped', function () {
       if (onRecordingStopped) onRecordingStopped();
     });
+    sig.on('chat', function (m) {
+      if (onChat) onChat({ from: m.from, text: m.text });
+    });
 
     return {
       admit: function (entryId) { sig.send({ type: 'lobby_admit', slug: slug, entry_id: entryId }); },
@@ -298,6 +302,10 @@
       },
       startRecording: function (s) { sig.send({ type: 'record_start', slug: s }); },
       stopRecording: function (s) { sig.send({ type: 'record_stop', slug: s }); },
+      sendChat: function (text) { sig.send({ type: 'chat', text: text }); },
+      sendLobbyMessage: function (entryId, text) {
+        sig.send({ type: 'lobby_message', entry_id: entryId, text: text });
+      },
       hangup: function () { teardownSession(); sig.close(); },
     };
   }
@@ -316,6 +324,8 @@
     var onRecordConsentRequest = args.onRecordConsentRequest;
     var onRecordingActive = args.onRecordingActive;
     var onRecordingStopped = args.onRecordingStopped;
+    var onChat = args.onChat;
+    var onLobbyMessage = args.onLobbyMessage;
 
     var detect = detectTier();
     var sig = new Signalling(openWs());
@@ -396,9 +406,16 @@
     sig.on('recording_stopped', function () {
       if (onRecordingStopped) onRecordingStopped();
     });
+    sig.on('chat', function (m) {
+      if (onChat) onChat({ from: m.from, text: m.text });
+    });
+    sig.on('lobby_message', function (m) {
+      if (onLobbyMessage) onLobbyMessage({ text: m.text });
+    });
 
     return {
       hangup: function () { teardownSession(); sig.close(); },
+      sendChat: function (text) { sig.send({ type: 'chat', text: text }); },
       sendRecordConsent: function (s, granted) {
         sig.send({ type: 'record_consent', slug: s, granted: granted });
       },

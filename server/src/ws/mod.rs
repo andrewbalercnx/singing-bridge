@@ -9,7 +9,7 @@
 //             Role is decided on the first LobbyJoin/LobbyWatch and immutable
 //             thereafter. SessionMetrics rate-limited to 1 frame per 5 s.
 //             loss_bp clamped to [0, 10000] before persist (100% = 10000 bp).
-// Last updated: Sprint 6 (2026-04-18) -- RecordStart/Consent/Stop handlers
+// Last updated: Sprint 7 (2026-04-18) -- Chat + LobbyMessage handlers
 
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 
@@ -41,8 +41,9 @@ use crate::config::Config;
 use crate::state::{AppState, ConnectionId, RemovalKind, SlugKey};
 use crate::ws::connection::ConnContext;
 use crate::ws::protocol::{
-    ClientMsg, ErrorCode, PumpDirective, Role, ServerMsg, MAX_BROWSER_LEN, MAX_DEVICE_CLASS_LEN,
-    MAX_EMAIL_LEN, MAX_SIGNAL_PAYLOAD_BYTES, MAX_TIER_REASON_BYTES,
+    ClientMsg, EntryId, ErrorCode, PumpDirective, Role, ServerMsg, MAX_BROWSER_LEN,
+    MAX_CHAT_BYTES, MAX_CHAT_CHARS, MAX_DEVICE_CLASS_LEN, MAX_EMAIL_LEN, MAX_SIGNAL_PAYLOAD_BYTES,
+    MAX_TIER_REASON_BYTES,
 };
 use crate::ws::rate_limit::check_and_inc;
 use crate::ws::session_log::{close_row, EndedReason};
@@ -266,6 +267,10 @@ async fn handle_client_msg(
             handle_record_consent(ctx, state, &slug, granted).await
         }
         ClientMsg::RecordStop { slug } => handle_record_stop(ctx, state, &slug).await,
+        ClientMsg::Chat { text } => handle_chat(ctx, state, text).await,
+        ClientMsg::LobbyMessage { entry_id, text } => {
+            handle_lobby_message(ctx, state, entry_id, text).await
+        }
     }
 }
 
@@ -572,6 +577,93 @@ async fn handle_record_stop(
     if let Some(stx) = student_tx {
         let _ = stx.send(PumpDirective::Send(ServerMsg::RecordingStopped)).await;
     }
+    true
+}
+
+async fn validate_chat_text(ctx: &ConnContext, text: &str) -> bool {
+    if text.is_empty() {
+        send_error(ctx, ErrorCode::PayloadTooLarge, "chat text must not be empty").await;
+        return false;
+    }
+    if text.len() > MAX_CHAT_BYTES {
+        send_error(ctx, ErrorCode::PayloadTooLarge, "chat text too long").await;
+        return false;
+    }
+    if text.chars().count() > MAX_CHAT_CHARS {
+        send_error(ctx, ErrorCode::PayloadTooLarge, "chat text too long").await;
+        return false;
+    }
+    true
+}
+
+async fn handle_chat(ctx: &ConnContext, state: &Arc<AppState>, text: String) -> bool {
+    if !validate_chat_text(ctx, &text).await {
+        return true;
+    }
+    let Some(slug) = ctx.slug.as_ref() else { return true };
+    let Some(room) = state.room(slug) else { return true };
+
+    let (sender_role, teacher_tx, student_tx) = {
+        let rs = room.read().await;
+        let Some(session) = rs.active_session.as_ref() else {
+            drop(rs);
+            send_error(ctx, ErrorCode::NotInSession, "no active session").await;
+            return true;
+        };
+        let is_teacher = rs.teacher_conn.as_ref().map(|c| c.id) == Some(ctx.id);
+        let is_student = session.student.conn.id == ctx.id;
+        if !is_teacher && !is_student {
+            drop(rs);
+            send_error(ctx, ErrorCode::NotInSession, "not a session participant").await;
+            return true;
+        }
+        let role = if is_teacher { Role::Teacher } else { Role::Student };
+        let ttx = rs.teacher_conn.as_ref().map(|c| c.tx.clone());
+        let stx = session.student.conn.tx.clone();
+        (role, ttx, stx)
+    };
+
+    let msg = ServerMsg::Chat { from: sender_role, text };
+    if let Some(ttx) = teacher_tx {
+        let _ = ttx.send(PumpDirective::Send(msg.clone())).await;
+    }
+    let _ = student_tx.send(PumpDirective::Send(msg)).await;
+    true
+}
+
+async fn handle_lobby_message(
+    ctx: &ConnContext,
+    state: &Arc<AppState>,
+    entry_id: EntryId,
+    text: String,
+) -> bool {
+    if !validate_chat_text(ctx, &text).await {
+        return true;
+    }
+    let Some(slug) = ctx.slug.as_ref() else { return true };
+    let Some(room) = state.room(slug) else { return true };
+
+    let target_tx = {
+        let rs = room.read().await;
+        let is_teacher = rs.teacher_conn.as_ref().map(|c| c.id) == Some(ctx.id);
+        if !is_teacher {
+            drop(rs);
+            send_error(ctx, ErrorCode::NotOwner, "teacher only").await;
+            return true;
+        }
+        match rs.lobby.iter().find(|e| e.id == entry_id) {
+            Some(entry) => entry.conn.tx.clone(),
+            None => {
+                drop(rs);
+                send_error(ctx, ErrorCode::EntryNotFound, "entry not found").await;
+                return true;
+            }
+        }
+    };
+
+    let _ = target_tx
+        .send(PumpDirective::Send(ServerMsg::LobbyMessage { text }))
+        .await;
     true
 }
 

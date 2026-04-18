@@ -4,7 +4,7 @@
   Purpose: Teacher-side landing page. The sb:debug placeholder is
            replaced server-side with a <meta name="sb-debug"> tag
            when config.dev is true (empty string otherwise).
-  Last updated: Sprint 6 (2026-04-18) -- recording button + REC indicator + post-session modal
+  Last updated: Sprint 7 (2026-04-18) -- chat panel + lobby message form
 -->
 <html lang="en">
 <head>
@@ -58,6 +58,16 @@
         <button id="hangup" type="button">End session</button>
         <span id="quality-badge" class="quality-badge good" hidden>good</span>
         <span id="rec-indicator" class="rec-indicator" hidden aria-label="Recording active">REC</span>
+      </div>
+
+      <!-- In-session chat -->
+      <div id="chat-panel" hidden aria-label="Chat">
+        <h3>Chat</h3>
+        <ul id="chat-log" aria-live="polite"></ul>
+        <form id="chat-form">
+          <input id="chat-input" type="text" maxlength="500" placeholder="Message…" autocomplete="off">
+          <button type="submit">Send</button>
+        </form>
       </div>
 
       <!-- Post-session: send recording link -->

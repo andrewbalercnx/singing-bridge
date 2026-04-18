@@ -3,12 +3,14 @@
 //          messages on one WebSocket.
 // Role: Only place where client-visible message shapes live.
 // Exports: ClientMsg, ServerMsg, PumpDirective, Role, Peer, EntryId,
-//          ErrorCode, LobbyEntryView, MAX_SIGNAL_PAYLOAD_BYTES, MAX_*_LEN
+//          ErrorCode, LobbyEntryView, MAX_SIGNAL_PAYLOAD_BYTES, MAX_*_LEN,
+//          MAX_CHAT_CHARS, MAX_CHAT_BYTES
 // Depends: serde, uuid, bytes via axum
 // Invariants: ServerMsg.Signal.from is server-filled; clients cannot spoof.
 //             Signal.payload ≤ 16 KiB independent of the 64 KiB frame cap.
 //             LobbyReject.block_ttl_secs is clamped [0, 86400] server-side.
-// Last updated: Sprint 6 (2026-04-18) -- recording messages (RecordStart/Consent/Stop + server counterparts)
+//             Chat.text validated: non-empty, ≤ MAX_CHAT_BYTES then ≤ MAX_CHAT_CHARS.
+// Last updated: Sprint 7 (2026-04-18) -- chat messages (Chat, LobbyMessage)
 
 use std::borrow::Cow;
 
@@ -32,6 +34,11 @@ pub const MAX_TIER_REASON_CHARS: usize = 200;
 /// 200-char UTF-8 string (4 bytes per codepoint). Strings within the
 /// byte cap are then char-truncated at `MAX_TIER_REASON_CHARS`.
 pub const MAX_TIER_REASON_BYTES: usize = 4 * MAX_TIER_REASON_CHARS;
+/// Maximum chat message length in Unicode codepoints.
+pub const MAX_CHAT_CHARS: usize = 500;
+/// Hard byte cap for chat: 4 bytes × MAX_CHAT_CHARS (worst-case UTF-8).
+/// Checked before char counting for a fast-path rejection.
+pub const MAX_CHAT_BYTES: usize = 4 * MAX_CHAT_CHARS;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -157,6 +164,13 @@ pub enum ClientMsg {
     RecordStop {
         slug: String,
     },
+    Chat {
+        text: String,
+    },
+    LobbyMessage {
+        entry_id: EntryId,
+        text: String,
+    },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -198,6 +212,13 @@ pub enum ServerMsg {
     },
     RecordingActive,
     RecordingStopped,
+    Chat {
+        from: Role,
+        text: String,
+    },
+    LobbyMessage {
+        text: String,
+    },
 }
 
 /// Sole control channel for the outbound pump (§4.15). The pump owns the
@@ -243,6 +264,11 @@ mod tests {
                 to: Role::Teacher,
                 payload: serde_json::json!({"sdp": "v=0\n"}),
             },
+            ClientMsg::Chat { text: "hello".into() },
+            ClientMsg::LobbyMessage {
+                entry_id: EntryId::new(),
+                text: "be right with you".into(),
+            },
         ];
         for c in cases {
             let s = serde_json::to_string(&c).unwrap();
@@ -277,6 +303,8 @@ mod tests {
                 code: ErrorCode::Malformed,
                 message: "x".into(),
             },
+            ServerMsg::Chat { from: Role::Teacher, text: "hi".into() },
+            ServerMsg::LobbyMessage { text: "starting soon".into() },
         ];
         for c in cases {
             let s = serde_json::to_string(&c).unwrap();

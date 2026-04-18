@@ -21,6 +21,7 @@ pub mod turn;
 use std::sync::Arc;
 
 use axum::{
+    extract::DefaultBodyLimit,
     middleware,
     routing::{delete, get, post},
     Router,
@@ -42,7 +43,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/turn-credentials", get(turn::get_turn_credentials))
         .route("/", get(signup::get_root))
         // Recording API
-        .route("/api/recordings/upload", post(recordings::post_upload))
+        .route("/api/recordings/upload", post(recordings::post_upload)
+            .layer(DefaultBodyLimit::disable()))
         .route("/api/recordings", get(recordings::get_list))
         .route("/api/recordings/:id/send", post(recordings::post_send))
         .route("/api/recordings/:id", delete(recordings::delete_recording))

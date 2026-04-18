@@ -72,7 +72,7 @@ async fn main() -> anyhow::Result<()> {
     let cleanup_db = pool.clone();
     let cleanup_shutdown = shutdown.clone();
     tokio::spawn(async move {
-        cleanup_loop(cleanup_db, cleanup_blob, cleanup_shutdown).await;
+        cleanup_loop(cleanup_db, cleanup_blob, config.gate_rate_limit_window_secs, cleanup_shutdown).await;
     });
 
     let session_log_pepper = config.session_log_pepper.clone();

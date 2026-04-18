@@ -17,7 +17,7 @@ use std::sync::Arc;
 
 use axum::{
     extract::{ConnectInfo, Path, State},
-    http::{header, HeaderMap, HeaderValue},
+    http::{header, HeaderMap, HeaderValue, StatusCode},
     response::{Html, IntoResponse, Json, Response},
     Json as JsonBody,
 };
@@ -102,31 +102,32 @@ pub(crate) async fn post_verify(
         h.finalize().to_vec()
     };
 
-    // Begin exclusive transaction to make rate-limit check + attempt log + verify atomic.
-    let mut tx = state.db.begin().await?;
-
-    // Per-IP rate limit: check recent attempts in the window.
+    // Per-IP rate limit: check recent attempts in the window (read-only, no transaction needed).
     let window_start = now - state.config.gate_rate_limit_window_secs;
     let (ip_count,): (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM recording_gate_attempts WHERE peer_ip = ? AND attempted_at > ?",
     )
     .bind(peer_ip.to_string())
     .bind(window_start)
-    .fetch_one(&mut *tx)
+    .fetch_one(&state.db)
     .await?;
 
     if ip_count >= state.config.gate_rate_limit_per_ip as i64 {
         return Err(AppError::TooManyRequests);
     }
 
-    // Record this attempt (before checking token, to prevent enumeration timing).
+    // Record this attempt outside any transaction so it persists even when token is
+    // not found or already locked — prevents enumeration via attempt-log rollback.
     sqlx::query(
         "INSERT INTO recording_gate_attempts (peer_ip, attempted_at) VALUES (?, ?)",
     )
     .bind(peer_ip.to_string())
     .bind(now)
-    .execute(&mut *tx)
+    .execute(&state.db)
     .await?;
+
+    // Begin transaction for the atomic failed_attempts read-modify-write only.
+    let mut tx = state.db.begin().await?;
 
     // Look up recording by token hash (not deleted).
     let row: Option<(i64, Vec<u8>, Option<String>, i64)> = sqlx::query_as(
@@ -146,7 +147,7 @@ pub(crate) async fn post_verify(
 
     // Per-token lockout: reject if already at 3 failures.
     if failed_attempts >= 3 {
-        return Err(AppError::Forbidden);
+        return Ok(gate_error(StatusCode::FORBIDDEN, "disabled"));
     }
 
     // Constant-time email comparison.
@@ -163,9 +164,9 @@ pub(crate) async fn post_verify(
 
         if new_attempts >= 3 {
             notify_teacher_token_disabled(&state, id).await;
-            return Err(AppError::Forbidden);
+            return Ok(gate_error(StatusCode::FORBIDDEN, "disabled"));
         }
-        return Err(AppError::Unauthorized);
+        return Ok(gate_error(StatusCode::FORBIDDEN, "wrong_email"));
     }
 
     // Email matches. Set accessed_at on first successful verify.
@@ -193,6 +194,10 @@ pub(crate) async fn post_verify(
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+fn gate_error(status: StatusCode, error: &'static str) -> Response {
+    (status, Json(serde_json::json!({ "error": error }))).into_response()
+}
 
 fn is_valid_token(token: &str) -> bool {
     token.len() == 64 && token.bytes().all(|b| b.is_ascii_digit() || matches!(b, b'a'..=b'f'))

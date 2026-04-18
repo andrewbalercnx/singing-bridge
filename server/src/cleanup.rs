@@ -4,9 +4,9 @@
 //       recording_gate_attempts rows; sets blob_key=NULL on successful delete.
 // Exports: run_one_cleanup_cycle, cleanup_loop
 // Depends: sqlx, blob, tokio_util::sync::CancellationToken
-// Invariants: Uses strftime('%s','now') for SQLite unix timestamps (NOT now()).
+// Invariants: Uses time::OffsetDateTime::now_utc().unix_timestamp() for timestamps.
 //             blob_key set to NULL only after successful BlobStore::delete.
-//             Gate attempts older than 300s are pruned each cycle.
+//             Gate attempts pruned per gate_attempt_ttl_secs passed at call time.
 //             cleanup_loop exits cleanly on CancellationToken cancellation.
 // Last updated: Sprint 6 (2026-04-18) -- initial implementation
 
@@ -19,12 +19,14 @@ use crate::blob::BlobStore;
 
 /// Grace period in seconds before a soft-deleted recording's blob is purged.
 const BLOB_GRACE_SECS: i64 = 86_400;
-/// Gate attempts older than this are pruned.
-const GATE_ATTEMPT_TTL_SECS: i64 = 300;
 /// How often the loop wakes up (seconds).
 const LOOP_INTERVAL_SECS: u64 = 300;
 
-pub async fn run_one_cleanup_cycle(db: &SqlitePool, blob: &Arc<dyn BlobStore>) -> crate::error::Result<usize> {
+pub async fn run_one_cleanup_cycle(
+    db: &SqlitePool,
+    blob: &Arc<dyn BlobStore>,
+    gate_attempt_ttl_secs: i64,
+) -> crate::error::Result<usize> {
     let now = time::OffsetDateTime::now_utc().unix_timestamp();
     let cutoff = now - BLOB_GRACE_SECS;
 
@@ -63,8 +65,8 @@ pub async fn run_one_cleanup_cycle(db: &SqlitePool, blob: &Arc<dyn BlobStore>) -
         }
     }
 
-    // Prune stale gate attempts.
-    let gate_cutoff = now - GATE_ATTEMPT_TTL_SECS;
+    // Prune stale gate attempts (TTL from config to match the rate-limit window).
+    let gate_cutoff = now - gate_attempt_ttl_secs;
     if let Err(e) = sqlx::query(
         "DELETE FROM recording_gate_attempts WHERE attempted_at < ?",
     )
@@ -78,12 +80,17 @@ pub async fn run_one_cleanup_cycle(db: &SqlitePool, blob: &Arc<dyn BlobStore>) -
     Ok(purged)
 }
 
-pub async fn cleanup_loop(db: SqlitePool, blob: Arc<dyn BlobStore>, shutdown: CancellationToken) {
+pub async fn cleanup_loop(
+    db: SqlitePool,
+    blob: Arc<dyn BlobStore>,
+    gate_attempt_ttl_secs: i64,
+    shutdown: CancellationToken,
+) {
     loop {
         tokio::select! {
             _ = shutdown.cancelled() => break,
             _ = tokio::time::sleep(std::time::Duration::from_secs(LOOP_INTERVAL_SECS)) => {
-                match run_one_cleanup_cycle(&db, &blob).await {
+                match run_one_cleanup_cycle(&db, &blob, gate_attempt_ttl_secs).await {
                     Ok(n) => tracing::debug!(purged = n, "cleanup cycle complete"),
                     Err(e) => tracing::warn!(error = %e, "cleanup cycle error"),
                 }
@@ -157,7 +164,7 @@ mod tests {
         let old_deleted_at = time::OffsetDateTime::now_utc().unix_timestamp() - BLOB_GRACE_SECS - 1;
         let id = insert_recording(&db, teacher_id, Some(key), Some(old_deleted_at)).await;
 
-        let purged = run_one_cleanup_cycle(&db, &blob).await.unwrap();
+        let purged = run_one_cleanup_cycle(&db, &blob, 300).await.unwrap();
         assert_eq!(purged, 1);
 
         let (blob_key,): (Option<String>,) =
@@ -179,7 +186,7 @@ mod tests {
         let recent_deleted_at = time::OffsetDateTime::now_utc().unix_timestamp() - 100;
         insert_recording(&db, teacher_id, Some(key), Some(recent_deleted_at)).await;
 
-        let purged = run_one_cleanup_cycle(&db, &blob).await.unwrap();
+        let purged = run_one_cleanup_cycle(&db, &blob, 300).await.unwrap();
         assert_eq!(purged, 0);
     }
 
@@ -198,7 +205,7 @@ mod tests {
 
         // File doesn't exist — DevBlobStore treats NotFound as success (so blob_key IS nulled).
         // Verify the row survives when blob_key was already NULL.
-        let purged = run_one_cleanup_cycle(&db, &blob).await.unwrap();
+        let purged = run_one_cleanup_cycle(&db, &blob, 300).await.unwrap();
         assert_eq!(purged, 1); // DevBlobStore ignores NotFound, so it counts as purged
 
         let (blob_key,): (Option<String>,) =
@@ -215,7 +222,7 @@ mod tests {
         let db = make_db().await;
         let blob = make_blob().await;
         let now = time::OffsetDateTime::now_utc().unix_timestamp();
-        let old = now - GATE_ATTEMPT_TTL_SECS - 1;
+        let old = now - 300 - 1;
         let fresh = now - 10;
 
         sqlx::query("INSERT INTO recording_gate_attempts (peer_ip, attempted_at) VALUES (?, ?)")
@@ -231,7 +238,7 @@ mod tests {
             .await
             .unwrap();
 
-        run_one_cleanup_cycle(&db, &blob).await.unwrap();
+        run_one_cleanup_cycle(&db, &blob, 300).await.unwrap();
 
         let (count,): (i64,) =
             sqlx::query_as("SELECT COUNT(*) FROM recording_gate_attempts")

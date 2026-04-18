@@ -555,10 +555,12 @@ async fn handle_record_stop(
 
     let (teacher_tx, student_tx) = {
         let mut rs = room.write().await;
-        if !rs.recording_active {
+        // No-op if neither recording nor consent is active.
+        if !rs.recording_active && !rs.consent_pending {
             return true;
         }
         rs.recording_active = false;
+        rs.consent_pending = false;
         let teacher_tx = rs.teacher_conn.as_ref().map(|c| c.tx.clone());
         let student_tx = rs.active_session.as_ref().map(|s| s.student.conn.tx.clone());
         (teacher_tx, student_tx)

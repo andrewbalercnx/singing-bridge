@@ -272,12 +272,13 @@ pub(crate) async fn post_send(
     sqlx::query(
         "UPDATE recordings
          SET token_hash = ?, student_email = ?, student_email_hash = ?, failed_attempts = 0
-         WHERE id = ?",
+         WHERE id = ? AND teacher_id = ?",
     )
     .bind(&new_hash)
     .bind(&recipient)
     .bind(&new_email_hash)
     .bind(id)
+    .bind(teacher_id)
     .execute(&state.db)
     .await?;
 

@@ -30,15 +30,17 @@
     }).then(function (r) {
       if (r.status === 200) return r.json();
       if (r.status === 403) {
-        // Link disabled (too many attempts).
-        gateSection.hidden = true;
-        disabledNotice.hidden = false;
-        return null;
-      }
-      if (r.status === 401) {
-        gateErrorEl.hidden = false;
-        gateErrorEl.textContent = 'Incorrect email address. Please try again.';
-        return null;
+        return r.json().then(function (data) {
+          if (data && data.error === 'wrong_email') {
+            gateErrorEl.hidden = false;
+            gateErrorEl.textContent = 'Incorrect email address. Please try again.';
+          } else {
+            // disabled (too many attempts or other 403)
+            gateSection.hidden = true;
+            disabledNotice.hidden = false;
+          }
+          return null;
+        });
       }
       if (r.status === 429) {
         gateErrorEl.hidden = false;

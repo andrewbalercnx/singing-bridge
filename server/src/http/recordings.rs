@@ -2,15 +2,17 @@
 // Purpose: Recording management HTTP API — upload, list, send link, delete.
 // Role: Teacher-authenticated endpoints for recording lifecycle management.
 // Exports: post_upload, get_list, post_send, delete_recording, get_recordings_page
-// Depends: axum, sqlx, blob, sha2, hex, rand, mailer
+// Depends: axum, sqlx, blob, sha2, hex, rand, mailer, futures, tokio-util
 // Invariants: All endpoints require valid teacher session cookie; auth is by
 //             teacher_id from cookie, never by slug alone.
 //             Upload validates WebM magic bytes (\x1A\x45\xDF\xA3) and MIME type.
-//             Resend reuses token_hex when failed_attempts < 3; rotates and resets
-//             failed_attempts only when the link is disabled (>= 3 failures).
-//             RecordingView excludes token_hash, token_hex, blob_key, teacher_id, deleted_at.
+//             Upload streams body to blob store (no full in-memory buffer) bounded
+//             by recording_max_bytes via AsyncReadExt::take.
+//             token_hex is never persisted — only token_hash (SHA-256) is stored.
+//             Resend always issues a fresh random token (old link becomes invalid).
+//             RecordingView excludes token_hash, blob_key, teacher_id, deleted_at.
 //             Blob compensation: if DB insert fails after successful put, delete blob.
-// Last updated: Sprint 6 (2026-04-18) -- initial implementation
+// Last updated: Sprint 6 (2026-04-18) -- R2 fixes: streaming upload, token_hex removed
 
 use std::sync::Arc;
 
@@ -20,9 +22,12 @@ use axum::{
     http::{header, HeaderMap, HeaderValue, StatusCode},
     response::{Html, IntoResponse, Json, Response},
 };
+use futures::StreamExt;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use tokio::io::AsyncReadExt;
+use tokio_util::io::{ReaderStream, StreamReader};
 
 use crate::auth::resolve_teacher_from_cookie;
 use crate::error::{AppError, Result};
@@ -36,18 +41,18 @@ const WEBM_MAGIC: [u8; 4] = [0x1A, 0x45, 0xDF, 0xA3];
 
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "snake_case")]
-pub enum RecordingStatus {
+pub(crate) enum RecordingStatus {
     Live,
     LinkDisabled,
 }
 
 #[derive(Serialize)]
-pub struct RecordingView {
-    pub id: i64,
-    pub student_email: String,
-    pub created_at: i64,
-    pub duration_s: Option<i64>,
-    pub status: RecordingStatus,
+pub(crate) struct RecordingView {
+    id: i64,
+    student_email: String,
+    created_at: i64,
+    duration_s: Option<i64>,
+    status: RecordingStatus,
 }
 
 // ---------------------------------------------------------------------------
@@ -55,11 +60,11 @@ pub struct RecordingView {
 // ---------------------------------------------------------------------------
 
 #[derive(Deserialize)]
-pub struct UploadQuery {
-    pub duration_s: Option<i64>,
+pub(crate) struct UploadQuery {
+    duration_s: Option<i64>,
 }
 
-pub async fn post_upload(
+pub(crate) async fn post_upload(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Query(q): Query<UploadQuery>,
@@ -86,16 +91,33 @@ pub async fn post_upload(
             .into_response());
     }
 
-    // Read bounded body.
-    let max_bytes = state.config.recording_max_bytes as usize;
-    let data = axum::body::to_bytes(body, max_bytes)
-        .await
-        .map_err(|_| AppError::BadRequest("upload too large".into()))?;
+    let max_bytes = state.config.recording_max_bytes as u64;
 
-    // Magic-byte validation.
-    if data.len() < 4 || &data[..4] != &WEBM_MAGIC {
+    // Build a streaming reader over the body, mapped to std::io::Error.
+    let body_stream = body
+        .into_data_stream()
+        .map(|r| r.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e)));
+    let mut body_reader = StreamReader::new(body_stream);
+
+    // Read first 4 bytes for WebM magic-byte validation without buffering the rest.
+    let mut magic = [0u8; 4];
+    body_reader
+        .read_exact(&mut magic)
+        .await
+        .map_err(|_| AppError::BadRequest("upload body too short".into()))?;
+
+    if magic != WEBM_MAGIC {
         return Ok((StatusCode::UNSUPPORTED_MEDIA_TYPE, "not a WebM file").into_response());
     }
+
+    // Reconstruct the full stream: prepend magic bytes, then stream remaining body
+    // bounded to max_bytes (the 4 magic bytes already consumed don't count toward limit).
+    let magic_stream = futures::stream::once(futures::future::ready(
+        Ok::<bytes::Bytes, std::io::Error>(bytes::Bytes::from(magic.to_vec())),
+    ));
+    let rest_stream = ReaderStream::new(body_reader.take(max_bytes - 4));
+    let full_reader: std::pin::Pin<Box<dyn tokio::io::AsyncRead + Send>> =
+        Box::pin(StreamReader::new(magic_stream.chain(rest_stream)));
 
     // Generate blob key and token.
     let key = format!("{}.webm", uuid::Uuid::new_v4());
@@ -106,20 +128,18 @@ pub async fn post_upload(
     let email_hash: Vec<u8> = sha256_str(&student_email.to_lowercase());
     let now = time::OffsetDateTime::now_utc().unix_timestamp();
 
-    // Store blob (streaming from an in-memory cursor — bounded by recording_max_bytes).
-    let reader: std::pin::Pin<Box<dyn tokio::io::AsyncRead + Send>> =
-        Box::pin(std::io::Cursor::new(data.to_vec()));
+    // Store blob via streaming reader.
     state
         .blob
-        .put(&key, reader)
+        .put(&key, full_reader)
         .await
         .map_err(|e| AppError::Internal(e.to_string().into()))?;
 
     // Insert DB row; compensate by deleting blob on failure.
     let insert: std::result::Result<(i64,), sqlx::Error> = sqlx::query_as(
         "INSERT INTO recordings
-           (teacher_id, student_email, student_email_hash, created_at, duration_s, blob_key, token_hash, token_hex)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+           (teacher_id, student_email, student_email_hash, created_at, duration_s, blob_key, token_hash)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
          RETURNING id",
     )
     .bind(teacher_id)
@@ -129,7 +149,6 @@ pub async fn post_upload(
     .bind(q.duration_s)
     .bind(&key)
     .bind(&token_hash)
-    .bind(&token_hex)
     .fetch_one(&state.db)
     .await;
 
@@ -151,29 +170,29 @@ pub async fn post_upload(
 // ---------------------------------------------------------------------------
 
 #[derive(Deserialize)]
-pub struct ListQuery {
+pub(crate) struct ListQuery {
     #[serde(default)]
-    pub sort: SortBy,
+    sort: SortBy,
 }
 
 #[derive(Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
-pub enum SortBy {
+pub(crate) enum SortBy {
     #[default]
     Date,
     Student,
 }
 
-pub async fn get_list(
+pub(crate) async fn get_list(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Query(q): Query<ListQuery>,
 ) -> Result<Json<Vec<RecordingView>>> {
     let teacher_id = require_auth(&state, &headers).await?;
 
-    let rows: Vec<(i64, String, i64, Option<i64>, i64)> = match q.sort {
+    let rows: Vec<(i64, String, i64, Option<i64>, i64, Option<String>)> = match q.sort {
         SortBy::Date => sqlx::query_as(
-            "SELECT id, student_email, created_at, duration_s, failed_attempts
+            "SELECT id, student_email, created_at, duration_s, failed_attempts, blob_key
              FROM recordings
              WHERE teacher_id = ? AND deleted_at IS NULL
              ORDER BY created_at DESC",
@@ -182,7 +201,7 @@ pub async fn get_list(
         .fetch_all(&state.db)
         .await?,
         SortBy::Student => sqlx::query_as(
-            "SELECT id, student_email, created_at, duration_s, failed_attempts
+            "SELECT id, student_email, created_at, duration_s, failed_attempts, blob_key
              FROM recordings
              WHERE teacher_id = ? AND deleted_at IS NULL
              ORDER BY student_email ASC, created_at DESC",
@@ -194,16 +213,13 @@ pub async fn get_list(
 
     let views = rows
         .into_iter()
-        .map(|(id, student_email, created_at, duration_s, failed_attempts)| RecordingView {
-            id,
-            student_email,
-            created_at,
-            duration_s,
-            status: if failed_attempts >= 3 {
+        .map(|(id, student_email, created_at, duration_s, failed_attempts, blob_key)| {
+            let status = if blob_key.is_none() || failed_attempts >= 3 {
                 RecordingStatus::LinkDisabled
             } else {
                 RecordingStatus::Live
-            },
+            };
+            RecordingView { id, student_email, created_at, duration_s, status }
         })
         .collect();
 
@@ -215,12 +231,11 @@ pub async fn get_list(
 // ---------------------------------------------------------------------------
 
 #[derive(Deserialize)]
-pub struct SendBody {
-    /// Overrides the student_email stored in the recording row when non-empty.
-    pub override_email: Option<String>,
+pub(crate) struct SendBody {
+    override_email: Option<String>,
 }
 
-pub async fn post_send(
+pub(crate) async fn post_send(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Path(id): Path<i64>,
@@ -229,8 +244,8 @@ pub async fn post_send(
     let teacher_id = require_auth(&state, &headers).await?;
 
     // Fetch recording row (ownership verified by teacher_id).
-    let row: Option<(String, i64, String)> = sqlx::query_as(
-        "SELECT student_email, failed_attempts, token_hex
+    let row: Option<(String,)> = sqlx::query_as(
+        "SELECT student_email
          FROM recordings
          WHERE id = ? AND teacher_id = ? AND deleted_at IS NULL",
     )
@@ -239,7 +254,7 @@ pub async fn post_send(
     .fetch_optional(&state.db)
     .await?;
 
-    let (student_email, failed_attempts, existing_token_hex) = row.ok_or(AppError::NotFound)?;
+    let (student_email,) = row.ok_or(AppError::NotFound)?;
 
     // Recipient: DB value by default; override if non-empty.
     let recipient = match &body.override_email {
@@ -247,42 +262,24 @@ pub async fn post_send(
         _ => student_email,
     };
 
-    // Rotate token only when the link is disabled (>= 3 failures); otherwise reuse.
-    let token_hex = if failed_attempts >= 3 {
-        let mut token_bytes = [0u8; 32];
-        rand::thread_rng().fill_bytes(&mut token_bytes);
-        let new_hex = hex::encode(token_bytes);
-        let new_hash = sha256_bytes(&token_bytes);
-        let new_email_hash = sha256_str(&recipient.to_lowercase());
-        sqlx::query(
-            "UPDATE recordings
-             SET token_hash = ?, token_hex = ?, student_email = ?, student_email_hash = ?,
-                 failed_attempts = 0
-             WHERE id = ?",
-        )
-        .bind(&new_hash)
-        .bind(&new_hex)
-        .bind(&recipient)
-        .bind(&new_email_hash)
-        .bind(id)
-        .execute(&state.db)
-        .await?;
-        new_hex
-    } else {
-        // Link still live — update email if overridden, but keep existing token.
-        let new_email_hash = sha256_str(&recipient.to_lowercase());
-        sqlx::query(
-            "UPDATE recordings
-             SET student_email = ?, student_email_hash = ?
-             WHERE id = ?",
-        )
-        .bind(&recipient)
-        .bind(&new_email_hash)
-        .bind(id)
-        .execute(&state.db)
-        .await?;
-        existing_token_hex
-    };
+    // Always issue a fresh random token (old link becomes invalid; failed_attempts reset).
+    let mut token_bytes = [0u8; 32];
+    rand::thread_rng().fill_bytes(&mut token_bytes);
+    let token_hex = hex::encode(token_bytes);
+    let new_hash = sha256_bytes(&token_bytes);
+    let new_email_hash = sha256_str(&recipient.to_lowercase());
+
+    sqlx::query(
+        "UPDATE recordings
+         SET token_hash = ?, student_email = ?, student_email_hash = ?, failed_attempts = 0
+         WHERE id = ?",
+    )
+    .bind(&new_hash)
+    .bind(&recipient)
+    .bind(&new_email_hash)
+    .bind(id)
+    .execute(&state.db)
+    .await?;
 
     // Build access URL and send email.
     let recording_url = state
@@ -304,7 +301,7 @@ pub async fn post_send(
 // Delete recording
 // ---------------------------------------------------------------------------
 
-pub async fn delete_recording(
+pub(crate) async fn delete_recording(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Path(id): Path<i64>,
@@ -333,7 +330,7 @@ pub async fn delete_recording(
 // Recordings library page
 // ---------------------------------------------------------------------------
 
-pub async fn get_recordings_page(
+pub(crate) async fn get_recordings_page(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Path(slug): Path<String>,
@@ -364,7 +361,7 @@ pub async fn get_recordings_page(
 // ---------------------------------------------------------------------------
 
 #[cfg(debug_assertions)]
-pub async fn get_dev_blob(
+pub(crate) async fn get_dev_blob(
     State(state): State<Arc<AppState>>,
     Path(key): Path<String>,
 ) -> Result<Response> {

@@ -35,6 +35,7 @@ pub enum MailerError {
 pub trait Mailer: Send + Sync + 'static {
     async fn send_magic_link(&self, to: &str, url: &Url) -> Result<(), MailerError>;
     async fn send_recording_link(&self, to: &str, url: &Url) -> Result<(), MailerError>;
+    async fn send_token_disabled_notification(&self, to: &str, url: &Url) -> Result<(), MailerError>;
 }
 
 // ---------------------------------------------------------------------------
@@ -76,6 +77,10 @@ impl Mailer for DevMailer {
     async fn send_recording_link(&self, to: &str, url: &Url) -> Result<(), MailerError> {
         self.write_entry(to, "recording_link", url).await
     }
+
+    async fn send_token_disabled_notification(&self, to: &str, url: &Url) -> Result<(), MailerError> {
+        self.write_entry(to, "token_disabled", url).await
+    }
 }
 
 impl DevMailer {
@@ -115,6 +120,7 @@ impl DevMailer {
 
 const MAIL_SUBJECT_MAGIC: &str = "Your singing-bridge sign-in link";
 const MAIL_SUBJECT_RECORDING: &str = "Your singing lesson recording";
+const MAIL_SUBJECT_TOKEN_DISABLED: &str = "Recording access link disabled";
 
 pub struct CloudflareWorkerMailer {
     worker_url: Url,
@@ -141,6 +147,10 @@ impl Mailer for CloudflareWorkerMailer {
 
     async fn send_recording_link(&self, to: &str, url: &Url) -> Result<(), MailerError> {
         self.post(to, MAIL_SUBJECT_RECORDING, url).await
+    }
+
+    async fn send_token_disabled_notification(&self, to: &str, url: &Url) -> Result<(), MailerError> {
+        self.post(to, MAIL_SUBJECT_TOKEN_DISABLED, url).await
     }
 }
 

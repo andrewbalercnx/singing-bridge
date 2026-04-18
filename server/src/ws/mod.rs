@@ -466,18 +466,19 @@ async fn handle_record_start(
     let Some(room) = state.room(slug) else { return true };
 
     let student_tx = {
-        let rs = room.write().await;
-        let Some(session) = rs.active_session.as_ref() else {
+        let mut rs = room.write().await;
+        if rs.active_session.is_none() {
             drop(rs);
             send_error(ctx, ErrorCode::NotInSession, "no active session").await;
             return true;
-        };
-        if rs.recording_active {
+        }
+        if rs.recording_active || rs.consent_pending {
             drop(rs);
             send_error(ctx, ErrorCode::RecordAlreadyActive, "recording already active").await;
             return true;
         }
-        session.student.conn.tx.clone()
+        rs.consent_pending = true;
+        rs.active_session.as_ref().unwrap().student.conn.tx.clone()
     };
 
     let _ = student_tx
@@ -514,6 +515,7 @@ async fn handle_record_consent(
         }
         let teacher_tx = rs.teacher_conn.as_ref().map(|c| c.tx.clone());
         let student_tx = rs.active_session.as_ref().map(|s| s.student.conn.tx.clone());
+        rs.consent_pending = false;
         if granted {
             rs.recording_active = true;
         }
@@ -553,6 +555,9 @@ async fn handle_record_stop(
 
     let (teacher_tx, student_tx) = {
         let mut rs = room.write().await;
+        if !rs.recording_active {
+            return true;
+        }
         rs.recording_active = false;
         let teacher_tx = rs.teacher_conn.as_ref().map(|c| c.tx.clone());
         let student_tx = rs.active_session.as_ref().map(|s| s.student.conn.tx.clone());
@@ -664,6 +669,7 @@ async fn cleanup(state: &AppState, mut ctx: ConnContext, result: LoopExit) {
                     {
                         rs.teacher_conn = None;
                         // Teacher disconnect: reset recording state, notify student.
+                        rs.consent_pending = false;
                         if rs.recording_active {
                             rs.recording_active = false;
                             if let Some(student_tx) =
@@ -676,6 +682,7 @@ async fn cleanup(state: &AppState, mut ctx: ConnContext, result: LoopExit) {
                         match rs.remove_by_connection(ctx.id) {
                             Some(RemovalKind::FromActiveSession) => {
                                 // Student disconnect: reset recording state, notify teacher.
+                                rs.consent_pending = false;
                                 if rs.recording_active {
                                     rs.recording_active = false;
                                     if let Some(teacher_tx) =

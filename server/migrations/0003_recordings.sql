@@ -10,7 +10,6 @@ CREATE TABLE recordings (
     duration_s            INTEGER,
     blob_key              TEXT    UNIQUE,      -- NULL once purged
     token_hash            BLOB    NOT NULL UNIQUE,
-    token_hex             TEXT    NOT NULL UNIQUE, -- raw hex for resend without rotation
     failed_attempts       INTEGER NOT NULL DEFAULT 0,
     accessed_at           INTEGER,             -- NULL until first successful gate verify
     deleted_at            INTEGER

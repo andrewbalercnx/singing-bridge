@@ -129,6 +129,7 @@ pub struct RoomState {
     pub active_session: Option<ActiveSession>,
     pub blocked: Vec<BlockEntry>,
     pub recording_active: bool,
+    pub consent_pending: bool,
 }
 
 impl RoomState {

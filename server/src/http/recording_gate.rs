@@ -32,7 +32,7 @@ use crate::state::AppState;
 // GET /recording/:token — serve the gate page
 // ---------------------------------------------------------------------------
 
-pub async fn get_recording_page(
+pub(crate) async fn get_recording_page(
     State(state): State<Arc<AppState>>,
     Path(token): Path<String>,
 ) -> Result<Response> {
@@ -54,16 +54,16 @@ pub async fn get_recording_page(
 // ---------------------------------------------------------------------------
 
 #[derive(Deserialize)]
-pub struct VerifyBody {
-    pub email: String,
+pub(crate) struct VerifyBody {
+    email: String,
 }
 
 #[derive(Serialize)]
-pub struct VerifyResponse {
-    pub url: String,
+pub(crate) struct VerifyResponse {
+    url: String,
 }
 
-pub async fn post_verify(
+pub(crate) async fn post_verify(
     State(state): State<Arc<AppState>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
@@ -74,7 +74,16 @@ pub async fn post_verify(
         return Err(AppError::NotFound);
     }
 
-    let peer_ip = crate::ws::resolve_peer_ip(&state.config, &headers, addr);
+    // In production (trust_forwarded_for=true), CF-Connecting-IP is mandatory; no XFF fallback.
+    let peer_ip = if state.config.trust_forwarded_for {
+        headers
+            .get("CF-Connecting-IP")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.trim().parse::<std::net::IpAddr>().ok())
+            .ok_or_else(|| AppError::BadRequest("missing CF-Connecting-IP header".into()))?
+    } else {
+        addr.ip()
+    };
     let now = time::OffsetDateTime::now_utc().unix_timestamp();
 
     // Decode token and compute hash before acquiring the transaction.
@@ -210,7 +219,7 @@ async fn notify_teacher_token_disabled(state: &AppState, recording_id: i64) {
             .unwrap_or_else(|_| state.config.base_url.clone());
         if let Err(e) = state
             .mailer
-            .send_recording_link(&teacher_email, &notify_url)
+            .send_token_disabled_notification(&teacher_email, &notify_url)
             .await
         {
             tracing::warn!(error = %e, recording_id, "failed to notify teacher of disabled token");

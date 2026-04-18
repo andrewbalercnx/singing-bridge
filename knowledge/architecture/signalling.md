@@ -31,7 +31,8 @@ payloads it defines the frame shape for.
 ## Message shapes
 
 Declared in `server/src/ws/protocol.rs`. Client → server:
-`LobbyJoin`, `LobbyWatch`, `LobbyAdmit`, `LobbyReject`, `Signal`.
+`LobbyJoin`, `LobbyWatch`, `LobbyAdmit`, `LobbyReject`,
+`SessionMetrics`, `Signal`.
 Server → client: `LobbyState`, `Admitted`, `Rejected`,
 `PeerConnected`, `Signal`, `PeerDisconnected`, `ServerShutdown`,
 `Error`.
@@ -42,6 +43,12 @@ at 16 KiB independent of the 64 KiB WebSocket frame cap. `Peer` is a
 physical target connection from `active_session` membership; clients
 cannot address arbitrary connections (this is the authorisation
 boundary).
+
+`Admitted` carries optional `ice_servers` + `ttl` fields (Sprint 5):
+the TURN/STUN credentials the student should use for `RTCPeerConnection`
+setup. Students never call `/turn-credentials` directly — credentials
+are delivered in the WS handshake. Teachers fetch via `/turn-credentials`
+with their session cookie.
 
 ## Connection lifecycle
 
@@ -89,6 +96,11 @@ sequenceDiagram
 - **No durable student state.** Students are stateless per visit
   (email is a per-session lobby label only). Only teacher
   accounts + sessions + pending magic links are persisted.
+- **Session log is append-only, no raw PII.** `open_row` at admit,
+  `record_peak` (5-second metrics ticks), `close_row` at disconnect.
+  Student email stored as `sha256(lower(email) || pepper)` only.
+  `record_peak` SQL guards `AND ended_at IS NULL` (no writes to
+  closed rows). Pepper ≥ 32 bytes required in prod.
 
 ## File map
 
@@ -100,8 +112,13 @@ sequenceDiagram
 | Lobby join / admit / reject transitions | `server/src/ws/lobby.rs` |
 | Signal relay authorisation | `server/src/ws/session.rs` |
 | Per-room in-memory state | `server/src/state.rs` |
+| Per-IP rate limiting (WS join + TURN creds) | `server/src/ws/rate_limit.rs` |
+| Session log (open/record/close) | `server/src/ws/session_log.rs` |
+| TURN credential HTTP endpoint (teacher-only) | `server/src/http/turn.rs` |
 
 ## Related
 
 - [ADR-0001](../decisions/0001-mvp-architecture.md) — why browser-only, why manual admission, bandwidth degradation order.
-- [Runbook: deploy](../runbook/README.md) — not yet; lands in Sprint 5.
+- [Runbook: deploy](../runbook/deploy.md) — one-time bootstrap + per-release deploy.
+- [Runbook: rollback](../runbook/rollback.md) — container revision rollback.
+- [Runbook: TURN down](../runbook/incident-turn-down.md) — coturn incident response.

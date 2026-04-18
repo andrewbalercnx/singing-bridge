@@ -15,13 +15,16 @@ use crate::error::Result;
 
 pub async fn init_pool(db_url: &str) -> Result<SqlitePool> {
     let pool = SqlitePoolOptions::new()
-        .max_connections(8)
+        // Single connection avoids file-lock contention on Azure Files SMB,
+        // which does not support concurrent SQLite writers. Single-replica
+        // Container App serialises all DB access through this one connection.
+        .max_connections(1)
         .after_connect(|conn, _| {
             Box::pin(async move {
                 sqlx::query("PRAGMA synchronous=NORMAL")
                     .execute(&mut *conn)
                     .await?;
-                sqlx::query("PRAGMA busy_timeout=5000")
+                sqlx::query("PRAGMA busy_timeout=30000")
                     .execute(&mut *conn)
                     .await?;
                 sqlx::query("PRAGMA foreign_keys=ON")

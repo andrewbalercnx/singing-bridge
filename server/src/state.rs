@@ -4,14 +4,16 @@
 //          `DashMap::Ref` ever escapes an async scope.
 // Role: Single source of truth for live connections and lobby membership.
 // Exports: AppState, RoomState, LobbyEntry, ActiveSession, ClientHandle,
-//          ConnectionId, SlugKey
+//          ConnectionId, SlugKey, BlockEntry, BLOCK_LIST_CAP
 // Depends: tokio, dashmap, sqlx, tokio_util, async trait mailer
 // Invariants: RoomState is `tokio::sync::RwLock`; callers MUST use
 //             AppState::room / ::room_or_insert (no direct DashMap access
-//             from async fns).
-// Last updated: Sprint 3 (2026-04-17) -- LobbyEntry carries tier + tier_reason
+//             from async fns). BLOCK_LIST_CAP enforced on every block insert;
+//             oldest entry evicted when cap is reached (FIFO).
+// Last updated: Sprint 5 (2026-04-18) -- block list, session log ids, atomic peaks
 
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::net::IpAddr;
+use std::sync::atomic::{AtomicU16, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -19,12 +21,16 @@ use dashmap::mapref::entry::Entry;
 use dashmap::DashMap;
 use sqlx::SqlitePool;
 use tokio::sync::{mpsc, RwLock};
+use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use crate::auth::mailer::Mailer;
+use crate::auth::secret::SecretString;
 use crate::config::Config;
 use crate::error::{AppError, Result};
 use crate::ws::protocol::{EntryId, LobbyEntryView, PumpDirective, Tier};
+use crate::ws::rate_limit::WsJoinBucket;
+use crate::ws::session_log::SessionLogId;
 
 /// Random per-connection identifier. Used to distinguish connections when
 /// the teacher reconnects and the old socket is being torn down.
@@ -100,6 +106,19 @@ impl LobbyEntry {
 pub struct ActiveSession {
     pub student: LobbyEntry,
     pub started_at: Instant,
+    /// Transiently None until open_row succeeds; record_peak/close_row
+    /// short-circuit when None so the session proceeds without logging on
+    /// DB failure.
+    pub log_id: Option<SessionLogId>,
+    pub peak_loss_bp: AtomicU16,
+    pub peak_rtt_ms: AtomicU16,
+}
+
+pub const BLOCK_LIST_CAP: usize = 256;
+
+pub struct BlockEntry {
+    pub ip: IpAddr,
+    pub until: Instant,
 }
 
 #[derive(Default)]
@@ -107,11 +126,30 @@ pub struct RoomState {
     pub teacher_conn: Option<ClientHandle>,
     pub lobby: Vec<LobbyEntry>,
     pub active_session: Option<ActiveSession>,
+    pub blocked: Vec<BlockEntry>,
 }
 
 impl RoomState {
     pub fn lobby_view(&self) -> Vec<LobbyEntryView> {
         self.lobby.iter().map(LobbyEntry::view).collect()
+    }
+
+    /// Check whether an IP is blocked. Also sweeps expired entries.
+    pub fn is_blocked(&mut self, ip: IpAddr) -> bool {
+        let now = Instant::now();
+        self.blocked.retain(|b| b.until > now);
+        self.blocked.iter().any(|b| b.ip == ip)
+    }
+
+    /// Add a block entry. If BLOCK_LIST_CAP is reached, evict the oldest entry
+    /// (FIFO). Sweeps expired entries first.
+    pub fn block_ip(&mut self, ip: IpAddr, until: Instant) {
+        let now = Instant::now();
+        self.blocked.retain(|b| b.until > now);
+        if self.blocked.len() >= BLOCK_LIST_CAP {
+            self.blocked.remove(0); // FIFO eviction
+        }
+        self.blocked.push(BlockEntry { ip, until });
     }
 
     /// Remove an entry by connection id from either lobby or active_session.
@@ -154,6 +192,12 @@ pub struct AppState {
     /// only eventually consistent under concurrent inserts across shards.
     pub active_rooms: AtomicUsize,
     pub shutdown: CancellationToken,
+    pub ws_join_rate_limits: Arc<DashMap<IpAddr, WsJoinBucket>>,
+    /// Owned here; aborted in main.rs on shutdown.
+    pub ws_join_rate_sweeper: JoinHandle<()>,
+    pub turn_cred_rate_limits: Arc<DashMap<IpAddr, WsJoinBucket>>,
+    /// Pepper for session log email hashing. None in dev (DEV_PEPPER used).
+    pub session_log_pepper: Option<SecretString>,
 }
 
 impl AppState {
@@ -181,6 +225,14 @@ impl AppState {
             }
         }
     }
+
+    /// Effective pepper for session log email hashing.
+    pub fn session_log_pepper_bytes(&self) -> &[u8] {
+        self.session_log_pepper
+            .as_ref()
+            .map(|s| s.expose().as_bytes())
+            .unwrap_or(crate::ws::session_log::DEV_PEPPER)
+    }
 }
 
 #[cfg(test)]
@@ -199,5 +251,37 @@ mod tests {
     fn slug_key_rejects_invalid() {
         assert!(SlugKey::new("bad slug").is_err());
         assert!(SlugKey::new("admin").is_err());
+    }
+
+    #[test]
+    fn block_ip_cap_enforces_fifo_eviction() {
+        let mut rs = RoomState::default();
+        let far_future = Instant::now() + std::time::Duration::from_secs(86400);
+        // Insert first IP, then fill to cap, then one more — first should be evicted.
+        let first_ip: IpAddr = "10.0.0.1".parse().unwrap();
+        rs.block_ip(first_ip, far_future);
+        for i in 2u32..=(BLOCK_LIST_CAP as u32) {
+            let ip: IpAddr = format!("10.0.{}.{}", i / 256, i % 256).parse().unwrap();
+            rs.block_ip(ip, far_future);
+        }
+        assert_eq!(rs.blocked.len(), BLOCK_LIST_CAP);
+        // Add one more — the first IP should now be evicted.
+        let extra_ip: IpAddr = "10.1.0.1".parse().unwrap();
+        rs.block_ip(extra_ip, far_future);
+        assert_eq!(rs.blocked.len(), BLOCK_LIST_CAP);
+        assert!(!rs.blocked.iter().any(|b| b.ip == first_ip));
+    }
+
+    #[test]
+    fn is_blocked_sweeps_expired() {
+        let mut rs = RoomState::default();
+        let ip: IpAddr = "10.0.0.1".parse().unwrap();
+        // Add an already-expired entry.
+        rs.blocked.push(BlockEntry {
+            ip,
+            until: Instant::now() - std::time::Duration::from_secs(1),
+        });
+        assert!(!rs.is_blocked(ip)); // expired → not blocked
+        assert!(rs.blocked.is_empty()); // swept
     }
 }

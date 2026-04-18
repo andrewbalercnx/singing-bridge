@@ -7,7 +7,8 @@
 // Depends: serde, uuid, bytes via axum
 // Invariants: ServerMsg.Signal.from is server-filled; clients cannot spoof.
 //             Signal.payload ≤ 16 KiB independent of the 64 KiB frame cap.
-// Last updated: Sprint 3 (2026-04-17) -- +Tier + tier_reason on LobbyJoin/LobbyEntryView
+//             LobbyReject.block_ttl_secs is clamped [0, 86400] server-side.
+// Last updated: Sprint 5 (2026-04-18) -- SessionMetrics, Blocked/RateLimited, block_ttl_secs
 
 use std::borrow::Cow;
 
@@ -104,6 +105,8 @@ pub enum ErrorCode {
     InvalidRoute,
     PayloadTooLarge,
     FieldTooLong,
+    Blocked,
+    RateLimited,
     Internal,
 }
 
@@ -130,6 +133,14 @@ pub enum ClientMsg {
     LobbyReject {
         slug: String,
         entry_id: EntryId,
+        /// Non-zero: add the student's IP to the room block list for this many seconds
+        /// (clamped to [0, 86_400] server-side). Zero or absent = plain reject.
+        #[serde(default)]
+        block_ttl_secs: Option<u32>,
+    },
+    SessionMetrics {
+        loss_bp: u16,
+        rtt_ms: u16,
     },
     Signal {
         to: Peer,
@@ -201,6 +212,7 @@ mod tests {
             ClientMsg::LobbyReject {
                 slug: "alice".into(),
                 entry_id: EntryId::new(),
+                block_ttl_secs: None,
             },
             ClientMsg::Signal {
                 to: Role::Teacher,

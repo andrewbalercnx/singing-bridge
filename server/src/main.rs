@@ -4,19 +4,24 @@
 // Exports: main
 // Depends: axum, tokio, tracing_subscriber
 // Invariants: binds ConnectInfo so /ws upgrade can read the peer IP.
-// Last updated: Sprint 1 (2026-04-17) -- initial implementation
+//             Selects mailer based on MailerKind. Spawns WS join rate sweeper
+//             and aborts it on shutdown. AppState.ws_join_rate_sweeper is
+//             always a valid JoinHandle for the life of the process.
+// Last updated: Sprint 5 (2026-04-18) -- from_env, sweeper, MailerKind selection
 
 use std::{net::SocketAddr, sync::Arc};
 
 use dashmap::DashMap;
 use tokio_util::sync::CancellationToken;
+use url::Url;
 
 use singing_bridge_server::{
-    auth::mailer::DevMailer,
-    config::Config,
+    auth::mailer::{CloudflareWorkerMailer, DevMailer, Mailer},
+    config::{Config, MailerKind},
     db::init_pool,
     http::router,
     state::AppState,
+    ws::rate_limit::sweep_stale,
 };
 
 #[tokio::main]
@@ -28,11 +33,49 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
 
-    let config = Config::dev_default();
-    tokio::fs::create_dir_all(&config.dev_mail_dir).await.ok();
-    let mailer = Arc::new(DevMailer::new(&config.dev_mail_dir).await?);
+    let config = Config::from_env().map_err(|e| anyhow::anyhow!("config error: {e}"))?;
+
+    let mailer: Arc<dyn Mailer> = match config.mailer_kind {
+        MailerKind::Dev => {
+            tokio::fs::create_dir_all(&config.dev_mail_dir).await.ok();
+            Arc::new(DevMailer::new(&config.dev_mail_dir).await?)
+        }
+        MailerKind::CloudflareWorker => {
+            let url = config
+                .cf_worker_url
+                .as_deref()
+                .and_then(|u| Url::parse(u).ok())
+                .ok_or_else(|| anyhow::anyhow!("invalid SB_CF_WORKER_URL"))?;
+            let secret = config
+                .cf_worker_secret
+                .clone()
+                .ok_or_else(|| anyhow::anyhow!("missing SB_CF_WORKER_SECRET"))?;
+            Arc::new(CloudflareWorkerMailer::new(url, secret))
+        }
+    };
 
     let pool = init_pool(&config.db_url).await?;
+    let shutdown = CancellationToken::new();
+
+    let session_log_pepper = config.session_log_pepper.clone();
+
+    // Spawn the WS join rate-limit sweeper. Use Arc<DashMap> so the sweeper
+    // and AppState share the same underlying map without deep-copying.
+    let ws_join_rate_limits: Arc<DashMap<_, _>> = Arc::new(DashMap::new());
+    let sweeper_map = Arc::clone(&ws_join_rate_limits);
+    let sweeper_shutdown = shutdown.clone();
+    let sweep_window = config.ws_join_rate_limit_window_secs;
+    let ws_join_rate_sweeper = tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = sweeper_shutdown.cancelled() => break,
+                _ = tokio::time::sleep(std::time::Duration::from_secs(60)) => {
+                    let now = time::OffsetDateTime::now_utc().unix_timestamp();
+                    sweep_stale(&sweeper_map, now, sweep_window);
+                }
+            }
+        }
+    });
 
     let state = Arc::new(AppState {
         db: pool,
@@ -40,7 +83,11 @@ async fn main() -> anyhow::Result<()> {
         mailer,
         rooms: DashMap::new(),
         active_rooms: std::sync::atomic::AtomicUsize::new(0),
-        shutdown: CancellationToken::new(),
+        shutdown: shutdown.clone(),
+        ws_join_rate_limits,
+        ws_join_rate_sweeper,
+        turn_cred_rate_limits: Arc::new(DashMap::new()),
+        session_log_pepper,
     });
 
     let app = router(state.clone()).into_make_service_with_connect_info::<SocketAddr>();
@@ -48,7 +95,7 @@ async fn main() -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(config.bind).await?;
     tracing::info!(addr = %config.bind, "listening");
 
-    let shutdown_token = state.shutdown.clone();
+    let shutdown_token = shutdown.clone();
     let shutdown_signal = async move {
         let _ = tokio::signal::ctrl_c().await;
         shutdown_token.cancel();
@@ -57,6 +104,9 @@ async fn main() -> anyhow::Result<()> {
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal)
         .await?;
+
+    // Abort the sweeper after server stops accepting connections.
+    state.ws_join_rate_sweeper.abort();
 
     Ok(())
 }

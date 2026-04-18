@@ -144,21 +144,51 @@ bidirectional full-fidelity A/V session.
 
 ---
 
-## Sprint 6 (post-MVP): Session recording
+## Sprint 6: Session recording
 
-**Goal:** Teacher can record a lesson and share it with the student afterwards.
+**Goal:** Teacher can record a lesson, send the recording link to the student by email after the session, and manage their recording library from a dedicated page.
 
-**Deliverables (provisional):**
-- Recording mechanism (client-side `MediaRecorder` on teacher side as a starting point; server-side SFU-assisted recording if quality requires)
-- Storage in Azure Blob with time-limited signed share URLs
-- Explicit per-session consent from both parties before recording starts; recording blocked if either declines
+**Deliverables:**
+
+_Recording mechanism_
+- Teacher initiates recording via a "Record" button in the session UI
+- Both teacher and student see a consent banner; recording begins only when student accepts; if student declines or does not respond within 30 s the button resets
+- A prominent "REC" indicator is visible on both sides throughout the recording
+- Client-side `MediaRecorder` on the teacher's browser captures a composite stream: Web Audio API mixes teacher mic + student remote audio; teacher video track is included; output is WebM
+- On session end, or when teacher stops recording, the completed file is uploaded to Azure Blob Storage; upload progress is shown; teacher is not forced to wait (upload can continue in background after session tears down)
+
+_Post-session send flow_
+- Immediately after the session ends, teacher sees a modal: **"Send recording to [student@email.com]"** — pre-filled with the student's lobby email but editable; teacher can dismiss without sending
+- On send: server stores the recording metadata (recipient email as SHA-256 hash, plus an encrypted copy for display), generates a random 256-bit access token (stored as SHA-256 hash), and delivers an email via Cloudflare containing a link to `/recording/<token>`
+
+_Student access_
+- `/recording/<token>` presents an email gate: *"Enter the email address this link was sent to"*
+- Server checks SHA-256(lowercase(input)) == stored hash; on match, streams the recording from Azure Blob Storage
+- No account, no password; three failed attempts per token disables the token and notifies the teacher by email
+- Successful access is logged (timestamp, no IP stored)
+
+_Teacher recording library_
+- New page at `/teach/<slug>/recordings`, behind the existing teacher magic-link auth
+- Lists all recordings with: date, student email (displayable), duration
+- Sortable by date (default: newest first) or by student email
+- Per-row actions: **Send link** (re-sends email; address is editable in a small inline field before confirming), **Delete** (soft-delete with 24 h grace before blob is permanently purged)
+- Disabled/expired recordings shown with a "link disabled — resend to reactivate" status
+
+_Infrastructure_
+- New SQLite table `recordings`: id, room\_id, teacher\_id, student\_email\_hash, student\_email\_encrypted, created\_at, duration\_s, blob\_key, token\_hash, failed\_attempts, deleted\_at
+- Azure Blob Storage container for recording files (private, no public URL); access via server-proxied stream
+- Background cleanup task: purge blobs where `deleted_at < now() - 24h`
+- No new infra beyond Blob Storage (no SFU, no transcoding service)
 
 **Exit criteria:**
-- Teacher-initiated recording persists a playable file
-- Student receives a time-limited link within 1 hour of session end
-- Consent flow is unambiguous and enforced
+- Teacher starts recording mid-session; student sees and accepts consent prompt; "REC" indicator appears on both sides
+- Session ends; teacher modal appears pre-filled with student email; teacher sends the link; email arrives in the dev SMTP sink
+- Student opens the link, enters the correct email, plays back the recording in-browser
+- Wrong email is rejected; three wrong attempts disable the token
+- Teacher recording library shows the recording; sort by date and by student each work; delete removes the entry from the list; blob is gone after the grace period
+- Re-sending the link from the library delivers a fresh email with the same token (or a new one if the old one was disabled)
 
-**Status:** DEFERRED
+**Status:** PENDING
 
 ---
 

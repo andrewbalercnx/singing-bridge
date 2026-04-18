@@ -7,7 +7,11 @@
 // Invariants: `pump` is joined-or-aborted exactly once, by cleanup() (§4.8).
 //             `tx` is the sole handler-owned sender; cleanup drops it so the
 //             pump's rx.recv() returns None and the task exits cleanly.
-// Last updated: Sprint 1 (2026-04-17) -- R2 cleanup; drop PreJoin reference.
+//             `peer_ip` is resolved once at upgrade time and never changes.
+//             `last_metrics_at` gates the 5 s session-metrics rate limit.
+// Last updated: Sprint 5 (2026-04-18) -- add peer_ip, last_metrics_at
+
+use std::net::IpAddr;
 
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
@@ -26,4 +30,8 @@ pub struct ConnContext {
     pub role: Option<Role>,
     pub tx: mpsc::Sender<PumpDirective>,
     pub pump: JoinHandle<()>,
+    /// Resolved peer IP (CF-Connecting-IP > X-Forwarded-For first token > socket).
+    pub peer_ip: IpAddr,
+    /// Timestamp of the last accepted SessionMetrics frame (rate-limit: 1/5 s).
+    pub last_metrics_at: Option<std::time::Instant>,
 }

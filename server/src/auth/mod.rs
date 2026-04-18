@@ -3,15 +3,16 @@
 //          a `TeacherId`, plus re-exports of the auth submodules.
 // Role: One module gate for auth-adjacent helpers.
 // Exports: SessionCookie, resolve_teacher_from_cookie, issue_session_cookie,
-//          SESSION_COOKIE_NAME, magic_link, slug, mailer, rate_limit
+//          SESSION_COOKIE_NAME, magic_link, slug, mailer, rate_limit, secret
 // Depends: sqlx, axum, cookie, sha2
 // Invariants: raw cookie never stored; sessions.expires_at > now is always
 //             checked before trusting the cookie.
-// Last updated: Sprint 1 (2026-04-17) -- initial implementation
+// Last updated: Sprint 5 (2026-04-18) -- expose secret module
 
 pub mod magic_link;
 pub mod mailer;
 pub mod rate_limit;
+pub mod secret;
 pub mod slug;
 
 use axum::http::HeaderMap;

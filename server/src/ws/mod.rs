@@ -3,21 +3,25 @@
 //          check; slug-aware role resolution on first lobby message; clean
 //          async teardown. Ban panic edges in the hot path.
 // Role: The live end of signalling. Owns the pump-driven connection loop.
-// Exports: ws_upgrade
+// Exports: ws_upgrade, resolve_peer_ip
 // Depends: axum, tokio, state, protocol
 // Invariants: no unwrap/expect in this module. Origin must match base_url.
 //             Role is decided on the first LobbyJoin/LobbyWatch and immutable
-//             thereafter.
-// Last updated: Sprint 3 (2026-04-17) -- thread tier + tier_reason + byte cap
+//             thereafter. SessionMetrics rate-limited to 1 frame per 5 s.
+// Last updated: Sprint 5 (2026-04-18) -- peer IP, rate limit, SessionMetrics, block
 
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 
 pub mod connection;
 pub mod lobby;
 pub mod protocol;
+pub mod rate_limit;
 pub mod session;
+pub mod session_log;
 
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 use axum::{
     extract::{
@@ -29,20 +33,59 @@ use axum::{
 };
 use futures_util::stream::StreamExt;
 use futures_util::sink::SinkExt;
-use std::net::SocketAddr;
 use tokio::sync::mpsc;
 
 use crate::auth::{magic_link::TeacherId, resolve_teacher_from_cookie};
+use crate::config::Config;
 use crate::state::{AppState, ConnectionId, RemovalKind, SlugKey};
 use crate::ws::connection::ConnContext;
 use crate::ws::protocol::{
     ClientMsg, ErrorCode, PumpDirective, Role, ServerMsg, MAX_BROWSER_LEN, MAX_DEVICE_CLASS_LEN,
     MAX_EMAIL_LEN, MAX_SIGNAL_PAYLOAD_BYTES, MAX_TIER_REASON_BYTES,
 };
+use crate::ws::rate_limit::check_and_inc;
+use crate::ws::session_log::{close_row, EndedReason};
+
+/// Resolve the peer IP from request headers + socket address.
+///
+/// In prod (trust_forwarded_for=true): prefer `CF-Connecting-IP` (set by
+/// Cloudflare), then fall back to the first token of `X-Forwarded-For`.
+/// An unparse-able / missing header falls through to the socket addr.
+///
+/// In dev (trust_forwarded_for=false): always use the socket addr directly.
+pub fn resolve_peer_ip(config: &Config, headers: &HeaderMap, addr: SocketAddr) -> IpAddr {
+    if !config.trust_forwarded_for {
+        return addr.ip();
+    }
+    // Prefer CF-Connecting-IP (Cloudflare rewrites this).
+    if let Some(cf_ip) = headers
+        .get("CF-Connecting-IP")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.trim().parse::<IpAddr>().ok())
+    {
+        return cf_ip;
+    }
+    // Fall through to X-Forwarded-For first token.
+    if let Some(xff_ip) = headers
+        .get(header::FORWARDED)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|_| None::<IpAddr>) // FORWARDED not XFF; handled below
+        .or_else(|| {
+            headers
+                .get("X-Forwarded-For")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|s| s.split(',').next())
+                .and_then(|s| s.trim().parse::<IpAddr>().ok())
+        })
+    {
+        return xff_ip;
+    }
+    addr.ip()
+}
 
 pub async fn ws_upgrade(
     State(state): State<Arc<AppState>>,
-    ConnectInfo(_addr): ConnectInfo<SocketAddr>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     ws: WebSocketUpgrade,
     headers: HeaderMap,
 ) -> Response {
@@ -57,11 +100,12 @@ pub async fn ws_upgrade(
         return (StatusCode::FORBIDDEN, "bad origin").into_response();
     }
 
+    let peer_ip = resolve_peer_ip(&state.config, &headers, addr);
     let candidate_teacher = resolve_teacher_from_cookie(&state.db, &headers).await;
     let state_for_conn = Arc::clone(&state);
 
     ws.on_upgrade(move |sock| async move {
-        run(sock, state_for_conn, candidate_teacher).await;
+        run(sock, state_for_conn, candidate_teacher, peer_ip).await;
     })
 }
 
@@ -69,6 +113,7 @@ async fn run(
     sock: WebSocket,
     state: Arc<AppState>,
     candidate_teacher: Option<TeacherId>,
+    peer_ip: IpAddr,
 ) {
     let (mut ws_tx, mut ws_rx) = sock.split();
     let (tx, mut rx) = mpsc::channel::<PumpDirective>(64);
@@ -106,6 +151,8 @@ async fn run(
         role: None,
         tx,
         pump,
+        peer_ip,
+        last_metrics_at: None,
     };
 
     // Inbound loop, select'd against shutdown.
@@ -127,7 +174,6 @@ async fn inbound_loop(
     loop {
         tokio::select! {
             _ = state.shutdown.cancelled() => {
-                // Shutdown path: server_shutdown message then close.
                 let _ = ctx.tx.send(PumpDirective::Send(ServerMsg::ServerShutdown)).await;
                 let _ = ctx.tx.send(PumpDirective::Close {
                     code: 1012,
@@ -213,8 +259,11 @@ async fn handle_client_msg(
         ClientMsg::LobbyAdmit { slug, entry_id } => {
             handle_lobby_admit(ctx, state, &slug, entry_id).await
         }
-        ClientMsg::LobbyReject { slug, entry_id } => {
-            handle_lobby_reject(ctx, state, &slug, entry_id).await
+        ClientMsg::LobbyReject { slug, entry_id, block_ttl_secs } => {
+            handle_lobby_reject(ctx, state, &slug, entry_id, block_ttl_secs).await
+        }
+        ClientMsg::SessionMetrics { loss_bp, rtt_ms } => {
+            handle_session_metrics(ctx, state, loss_bp, rtt_ms).await
         }
         ClientMsg::Signal { to, payload } => handle_signal(ctx, state, to, payload).await,
     }
@@ -242,6 +291,24 @@ async fn handle_lobby_join(
         send_error(ctx, ErrorCode::FieldTooLong, "field too long").await;
         return true;
     }
+
+    // Per-IP WS join rate limit — checked before slug DB lookup.
+    {
+        let now_unix = time::OffsetDateTime::now_utc().unix_timestamp();
+        let over = check_and_inc(
+            &*state.ws_join_rate_limits,
+            ctx.peer_ip,
+            state.config.ws_join_rate_limit_per_ip,
+            state.config.ws_join_rate_limit_window_secs,
+            now_unix,
+        );
+        if over {
+            send_error(ctx, ErrorCode::RateLimited, "rate limited").await;
+            let _ = ctx.tx.send(PumpDirective::Close { code: 1008, reason: "rate_limited".into() }).await;
+            return false;
+        }
+    }
+
     let Some(key) = parse_slug_or_err(ctx, &slug).await else {
         return true;
     };
@@ -251,7 +318,7 @@ async fn handle_lobby_join(
     }
     ctx.slug = Some(key.clone());
     ctx.role = Some(Role::Student);
-    lobby::join_lobby(state, ctx, &key, email, browser, device_class, tier, tier_reason).await
+    lobby::join_lobby(state, ctx, &key, ctx.peer_ip, email, browser, device_class, tier, tier_reason).await
 }
 
 async fn handle_lobby_watch(ctx: &mut ConnContext, state: &Arc<AppState>, slug: String) -> bool {
@@ -300,6 +367,7 @@ async fn handle_lobby_reject(
     state: &Arc<AppState>,
     msg_slug: &str,
     entry_id: crate::ws::protocol::EntryId,
+    block_ttl_secs: Option<u32>,
 ) -> bool {
     if !require_joined(ctx, msg_slug).await {
         return true;
@@ -308,7 +376,57 @@ async fn handle_lobby_reject(
         send_error(ctx, ErrorCode::NotOwner, "teacher only").await;
         return true;
     }
-    lobby::reject(state, ctx, entry_id).await;
+    lobby::reject(state, ctx, entry_id, ctx.peer_ip, block_ttl_secs).await;
+    true
+}
+
+async fn handle_session_metrics(
+    ctx: &mut ConnContext,
+    state: &Arc<AppState>,
+    loss_bp: u16,
+    rtt_ms: u16,
+) -> bool {
+    // Rate-limit: 1 frame per 5 s per connection.
+    let now = std::time::Instant::now();
+    if let Some(last) = ctx.last_metrics_at {
+        if now.duration_since(last).as_secs() < 5 {
+            // Silently drop; don't close the connection.
+            return true;
+        }
+    }
+    ctx.last_metrics_at = Some(now);
+
+    let Some(slug) = ctx.slug.as_ref() else {
+        return true;
+    };
+    let Some(room) = state.room(slug) else {
+        return true;
+    };
+
+    let (log_id, needs_persist) = {
+        let rs = room.read().await;
+        let Some(session) = rs.active_session.as_ref() else {
+            return true;
+        };
+        // Accept metrics from either role (teacher metrics silently accepted).
+        let is_student = session.student.conn.id == ctx.id;
+        let is_teacher = rs.teacher_conn.as_ref().map(|c| c.id) == Some(ctx.id);
+        if !is_student && !is_teacher {
+            return true;
+        }
+        // Update atomic peaks (fetch_max = compare-and-swap loop).
+        let _ = session.peak_loss_bp.fetch_max(loss_bp, Ordering::Relaxed);
+        let _ = session.peak_rtt_ms.fetch_max(rtt_ms, Ordering::Relaxed);
+        (session.log_id.clone(), true)
+    };
+
+    if needs_persist {
+        if let Some(id) = log_id {
+            if let Err(e) = crate::ws::session_log::record_peak(&state.db, &id, loss_bp, rtt_ms).await {
+                tracing::warn!(error = %e, "session_log record_peak failed");
+            }
+        }
+    }
     true
 }
 
@@ -350,7 +468,6 @@ async fn require_joined(ctx: &ConnContext, msg_slug: &str) -> bool {
             .await;
         return false;
     };
-    // Slug field on subsequent messages must match the connection-bound slug.
     let Ok(parsed) = SlugKey::new(msg_slug) else {
         send_error(ctx, ErrorCode::InvalidRoute, "slug mismatch").await;
         return false;
@@ -386,16 +503,34 @@ async fn owns_slug(state: &AppState, teacher_id: Option<i64>, slug: &SlugKey) ->
 }
 
 async fn cleanup(state: &AppState, mut ctx: ConnContext, result: LoopExit) {
-    // Shutdown path already enqueued ServerShutdown + Close into the pump;
-    // normal exit is a peer-initiated disconnect. Room-state cleanup runs
-    // the same way in both cases.
-    let exit_kind = match result {
-        LoopExit::Normal => "normal",
-        LoopExit::ShuttingDown => "shutdown",
+    let (exit_kind, ended_reason) = match result {
+        LoopExit::Normal => ("normal", EndedReason::Disconnect),
+        LoopExit::ShuttingDown => ("shutdown", EndedReason::ServerShutdown),
     };
     tracing::debug!(exit = %exit_kind, conn = ctx.id.0, "ws exit");
+
+    // Close session log row if this connection held an active session.
     if let Some(slug) = ctx.slug.clone() {
         if let Some(room) = state.room(&slug) {
+            let log_id = {
+                let rs = room.read().await;
+                rs.active_session.as_ref().and_then(|s| {
+                    if s.student.conn.id == ctx.id
+                        || state.rooms.get(&slug).is_some() // teacher side
+                    {
+                        s.log_id.clone()
+                    } else {
+                        None
+                    }
+                })
+            };
+            if let Some(id) = log_id {
+                let ended_at = time::OffsetDateTime::now_utc().unix_timestamp();
+                if let Err(e) = close_row(&state.db, &id, ended_at, ended_reason).await {
+                    tracing::warn!(error = %e, "session_log close_row failed");
+                }
+            }
+
             // Collect up to two messages to send to the teacher after the
             // lock is released.
             let mut outbound: Vec<(mpsc::Sender<PumpDirective>, ServerMsg)> = Vec::new();
@@ -448,5 +583,81 @@ async fn cleanup(state: &AppState, mut ctx: ConnContext, result: LoopExit) {
             ctx.pump.abort();
             let _ = (&mut ctx.pump).await;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::SocketAddr;
+
+    fn make_config(trust: bool) -> Config {
+        let mut c = Config::dev_default();
+        c.trust_forwarded_for = trust;
+        c
+    }
+
+    fn addr(ip: &str) -> SocketAddr {
+        format!("{ip}:12345").parse().unwrap()
+    }
+
+    fn headers_with(pairs: &[(&str, &str)]) -> HeaderMap {
+        let mut h = HeaderMap::new();
+        for (k, v) in pairs {
+            h.insert(
+                axum::http::HeaderName::from_bytes(k.as_bytes()).unwrap(),
+                axum::http::HeaderValue::from_str(v).unwrap(),
+            );
+        }
+        h
+    }
+
+    #[test]
+    fn dev_mode_uses_socket_addr() {
+        let c = make_config(false);
+        let h = headers_with(&[("CF-Connecting-IP", "1.2.3.4")]);
+        let ip = resolve_peer_ip(&c, &h, addr("10.0.0.1"));
+        assert_eq!(ip.to_string(), "10.0.0.1");
+    }
+
+    #[test]
+    fn prod_prefers_cf_connecting_ip() {
+        let c = make_config(true);
+        let h = headers_with(&[
+            ("CF-Connecting-IP", "1.2.3.4"),
+            ("X-Forwarded-For", "5.6.7.8"),
+        ]);
+        let ip = resolve_peer_ip(&c, &h, addr("10.0.0.1"));
+        assert_eq!(ip.to_string(), "1.2.3.4");
+    }
+
+    #[test]
+    fn prod_falls_back_to_xff() {
+        let c = make_config(true);
+        let h = headers_with(&[("X-Forwarded-For", "5.6.7.8, 9.10.11.12")]);
+        let ip = resolve_peer_ip(&c, &h, addr("10.0.0.1"));
+        assert_eq!(ip.to_string(), "5.6.7.8");
+    }
+
+    #[test]
+    fn malformed_cf_header_falls_back_to_xff() {
+        let c = make_config(true);
+        let h = headers_with(&[
+            ("CF-Connecting-IP", "not-an-ip"),
+            ("X-Forwarded-For", "5.6.7.8"),
+        ]);
+        let ip = resolve_peer_ip(&c, &h, addr("10.0.0.1"));
+        assert_eq!(ip.to_string(), "5.6.7.8");
+    }
+
+    #[test]
+    fn malformed_cf_and_xff_falls_back_to_socket() {
+        let c = make_config(true);
+        let h = headers_with(&[
+            ("CF-Connecting-IP", "bad"),
+            ("X-Forwarded-For", "also-bad"),
+        ]);
+        let ip = resolve_peer_ip(&c, &h, addr("10.0.0.1"));
+        assert_eq!(ip.to_string(), "10.0.0.1");
     }
 }

@@ -4,14 +4,16 @@
 // Exports: router
 // Depends: axum, tower-http, tower
 // Invariants: every HTML route carries the strict CSP; /auth/* carries
-//             Cache-Control: no-store.
-// Last updated: Sprint 2 (2026-04-17) -- add /loopback route
+//             Cache-Control: no-store. /healthz body is fixed JSON.
+// Last updated: Sprint 5 (2026-04-18) -- add /healthz, /turn-credentials
 
+pub mod health;
 pub mod loopback;
 pub mod security_headers;
 pub mod signup;
 pub mod static_assets;
 pub mod teach;
+pub mod turn;
 
 use std::sync::Arc;
 
@@ -32,6 +34,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/teach/:slug", get(teach::get_teach))
         .route("/loopback", get(loopback::get_loopback))
         .route("/ws", get(crate::ws::ws_upgrade))
+        .route("/healthz", get(health::get_healthz))
+        .route("/turn-credentials", get(turn::get_turn_credentials))
         .route("/", get(signup::get_root))
         .merge(static_assets::routes(&state.config))
         .layer(middleware::from_fn(move |req, next| {

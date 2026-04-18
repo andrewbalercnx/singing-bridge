@@ -101,6 +101,13 @@ pub async fn spawn_app_with(opts: TestOpts) -> TestApp {
     let mailer: Arc<dyn Mailer> = Arc::new(DevMailer::new(&config.dev_mail_dir).await.unwrap());
     let shutdown = CancellationToken::new();
 
+    let ws_join_rate_limits = std::sync::Arc::new(DashMap::new());
+    let sweeper_shutdown = shutdown.clone();
+    let sweeper_map = std::sync::Arc::clone(&ws_join_rate_limits);
+    let ws_join_rate_sweeper = tokio::spawn(async move {
+        sweeper_shutdown.cancelled().await;
+        drop(sweeper_map);
+    });
     let state = Arc::new(AppState {
         db: pool,
         config: config.clone(),
@@ -108,6 +115,10 @@ pub async fn spawn_app_with(opts: TestOpts) -> TestApp {
         rooms: DashMap::new(),
         active_rooms: std::sync::atomic::AtomicUsize::new(0),
         shutdown: shutdown.clone(),
+        ws_join_rate_limits,
+        ws_join_rate_sweeper,
+        turn_cred_rate_limits: std::sync::Arc::new(DashMap::new()),
+        session_log_pepper: None,
     });
 
     let app = router(state.clone()).into_make_service_with_connect_info::<SocketAddr>();

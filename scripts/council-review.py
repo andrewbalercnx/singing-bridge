@@ -934,31 +934,84 @@ def _round_context(round_num: int) -> str:
     )
 
 
+def _compact_tracker_content(tracker_content: str) -> str:
+    """Compact a verbose markdown tracker for AI consumption.
+
+    OPEN/REOPENED findings keep full description (reviewers must act on them).
+    Resolved findings (ADDRESSED/WONTFIX/VERIFIED/RECURRING) shrink to a
+    single line — reviewers only need the tag + status + resolution to avoid
+    re-flagging, not the original description.
+
+    Falls back to the raw text if the table cannot be parsed (e.g. empty
+    or malformed), so callers need no error handling.
+    """
+    if not tracker_content:
+        return tracker_content
+    findings: list[dict] = []
+    in_table = False
+    header_cols: list[str] = []
+    for line in tracker_content.splitlines():
+        if line.startswith("| #"):
+            in_table = True
+            header_cols = [c.strip().lower() for c in line.split("|")[1:-1]]
+            continue
+        if in_table and line.startswith("|---"):
+            continue
+        if in_table and line.startswith("|"):
+            parts = [p.strip() for p in line.split("|")[1:-1]]
+            if len(parts) >= 6:
+                col = {
+                    name: (parts[i] if i < len(parts) else "")
+                    for i, name in enumerate(header_cols)
+                }
+                findings.append({
+                    "id": parts[0],
+                    "round": parts[1],
+                    "severity": col.get("severity", ""),
+                    "lens": col.get("lens", "unknown"),
+                    "tag": col.get("tag", "untagged"),
+                    "description": col.get("finding", ""),
+                    "status": col.get("status", "OPEN"),
+                    "resolution": col.get("resolution", ""),
+                })
+        elif in_table and not line.startswith("|"):
+            in_table = False
+    if not findings:
+        return tracker_content
+    actionable = [f for f in findings if f["status"] in ("OPEN", "REOPENED")]
+    resolved = [f for f in findings if f["status"] not in ("OPEN", "REOPENED")]
+    lines: list[str] = []
+    if actionable:
+        lines.append("Open findings (require action):")
+        for f in actionable:
+            reopen = " [Reopened]" if f["status"] == "REOPENED" else ""
+            lines.append(
+                f"  #{f['id']} {f['round']} {f['severity']} {f['lens']}"
+                f" {f['tag']}{reopen}: {f['description']}"
+            )
+    if resolved:
+        lines.append("Resolved — do not re-flag unless new evidence:")
+        for f in resolved:
+            res = f": {f['resolution']}" if f["resolution"] else ""
+            lines.append(
+                f"  #{f['id']} {f['round']} {f['severity']} {f['lens']}"
+                f" {f['tag']} → {f['status']}{res}"
+            )
+    return "\n".join(lines)
+
+
 def _tracker_section(tracker_content: str | None, round_num: int) -> str:
     if not tracker_content or round_num <= 1:
         return ""
+    compact = _compact_tracker_content(tracker_content)
     return f"""
 
-## Prior Findings Tracker (MUST READ before writing findings)
+## Prior Findings Tracker (MUST READ)
 
-Findings below have already been resolved in this sprint. You MUST NOT re-flag
-a finding that is ADDRESSED, WONTFIX, or RECURRING unless you have SPECIFIC
-NEW EVIDENCE the prior resolution is wrong.
+Do NOT re-flag ADDRESSED, WONTFIX, or RECURRING items unless you have specific
+new evidence the prior resolution is wrong.
 
-- ADDRESSED: the editor fixed the finding. Do not re-flag unless you can
-  demonstrate the fix is incomplete or regressed.
-- WONTFIX: the finding was rejected with a justification in the Resolution
-  column. Do not re-flag unless you can refute that justification with
-  concrete evidence (e.g. an MCP query result contradicting it). Cite the
-  prior round number and quote the specific sentence you're refuting.
-- RECURRING: the item has been flagged 3+ times; it is accepted as Known
-  Debt. Do not re-flag.
-
-Before writing each new finding, check the tracker. Re-flags that ignore the
-prior Resolution column without new evidence will be excluded by the
-consolidator.
-
-{tracker_content}
+{compact}
 """
 
 
@@ -1130,12 +1183,13 @@ def _consolidator_assessment_sections(review_type: str) -> str:
 def _consolidator_tracker_section(tracker_content: str | None, round_num: int) -> str:
     if not tracker_content or round_num <= 1:
         return ""
+    compact = _compact_tracker_content(tracker_content)
     return f"""
 
 ## Prior Findings Tracker
-Items marked ADDRESSED have been fixed. Do NOT re-flag ADDRESSED items unless the fix is demonstrably incomplete.
+Do NOT re-flag ADDRESSED/WONTFIX/RECURRING items unless the fix is demonstrably incomplete.
 
-{tracker_content}
+{compact}
 """
 
 

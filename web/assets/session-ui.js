@@ -3,7 +3,7 @@
 //          control cluster, self-preview, muted banner, end-call dialog.
 // Role: Mounts the full live-session UI into a container element; wires to real
 //       Web Audio AnalyserNodes for RMS-driven breath ring and level meters.
-// Exports: window.sbSessionUI.mount(container, opts) → { teardown, setRemoteStream };
+// Exports: window.sbSessionUI.mount(container, opts) → { teardown, setRemoteStream, appendChatMsg };
 //          deriveToggleView (pure, Node-testable; relocated from controls.js);
 //          buildBaselineStrip, buildMutedBanner, runAudioLoop (exported for testing)
 // Depends: Web Audio API (AudioContext, AnalyserNode), DOM (video, dialog elements)

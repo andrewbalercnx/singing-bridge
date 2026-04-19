@@ -37,6 +37,8 @@
     // Teacher gate: skip if already checked this session.
     if (role === 'teacher' && typeof sessionStorage !== 'undefined') {
       if (sessionStorage.getItem(TEACHER_SESSION_KEY)) {
+        // Stop any provided stream immediately — OS camera/mic indicators should clear.
+        if (stream) stream.getTracks().forEach(function (t) { t.stop(); });
         onConfirm(false);
         return { teardown: function () {} };
       }
@@ -86,10 +88,15 @@
     hpLabel.append(hpCheck, hpText);
     hpWrap.appendChild(hpLabel);
 
-    // Confirm button.
+    // Confirm button — disabled until headphones checkbox is checked.
     var confirmBtn = el('button', 'sb-self-check-confirm');
     confirmBtn.type = 'button';
     confirmBtn.textContent = 'Ready';
+    confirmBtn.disabled = true;
+
+    hpCheck.addEventListener('change', function () {
+      confirmBtn.disabled = !hpCheck.checked;
+    });
 
     inner.append(heading, previewWrap, meterWrap, hpWrap, confirmBtn);
     overlay.appendChild(inner);

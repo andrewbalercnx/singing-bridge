@@ -189,6 +189,9 @@
         hideConsentBanner();
       },
     });
+    // Flush pending headphones confirmation: if the user confirmed before the
+    // WS handle was ready, the earlier sendHeadphonesConfirmed() was skipped.
+    if (headphonesConfirmedState && handle) handle.sendHeadphonesConfirmed();
     window.addEventListener('beforeunload', () => { if (handle) handle.hangup(); });
   });
 })();

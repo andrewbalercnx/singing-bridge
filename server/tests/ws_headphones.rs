@@ -65,6 +65,85 @@ async fn teacher_headphones_confirmed_rejected() {
 }
 
 // ---------------------------------------------------------------------------
+// Duplicate confirm idempotence — second confirm keeps state true
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn duplicate_headphones_confirmed_is_idempotent() {
+    let app = spawn_app().await;
+    let cookie = app.signup_teacher("t@example.test", "alice").await;
+
+    let mut teacher = app.open_ws(Some(&cookie), None).await;
+    send_ws(&mut teacher, &serde_json::json!({"type":"lobby_watch","slug":"alice"})).await;
+    let _ = recv_json(&mut teacher).await; // lobby_state (empty)
+
+    let mut student = app.open_ws(None, None).await;
+    send_ws(
+        &mut student,
+        &serde_json::json!({
+            "type":"lobby_join","slug":"alice",
+            "email":"s@example.test","browser":"F/1","device_class":"desktop"
+        }),
+    )
+    .await;
+    let _ = recv_json(&mut teacher).await; // lobby_state with student
+
+    // First confirm.
+    send_ws(&mut student, &serde_json::json!({"type":"headphones_confirmed"})).await;
+    let u1 = recv_json(&mut teacher).await;
+    assert_eq!(u1["entries"][0]["headphones_confirmed"], true);
+
+    // Second confirm — state already true; server still broadcasts an update.
+    send_ws(&mut student, &serde_json::json!({"type":"headphones_confirmed"})).await;
+    let u2 = recv_json(&mut teacher).await;
+    assert_eq!(u2["entries"][0]["headphones_confirmed"], true);
+}
+
+// ---------------------------------------------------------------------------
+// Post-admission confirm — entry has moved out of lobby → entry_not_found
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn headphones_confirmed_after_admission_returns_entry_not_found() {
+    let app = spawn_app().await;
+    let cookie = app.signup_teacher("t@example.test", "alice").await;
+
+    let mut teacher = app.open_ws(Some(&cookie), None).await;
+    send_ws(&mut teacher, &serde_json::json!({"type":"lobby_watch","slug":"alice"})).await;
+    let _ = recv_json(&mut teacher).await; // lobby_state
+
+    let mut student = app.open_ws(None, None).await;
+    send_ws(
+        &mut student,
+        &serde_json::json!({
+            "type":"lobby_join","slug":"alice",
+            "email":"s@example.test","browser":"F/1","device_class":"desktop"
+        }),
+    )
+    .await;
+
+    let update = recv_json(&mut teacher).await;
+    let entry_id = update["entries"][0]["id"].as_str().unwrap().to_string();
+
+    // Admit the student — this moves the entry from lobby to active_session.
+    send_ws(
+        &mut teacher,
+        &serde_json::json!({"type":"lobby_admit","slug":"alice","entry_id":entry_id}),
+    )
+    .await;
+    let _ = recv_json(&mut student).await; // admitted
+    let _ = recv_json(&mut student).await; // peer_connected
+    let _ = recv_json(&mut teacher).await; // peer_connected
+    let _ = recv_json(&mut teacher).await; // lobby_state (empty)
+
+    // Now student sends HeadphonesConfirmed — entry is gone from lobby.
+    send_ws(&mut student, &serde_json::json!({"type":"headphones_confirmed"})).await;
+    let err = recv_json(&mut student).await;
+    assert_eq!(err["type"], "error");
+    assert_eq!(err["code"], "entry_not_found");
+}
+
+// ---------------------------------------------------------------------------
 // Ordering guard — student sends HeadphonesConfirmed before LobbyJoin
 // ---------------------------------------------------------------------------
 

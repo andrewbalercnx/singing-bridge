@@ -93,6 +93,16 @@ async fn test_dev_teach_html_carries_debug_marker_student_view() {
     let _ = self_check_idx;
     let _ = lobby_toast_idx;
 
+    // Sprint 9: legacy static elements removed — assert their IDs are absent.
+    assert!(
+        !body.contains(r#"id="lobby-message-banner""#),
+        "student.html must not contain legacy #lobby-message-banner"
+    );
+    assert!(
+        !body.contains(r#"id="chat-panel""#),
+        "student.html must not contain legacy #chat-panel"
+    );
+
     drop(cookie);
     app.shutdown().await;
 }
@@ -161,6 +171,12 @@ async fn test_dev_teach_html_carries_debug_marker_teacher_view() {
     let t_chat_drawer = body.find(r#"src="/assets/chat-drawer.js""#).expect("teacher.html missing chat-drawer.js");
     assert!(t_chat_drawer < t_session_ui, "teacher: chat-drawer.js must load before session-ui.js");
     let _ = t_self_check;
+
+    // Sprint 9: legacy static chat panel removed from teacher.html.
+    assert!(
+        !body.contains(r#"id="chat-panel""#),
+        "teacher.html must not contain legacy #chat-panel"
+    );
 
     app.shutdown().await;
 }

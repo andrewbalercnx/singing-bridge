@@ -102,3 +102,4 @@ Thumbs.db
 
 # Current sprint marker (per-machine, transient)
 .current-sprint
+.wrangler/

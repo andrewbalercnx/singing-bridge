@@ -136,6 +136,14 @@ test('teacher: calls onConfirm(false) immediately when sessionStorage flag is se
   assert.equal(body.children.length, 0, 'no overlay appended when gated');
 });
 
+test('teacher: early-return stops all stream tracks to avoid media leak', () => {
+  const mod = freshMod();
+  _storage['sb-teacher-checked'] = '1';
+  const stream = makeStream(2);
+  mod.show(stream, { role: 'teacher', onConfirm() {} });
+  assert.ok(stream._tracks.every(t => t.stopped), 'tracks stopped on cache hit');
+});
+
 test('teacher: shows overlay when sessionStorage flag is NOT set', () => {
   const mod = freshMod();
   mod.show(makeStream(), { role: 'teacher', onConfirm() {} });
@@ -253,4 +261,22 @@ test('teardown() is idempotent (second call does not throw)', () => {
   const mod = freshMod();
   const handle = mod.show(makeStream(), { role: 'student', onConfirm() {} });
   assert.doesNotThrow(() => { handle.teardown(); handle.teardown(); });
+});
+
+// ---------------------------------------------------------------------------
+// Null-stream degraded-render path
+// ---------------------------------------------------------------------------
+
+test('show() with null stream renders overlay without error', () => {
+  const mod = freshMod();
+  assert.doesNotThrow(() => {
+    mod.show(null, { role: 'student', onConfirm() {} });
+  });
+  assert.equal(body.children.length, 1, 'overlay appended even without stream');
+});
+
+test('show() with null stream: teardown() does not throw', () => {
+  const mod = freshMod();
+  const handle = mod.show(null, { role: 'student', onConfirm() {} });
+  assert.doesNotThrow(() => handle.teardown());
 });

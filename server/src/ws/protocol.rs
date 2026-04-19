@@ -272,6 +272,7 @@ mod tests {
                 entry_id: EntryId::new(),
                 text: "be right with you".into(),
             },
+            ClientMsg::HeadphonesConfirmed,
         ];
         for c in cases {
             let s = serde_json::to_string(&c).unwrap();
@@ -279,6 +280,23 @@ mod tests {
             let again = serde_json::to_string(&back).unwrap();
             assert_eq!(s, again);
         }
+    }
+
+    #[test]
+    fn lobby_entry_view_defaults_headphones_confirmed_absent() {
+        // Backward-compat: a LobbyEntryView payload without headphones_confirmed
+        // must deserialise with headphones_confirmed = false (via #[serde(default)]).
+        let json = serde_json::json!({
+            "id": "00000000-0000-0000-0000-000000000000",
+            "email": "s@example.test",
+            "browser": "Firefox/1",
+            "device_class": "desktop",
+            "tier": "supported",
+            "tier_reason": null,
+            "joined_at_unix": 0,
+        });
+        let view: LobbyEntryView = serde_json::from_value(json).unwrap();
+        assert!(!view.headphones_confirmed);
     }
 
     #[test]

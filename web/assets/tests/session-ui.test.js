@@ -1,8 +1,8 @@
 // File: web/assets/tests/session-ui.test.js
-// Purpose: Unit tests for session-ui.js helpers: fmtTime, deriveToggleView,
+// Purpose: Unit tests for session-ui.js: fmtTime, deriveToggleView,
 //          buildBaselineStrip (setElapsed, setLevels), buildMutedBanner
 //          (checkAndUpdate), runAudioLoop onFrame contract, mount lifecycle.
-// Last updated: Sprint 8 (2026-04-19) -- initial coverage
+// Last updated: Sprint 8 (2026-04-19) -- tests call actual shipped functions
 
 'use strict';
 
@@ -13,80 +13,76 @@ const assert = require('node:assert/strict');
 // DOM stubs — minimal surface that session-ui.js needs in Node
 // ---------------------------------------------------------------------------
 
-function makeDomStubs() {
-  global.requestAnimationFrame = function (cb) {
-    const id = ++rafIdCounter;
-    setImmediate(cb);
-    return id;
-  };
-  global.cancelAnimationFrame = function () {};
-  rafIdCounter = 0;
+let rafIdCounter = 0;
+global.requestAnimationFrame = function (cb) {
+  const id = ++rafIdCounter;
+  setImmediate(cb);
+  return id;
+};
+global.cancelAnimationFrame = function () {};
 
-  // Minimal element that tracks textContent, hidden, className, style, children
-  function makeEl(tag) {
-    const attrs = {};
-    const children = [];
-    let textContent = '';
-    const style = {};
-    const el = {
-      tag,
-      get textContent() { return textContent; },
-      set textContent(v) { textContent = String(v); },
-      get hidden() { return attrs.hidden === true; },
-      set hidden(v) { attrs.hidden = v; },
-      className: '',
-      style,
-      children,
-      parentNode: null,
-      appendChild(child) {
-        if (child && typeof child === 'object') child.parentNode = el;
-        children.push(child);
-        return child;
-      },
-      removeChild(child) {
-        const idx = children.indexOf(child);
-        if (idx !== -1) children.splice(idx, 1);
-      },
-      append(...items) {
-        for (const item of items) children.push(item);
-      },
-      replaceChildren(...items) {
-        children.length = 0;
-        for (const item of items) children.push(item);
-      },
-      setAttribute(k, v) { attrs[k] = v; },
-      getAttribute(k) { return attrs[k]; },
-      addEventListener() {},
-      removeEventListener() {},
-      play() { return Promise.resolve(); },
-    };
-    return el;
-  }
-
-  global.document = {
-    createElement(tag) { return makeEl(tag); },
-    createElementNS(_ns, tag) { return makeEl(tag); },
-    createTextNode(text) { return { textContent: text, tag: '#text' }; },
+function makeEl(tag) {
+  const attrs = {};
+  const children = [];
+  let textContent = '';
+  const style = {};
+  const el = {
+    tag,
+    get textContent() { return textContent; },
+    set textContent(v) { textContent = String(v); },
+    get hidden() { return attrs.hidden === true; },
+    set hidden(v) { attrs.hidden = v; },
+    className: '',
+    style,
+    children,
+    parentNode: null,
+    innerHTML: '',
+    appendChild(child) {
+      if (child && typeof child === 'object') child.parentNode = el;
+      children.push(child);
+      return child;
+    },
+    removeChild(child) {
+      const idx = children.indexOf(child);
+      if (idx !== -1) children.splice(idx, 1);
+    },
+    append(...items) { for (const item of items) children.push(item); },
+    replaceChildren(...items) { children.length = 0; for (const item of items) children.push(item); },
+    setAttribute(k, v) { attrs[k] = v; },
+    getAttribute(k) { return attrs[k]; },
+    addEventListener(ev, fn) { (attrs['_ev_' + ev] = attrs['_ev_' + ev] || []).push(fn); },
+    removeEventListener() {},
+    dispatchClick() { (attrs['_ev_click'] || []).forEach(fn => fn()); },
+    close() {},
+    showModal() { attrs.open = true; },
+    play() { return Promise.resolve(); },
   };
-
-  global.AudioContext = class {
-    constructor() { this.closed = false; this.closeCalls = 0; }
-    createAnalyser() {
-      return {
-        frequencyBinCount: 128,
-        getByteTimeDomainData(buf) { buf.fill(128); },
-        disconnect() {},
-      };
-    }
-    createMediaStreamSource(_stream) {
-      return { connect() {}, disconnect() {} };
-    }
-    close() { this.closeCalls++; this.closed = true; }
-  };
+  return el;
 }
 
-let rafIdCounter = 0;
-makeDomStubs();
+global.document = {
+  createElement(tag) { return makeEl(tag); },
+  createElementNS(_ns, tag) { return makeEl(tag); },
+  createTextNode(text) { return { textContent: text, tag: '#text' }; },
+};
+
+global.clearTimeout = clearTimeout;
+global.setTimeout = setTimeout;
+global.setInterval = setInterval;
+global.clearInterval = clearInterval;
+
+global.AudioContext = class {
+  constructor() { this.closeCalls = 0; }
+  createAnalyser() {
+    return {
+      frequencyBinCount: 4,
+      getByteTimeDomainData(buf) { buf.fill(128); },
+      disconnect() {},
+    };
+  }
+  createMediaStreamSource() { return { connect() {}, disconnect() {} }; }
+  close() { this.closeCalls++; }
+};
 
 const mod = require('../session-ui.js');
 
@@ -94,24 +90,22 @@ const mod = require('../session-ui.js');
 // fmtTime
 // ---------------------------------------------------------------------------
 
-test('fmtTime: 0 → "0:00"', () => { assert.equal(mod.fmtTime(0), '0:00'); });
-test('fmtTime: 65 → "1:05"', () => { assert.equal(mod.fmtTime(65), '1:05'); });
-test('fmtTime: 3661 → "1:01:01"', () => { assert.equal(mod.fmtTime(3661), '1:01:01'); });
-test('fmtTime: -5 → "0:00" (clamp negative)', () => { assert.equal(mod.fmtTime(-5), '0:00'); });
-test('fmtTime: NaN → "0:00" (clamp non-finite)', () => { assert.equal(mod.fmtTime(NaN), '0:00'); });
-test('fmtTime: Infinity → "0:00"', () => { assert.equal(mod.fmtTime(Infinity), '0:00'); });
+test('fmtTime: 0 → "0:00"', () => assert.equal(mod.fmtTime(0), '0:00'));
+test('fmtTime: 65 → "1:05"', () => assert.equal(mod.fmtTime(65), '1:05'));
+test('fmtTime: 3661 → "1:01:01"', () => assert.equal(mod.fmtTime(3661), '1:01:01'));
+test('fmtTime: -5 → "0:00" (clamp negative)', () => assert.equal(mod.fmtTime(-5), '0:00'));
+test('fmtTime: NaN → "0:00" (clamp non-finite)', () => assert.equal(mod.fmtTime(NaN), '0:00'));
+test('fmtTime: Infinity → "0:00"', () => assert.equal(mod.fmtTime(Infinity), '0:00'));
 
 // ---------------------------------------------------------------------------
 // deriveToggleView (relocated from controls.js)
 // ---------------------------------------------------------------------------
 
 test('deriveToggleView: enabled=true → onLabel, ariaPressed=false', () => {
-  const v = mod.deriveToggleView(true, 'Mute', 'Unmute');
-  assert.deepEqual(v, { label: 'Mute', ariaPressed: 'false' });
+  assert.deepEqual(mod.deriveToggleView(true, 'Mute', 'Unmute'), { label: 'Mute', ariaPressed: 'false' });
 });
 test('deriveToggleView: enabled=false → offLabel, ariaPressed=true', () => {
-  const v = mod.deriveToggleView(false, 'Mute', 'Unmute');
-  assert.deepEqual(v, { label: 'Unmute', ariaPressed: 'true' });
+  assert.deepEqual(mod.deriveToggleView(false, 'Mute', 'Unmute'), { label: 'Unmute', ariaPressed: 'true' });
 });
 test('deriveToggleView: null treated as disabled', () => {
   const v = mod.deriveToggleView(null, 'On', 'Off');
@@ -120,24 +114,82 @@ test('deriveToggleView: null treated as disabled', () => {
 });
 
 // ---------------------------------------------------------------------------
-// buildBaselineStrip: setElapsed integration test
+// buildBaselineStrip: setElapsed integration test (calls actual shipped function)
 // ---------------------------------------------------------------------------
 
-test('buildBaselineStrip.setElapsed(65) renders "1:05"', () => {
-  // Access the internal buildBaselineStrip via a test mount
-  // We reach it indirectly: fmtTime(65) === "1:05" and baseline calls fmtTime.
-  // Direct verification: call fmtTime and confirm same result the strip would show.
-  assert.equal(mod.fmtTime(65), '1:05');
+test('buildBaselineStrip.setElapsed(65) renders "1:05" in elapsed text node', () => {
+  const strip = mod.buildBaselineStrip();
+  strip.setElapsed(65);
+  // midEl is the second child of meterRow (first child of strip.node)
+  const meterRow = strip.node.children[0];
+  const midEl = meterRow.children[1];
+  assert.equal(midEl.textContent, '1:05');
+});
+
+test('buildBaselineStrip.setElapsed(0) renders "0:00"', () => {
+  const strip = mod.buildBaselineStrip();
+  strip.setElapsed(0);
+  const midEl = strip.node.children[0].children[1];
+  assert.equal(midEl.textContent, '0:00');
 });
 
 // ---------------------------------------------------------------------------
-// runAudioLoop onFrame contract
+// buildMutedBanner: checkAndUpdate actual shipped function
 // ---------------------------------------------------------------------------
 
-test('runAudioLoop calls onFrame with (selfRms, remoteRms) from analysers', (t, done) => {
-  // Stub analysers with known byte arrays that produce known RMS values.
-  // An analyser returning all 128 (silence) → RMS = 0.
-  // An analyser returning alternating 0/255 → RMS > 0.
+test('muted banner: fewer than MUTE_DETECT_FRAMES frames → no show', () => {
+  const banner = mod.buildMutedBanner();
+  // 3 frames with rms > threshold, mic disabled
+  for (let i = 0; i < 3; i++) banner.checkAndUpdate(false, 0.9);
+  assert.equal(banner.node.hidden, true, 'banner must stay hidden after only 3 frames');
+});
+
+test('muted banner: exactly 4 frames → shows', () => {
+  const banner = mod.buildMutedBanner();
+  for (let i = 0; i < 4; i++) banner.checkAndUpdate(false, 0.9);
+  assert.equal(banner.node.hidden, false, 'banner must show after 4 frames');
+});
+
+test('muted banner: below threshold frames do not accumulate', () => {
+  const banner = mod.buildMutedBanner();
+  banner.checkAndUpdate(false, 0.01);
+  banner.checkAndUpdate(false, 0.01);
+  banner.checkAndUpdate(false, 0.9);  // only 1 frame above threshold
+  assert.equal(banner.node.hidden, true, 'frames below threshold reset the counter');
+});
+
+test('muted banner: micEnabled=true hides immediately', () => {
+  const banner = mod.buildMutedBanner();
+  for (let i = 0; i < 4; i++) banner.checkAndUpdate(false, 0.9);
+  assert.equal(banner.node.hidden, false);
+  banner.checkAndUpdate(true, 0.9);
+  assert.equal(banner.node.hidden, true, 'mic unmuted must hide banner immediately');
+});
+
+// ---------------------------------------------------------------------------
+// runAudioLoop: actual function tested with stub analysers
+// ---------------------------------------------------------------------------
+
+test('runAudioLoop: null analysers yield onFrame(0, 0)', (t, done) => {
+  let called = false;
+  // Use synchronous RAF: override to call once immediately
+  const origRAF = global.requestAnimationFrame;
+  global.requestAnimationFrame = function (cb) { setImmediate(cb); return ++rafIdCounter; };
+
+  const loop = mod.runAudioLoop(null, null, function (selfRms, remoteRms) {
+    if (called) return;
+    called = true;
+    assert.equal(selfRms, 0, 'selfRms must be 0 for null analyser');
+    assert.equal(remoteRms, 0, 'remoteRms must be 0 for null analyser');
+    loop.stop();
+    global.requestAnimationFrame = origRAF;
+    done();
+  });
+});
+
+test('runAudioLoop: non-null analyser produces correct selfRms first, remoteRms second', (t, done) => {
+  // selfAnalyser: all 128 → RMS = 0
+  // remoteAnalyser: alternating 0/255 → RMS > 0
   const selfAnalyser = {
     frequencyBinCount: 4,
     getByteTimeDomainData(buf) { buf[0]=128; buf[1]=128; buf[2]=128; buf[3]=128; },
@@ -145,80 +197,50 @@ test('runAudioLoop calls onFrame with (selfRms, remoteRms) from analysers', (t, 
   };
   const remoteAnalyser = {
     frequencyBinCount: 4,
-    // (0-128)/128 = -1, (255-128)/128 ≈ 1 → RMS ≈ 1.0 for 2 samples
     getByteTimeDomainData(buf) { buf[0]=0; buf[1]=255; buf[2]=0; buf[3]=255; },
     disconnect() {},
   };
-
-  // Override RAF to call synchronously once then stop
-  let frameCount = 0;
+  let called = false;
   const origRAF = global.requestAnimationFrame;
-  global.requestAnimationFrame = function (cb) {
-    if (frameCount++ === 0) setImmediate(cb);
-    return frameCount;
-  };
+  global.requestAnimationFrame = function (cb) { setImmediate(cb); return ++rafIdCounter; };
 
-  const { fmtTime: _f, deriveToggleView: _d, ...rest } = mod;
-  // Access runAudioLoop via internals: we need to call it directly.
-  // Since it is not exported, we test the contract through mount's onFrame.
-  // Instead, we'll test the RMS formula directly using the module's exported fmtTime
-  // as a proxy that the module loaded correctly, and verify the contract inline.
+  const loop = mod.runAudioLoop(selfAnalyser, remoteAnalyser, function (selfRms, remoteRms) {
+    if (called) return;
+    called = true;
+    assert.equal(selfRms, 0, 'selfRms: all-128 analyser → 0');
+    assert.ok(remoteRms > 0.9, 'remoteRms: 0/255 alternating → ~1.0, got ' + remoteRms);
+    loop.stop();
+    global.requestAnimationFrame = origRAF;
+    done();
+  });
+});
 
-  // Direct formula test: mirror rmsFromAnalyser logic
-  function rmsFrom(buf) {
-    let sum = 0;
-    for (let i = 0; i < buf.length; i++) {
-      const v = (buf[i] - 128) / 128;
-      sum += v * v;
-    }
-    return Math.sqrt(sum / buf.length);
-  }
-  const selfBuf = new Uint8Array(4); selfBuf.fill(128);
-  const remoteBuf = new Uint8Array(4); remoteBuf[0]=0; remoteBuf[1]=255; remoteBuf[2]=0; remoteBuf[3]=255;
-  assert.equal(rmsFrom(selfBuf), 0);
-  assert.ok(rmsFrom(remoteBuf) > 0.9, 'remote RMS should be close to 1.0');
+test('runAudioLoop: stop() prevents further onFrame calls', (t, done) => {
+  let calls = 0;
+  const origRAF = global.requestAnimationFrame;
+  const callbacks = [];
+  global.requestAnimationFrame = function (cb) { callbacks.push(cb); return ++rafIdCounter; };
+  global.cancelAnimationFrame = function () { callbacks.length = 0; };
 
+  const loop = mod.runAudioLoop(null, null, function () { calls++; });
+  loop.stop();
+  // Drain any queued callbacks
+  const saved = [...callbacks]; callbacks.length = 0;
+  saved.forEach(fn => fn());
+  assert.equal(calls, 0, 'no frames must fire after stop()');
   global.requestAnimationFrame = origRAF;
+  global.cancelAnimationFrame = function () {};
   done();
 });
 
 // ---------------------------------------------------------------------------
-// Muted banner: checkAndUpdate logic
-// ---------------------------------------------------------------------------
-
-test('muted banner: fewer than MUTE_DETECT_FRAMES frames → no show', () => {
-  // We verify the logic via fmtTime + the inline spec; the banner itself
-  // requires a full DOM mount. This tests the frame-count gate conceptually:
-  // 3 frames below threshold should not trigger (MUTE_DETECT_FRAMES = 4).
-  // We do a logical assertion based on the constant.
-  const MUTE_DETECT_FRAMES = 4;
-  let frames = 0;
-  let shown = false;
-  for (let i = 0; i < 3; i++) {
-    if (++frames >= MUTE_DETECT_FRAMES) shown = true;
-  }
-  assert.equal(shown, false);
-});
-
-test('muted banner: exactly MUTE_DETECT_FRAMES frames → triggers', () => {
-  const MUTE_DETECT_FRAMES = 4;
-  let frames = 0;
-  let shown = false;
-  for (let i = 0; i < 4; i++) {
-    if (++frames >= MUTE_DETECT_FRAMES) shown = true;
-  }
-  assert.equal(shown, true);
-});
-
-// ---------------------------------------------------------------------------
-// teardown: audioCtx.close() called exactly once
+// mount: teardown calls audioCtx.close() exactly once (idempotent)
 // ---------------------------------------------------------------------------
 
 test('mount teardown calls audioCtx.close() exactly once', () => {
   let closeCalls = 0;
-  const origAudioContext = global.AudioContext;
+  const origAC = global.AudioContext;
   global.AudioContext = class {
-    constructor() { this.closeCalls = 0; }
     createAnalyser() {
       return { frequencyBinCount: 4, getByteTimeDomainData(b) { b.fill(128); }, disconnect() {} };
     }
@@ -227,65 +249,16 @@ test('mount teardown calls audioCtx.close() exactly once', () => {
   };
 
   const container = document.createElement('div');
-  const h = mod.mount(container, {
-    role: 'student',
-    remoteName: 'Teacher',
-    remoteRoleLabel: 'Your teacher',
-    localStream: null,
-    remoteStream: null,
-    headphonesConfirmed: false,
-    micEnabled: true,
-    videoEnabled: true,
-    onMicToggle() {},
-    onVideoToggle() {},
-    onEnd() {},
-    onNote() {},
-    onSay() {},
-  });
-
+  const h = mod.mount(container, defaultOpts());
   h.teardown();
-  assert.equal(closeCalls, 1, 'audioCtx.close() must be called exactly once on teardown');
-
+  assert.equal(closeCalls, 1, 'close() called once');
   h.teardown(); // idempotent
-  assert.equal(closeCalls, 1, 'audioCtx.close() must not be called again on second teardown');
-
-  global.AudioContext = origAudioContext;
+  assert.equal(closeCalls, 1, 'close() not called again on second teardown');
+  global.AudioContext = origAC;
 });
 
 // ---------------------------------------------------------------------------
-// XSS: peer-supplied names must not execute as markup
-// ---------------------------------------------------------------------------
-
-test('XSS: remoteName with script payload renders as literal text, not markup', () => {
-  let executed = false;
-  global.xssCheck = function () { executed = true; };
-
-  const container = document.createElement('div');
-  const h = mod.mount(container, {
-    role: 'teacher',
-    remoteName: '<img src=x onerror="xssCheck()">',
-    remoteRoleLabel: '<script>xssCheck()</script>',
-    localStream: null,
-    remoteStream: null,
-    headphonesConfirmed: false,
-    micEnabled: true,
-    videoEnabled: true,
-    onMicToggle() {},
-    onVideoToggle() {},
-    onEnd() {},
-    onNote() {},
-    onSay() {},
-  });
-
-  // In the stub DOM, innerHTML is never called — only textContent — so xssCheck
-  // is never executed. Just verify it was never called.
-  assert.equal(executed, false, 'XSS payload must not execute');
-  h.teardown();
-  delete global.xssCheck;
-});
-
-// ---------------------------------------------------------------------------
-// null localStream: mounts without error, no muted banner activity
+// mount: null localStream mounts without error, no muted banner
 // ---------------------------------------------------------------------------
 
 test('mount with localStream: null mounts without error', () => {
@@ -293,47 +266,113 @@ test('mount with localStream: null mounts without error', () => {
   let threw = false;
   let h;
   try {
-    h = mod.mount(container, {
-      role: 'student',
-      remoteName: 'Teacher',
-      remoteRoleLabel: 'Your teacher',
-      localStream: null,
-      remoteStream: null,
-      headphonesConfirmed: false,
-      micEnabled: true,
-      videoEnabled: true,
-      onMicToggle() {},
-      onVideoToggle() {},
-      onEnd() {},
-      onNote() {},
-      onSay() {},
-    });
-  } catch (e) {
-    threw = true;
-  }
-  assert.equal(threw, false, 'mount with null localStream must not throw');
+    h = mod.mount(container, Object.assign(defaultOpts(), { localStream: null }));
+  } catch (e) { threw = true; }
+  assert.equal(threw, false);
   if (h) h.teardown();
 });
 
 // ---------------------------------------------------------------------------
-// setRemoteStream: only one RAF loop after swap
+// mount: XSS — peer name must not execute injected payload
 // ---------------------------------------------------------------------------
 
-test('setRemoteStream replaces loop without stacking', () => {
-  let activeLoops = 0;
+test('XSS: remoteName with script payload does not execute', () => {
+  let executed = false;
+  global.xssCheck = function () { executed = true; };
+  const container = document.createElement('div');
+  const h = mod.mount(container, Object.assign(defaultOpts(), {
+    remoteName: '<img src=x onerror="xssCheck()">',
+    remoteRoleLabel: '<script>xssCheck()</script>',
+  }));
+  assert.equal(executed, false, 'XSS payload must not execute');
+  h.teardown();
+  delete global.xssCheck;
+});
+
+// ---------------------------------------------------------------------------
+// setRemoteStream: no loop stacking after swap
+// ---------------------------------------------------------------------------
+
+test('setRemoteStream does not stack RAF loops', () => {
+  let netLoops = 0;
   const origRAF = global.requestAnimationFrame;
   const origCAF = global.cancelAnimationFrame;
-  global.requestAnimationFrame = function () { activeLoops++; return activeLoops; };
-  global.cancelAnimationFrame = function () { activeLoops = Math.max(0, activeLoops - 1); };
+  global.requestAnimationFrame = function () { netLoops++; return netLoops; };
+  global.cancelAnimationFrame = function () { netLoops = Math.max(0, netLoops - 1); };
 
   const container = document.createElement('div');
-  const h = mod.mount(container, {
+  const h = mod.mount(container, defaultOpts());
+  const after_mount = netLoops;
+  h.setRemoteStream(null);
+  assert.ok(netLoops <= after_mount + 1, 'at most one net new RAF loop after setRemoteStream');
+  h.teardown();
+  global.requestAnimationFrame = origRAF;
+  global.cancelAnimationFrame = origCAF;
+});
+
+// ---------------------------------------------------------------------------
+// button click callbacks
+// ---------------------------------------------------------------------------
+
+test('mic button click calls onMicToggle', () => {
+  let calls = 0;
+  const container = document.createElement('div');
+  const h = mod.mount(container, Object.assign(defaultOpts(), { onMicToggle() { calls++; } }));
+  // controls node is the first child of .sb-bottom, which is the third child of root
+  const root = container.children[0];
+  const bottom = root.children[2];
+  const controls = bottom.children[0];
+  const micBtn = controls.children[0];
+  micBtn.dispatchClick();
+  assert.equal(calls, 1, 'onMicToggle must be called on mic button click');
+  h.teardown();
+});
+
+test('video button click calls onVideoToggle', () => {
+  let calls = 0;
+  const container = document.createElement('div');
+  const h = mod.mount(container, Object.assign(defaultOpts(), { onVideoToggle() { calls++; } }));
+  const bottom = container.children[0].children[2];
+  const vidBtn = bottom.children[0].children[1];
+  vidBtn.dispatchClick();
+  assert.equal(calls, 1, 'onVideoToggle must be called on video button click');
+  h.teardown();
+});
+
+test('note button click calls onNote', () => {
+  let calls = 0;
+  const container = document.createElement('div');
+  const h = mod.mount(container, Object.assign(defaultOpts(), { onNote() { calls++; } }));
+  const bottom = container.children[0].children[2];
+  const noteBtn = bottom.children[0].children[2];
+  noteBtn.dispatchClick();
+  assert.equal(calls, 1, 'onNote must be called on note button click');
+  h.teardown();
+});
+
+test('say button click calls onSay', () => {
+  let calls = 0;
+  const container = document.createElement('div');
+  const h = mod.mount(container, Object.assign(defaultOpts(), { onSay() { calls++; } }));
+  const bottom = container.children[0].children[2];
+  const sayBtn = bottom.children[0].children[3];
+  sayBtn.dispatchClick();
+  assert.equal(calls, 1, 'onSay must be called on say button click');
+  h.teardown();
+});
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function defaultOpts() {
+  return {
     role: 'teacher',
     remoteName: 'Alex',
     remoteRoleLabel: 'Student',
     localStream: null,
     remoteStream: null,
-    headphonesConfirmed: true,
+    headphonesConfirmed: false,
     micEnabled: true,
     videoEnabled: true,
     onMicToggle() {},
@@ -341,14 +380,5 @@ test('setRemoteStream replaces loop without stacking', () => {
     onEnd() {},
     onNote() {},
     onSay() {},
-  });
-
-  const loopsAfterMount = activeLoops;
-  h.setRemoteStream(null);
-  // After setRemoteStream, net loop count should not have increased beyond 1
-  assert.ok(activeLoops <= loopsAfterMount + 1, 'at most one net new RAF loop after setRemoteStream');
-
-  h.teardown();
-  global.requestAnimationFrame = origRAF;
-  global.cancelAnimationFrame = origCAF;
-});
+  };
+}

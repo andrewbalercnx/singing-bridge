@@ -4,9 +4,12 @@
 // Role: Mounts the full live-session UI into a container element; wires to real
 //       Web Audio AnalyserNodes for RMS-driven breath ring and level meters.
 // Exports: window.sbSessionUI.mount(container, opts) → { teardown, setRemoteStream };
-//          deriveToggleView (pure, Node-testable; relocated from controls.js)
+//          deriveToggleView (pure, Node-testable; relocated from controls.js);
+//          buildBaselineStrip, buildMutedBanner, runAudioLoop (exported for testing)
 // Depends: Web Audio API (AudioContext, AnalyserNode), DOM (video, dialog elements)
-// Invariants: all peer-supplied strings rendered via .textContent only (no innerHTML);
+// Invariants: peer-supplied strings (remoteName, remoteRoleLabel, "You") rendered via
+//             .textContent only; svgIcon uses innerHTML for hardcoded literal SVG
+//             paths only (no user input reaches innerHTML);
 //             exactly one RAF loop per mount; teardown is idempotent;
 //             mount is an orchestrator only (≤40 lines of own logic).
 // Last updated: Sprint 8 (2026-04-19) -- initial implementation
@@ -18,7 +21,10 @@
     module.exports = mod;
   }
   if (typeof window !== 'undefined') {
-    window.sbSessionUI = { mount: mod.mount, deriveToggleView: mod.deriveToggleView };
+    window.sbSessionUI = {
+      mount: mod.mount,
+      deriveToggleView: mod.deriveToggleView,
+    };
   }
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
@@ -57,7 +63,7 @@
   var MUTE_DETECT_FRAMES = 4;
   var MUTE_BANNER_MS = 3000;
 
-  // ---- DOM element factory helpers ----
+  // ---- DOM helpers ----
 
   function el(tag, cls) {
     var e = document.createElement(tag);
@@ -66,6 +72,7 @@
   }
 
   function svgIcon(name) {
+    // innerHTML used here only for hardcoded SVG literal paths (no user input).
     var s = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     s.setAttribute('width', '18'); s.setAttribute('height', '18');
     s.setAttribute('viewBox', '0 0 24 24');
@@ -74,33 +81,21 @@
     s.setAttribute('stroke-width', '1.6');
     s.setAttribute('aria-hidden', 'true');
     var paths = {
-      mic:  ['<rect x="9" y="3" width="6" height="12" rx="3"/>',
-             '<path d="M5 11a7 7 0 0014 0"/>',
-             '<path d="M12 18v3"/>'],
-      'mic-off': ['<rect x="9" y="3" width="6" height="12" rx="3" opacity=".4"/>',
-                  '<path d="M5 11a7 7 0 0014 0" opacity=".4"/>',
-                  '<path d="M12 18v3"/>',
-                  '<line x1="4" y1="4" x2="20" y2="20"/>'],
-      vid:  ['<rect x="3" y="6" width="13" height="12" rx="2"/>',
-             '<path d="M16 10l5-3v10l-5-3z"/>'],
-      'vid-off': ['<rect x="3" y="6" width="13" height="12" rx="2" opacity=".4"/>',
-                  '<path d="M16 10l5-3v10l-5-3z" opacity=".4"/>',
-                  '<line x1="4" y1="4" x2="20" y2="20"/>'],
-      note: ['<path d="M9 18V5l10-2v13"/>',
-             '<circle cx="6" cy="18" r="3"/>',
-             '<circle cx="16" cy="16" r="3"/>'],
-      chat: ['<path d="M4 5h16v11H8l-4 4z"/>'],
-      end:  ['<path d="M3 13a13 13 0 0118 0l-2 3-4-1-1-3a10 10 0 00-4 0l-1 3-4 1z"/>'],
+      mic:      '<rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0014 0"/><path d="M12 18v3"/>',
+      'mic-off':'<rect x="9" y="3" width="6" height="12" rx="3" opacity=".4"/><path d="M5 11a7 7 0 0014 0" opacity=".4"/><path d="M12 18v3"/><line x1="4" y1="4" x2="20" y2="20"/>',
+      vid:      '<rect x="3" y="6" width="13" height="12" rx="2"/><path d="M16 10l5-3v10l-5-3z"/>',
+      'vid-off':'<rect x="3" y="6" width="13" height="12" rx="2" opacity=".4"/><path d="M16 10l5-3v10l-5-3z" opacity=".4"/><line x1="4" y1="4" x2="20" y2="20"/>',
+      note:     '<path d="M9 18V5l10-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="16" cy="16" r="3"/>',
+      chat:     '<path d="M4 5h16v11H8l-4 4z"/>',
+      end:      '<path d="M3 13a13 13 0 0118 0l-2 3-4-1-1-3a10 10 0 00-4 0l-1 3-4 1z"/>',
     };
-    var parts = paths[name] || [];
-    s.innerHTML = parts.join('');
+    s.innerHTML = paths[name] || '';
     return s;
   }
 
   // ---- Subcomponent builders ----
 
   function buildRemotePanel(opts) {
-    // opts: { remoteName, remoteRoleLabel, headphonesConfirmed }
     var wrap = el('div', 'sb-remote-panel');
     var ring = el('div', 'sb-breath-ring');
     var vid = document.createElement('video');
@@ -115,15 +110,12 @@
     hpText.textContent = opts.headphonesConfirmed ? 'Headphones on' : 'No headphones';
     hpChip.append(hpDot, hpText);
     wrap.append(ring, vid, namePlate, hpChip);
-
     var smoothLevel = 0;
-    var ATTACK = 0.2, RELEASE = 0.02;
-
     return {
       node: wrap,
       videoEl: vid,
       setRingLevel: function (rms) {
-        // 1-pole low-pass: attack ~20ms at 60fps, release ~200ms
+        var ATTACK = 0.2, RELEASE = 0.02;
         smoothLevel = rms > smoothLevel
           ? smoothLevel + (rms - smoothLevel) * ATTACK
           : smoothLevel + (rms - smoothLevel) * RELEASE;
@@ -147,7 +139,6 @@
     var remoteMeter = buildMeterBar('', 'right');
     meterRow.append(selfMeter.node, midEl, remoteMeter.node);
     strip.append(meterRow);
-
     return {
       node: strip,
       setLevels: function (selfRms, remoteRms) {
@@ -179,11 +170,9 @@
       setLevel: function (level) {
         var active = Math.round(level * n);
         for (var i = 0; i < n; i++) {
-          if (i < active) {
-            pips[i].style.background = i < n * 0.6 ? '#F3ECE0' : i < n * 0.85 ? '#E3A950' : '#E17F8B';
-          } else {
-            pips[i].style.background = 'rgba(251,246,239,0.15)';
-          }
+          pips[i].style.background = i < active
+            ? (i < n * 0.6 ? '#F3ECE0' : i < n * 0.85 ? '#E3A950' : '#E17F8B')
+            : 'rgba(251,246,239,0.15)';
         }
       },
       setLabel: function (text) { labelEl.textContent = text; },
@@ -191,24 +180,9 @@
   }
 
   function buildControls(opts) {
-    // opts: { micEnabled, videoEnabled, onMicToggle, onVideoToggle, onEnd, onNote, onSay }
     var wrap = el('div', 'sb-controls');
     var micActive = !!opts.micEnabled;
     var vidActive = !!opts.videoEnabled;
-
-    var micBtn   = makeBtn(micActive ? 'mic' : 'mic-off', 'Mic',   micActive,  false);
-    var vidBtn   = makeBtn('vid',   'Video', vidActive,  false);
-    var noteBtn  = makeBtn('note',  'Note',  false,      false);
-    var sayBtn   = makeBtn('chat',  'Say',   false,      false);
-    var endBtn   = makeBtn('end',   'End',   false,      true);
-
-    micBtn.addEventListener('click', function () { opts.onMicToggle(); });
-    vidBtn.addEventListener('click', function () { opts.onVideoToggle(); });
-    noteBtn.addEventListener('click', function () { opts.onNote(); });
-    sayBtn.addEventListener('click', function () { opts.onSay(); });
-    endBtn.addEventListener('click', function () { opts.onEnd(); });
-
-    wrap.append(micBtn, vidBtn, noteBtn, sayBtn, endBtn);
 
     function makeBtn(icon, label, active, isEnd) {
       var b = el('button', 'sb-btn' + (isEnd ? ' sb-end' : active ? ' sb-active' : ''));
@@ -219,19 +193,33 @@
       return b;
     }
 
-    function updateMicBtn(active) {
-      micBtn.className = 'sb-btn' + (active ? ' sb-active' : '');
-      micBtn.replaceChildren(svgIcon(active ? 'mic' : 'mic-off'));
-      var lbl = el('span', 'sb-btn-label'); lbl.textContent = 'Mic';
-      micBtn.append(lbl);
+    function refreshBtn(btn, icon, active) {
+      btn.className = 'sb-btn' + (active ? ' sb-active' : '');
+      btn.replaceChildren(svgIcon(icon));
+      var lbl = el('span', 'sb-btn-label'); lbl.textContent = btn._label;
+      btn.append(lbl);
     }
+
+    var micBtn  = makeBtn(micActive ? 'mic' : 'mic-off', 'Mic',   micActive, false);
+    var vidBtn  = makeBtn(vidActive ? 'vid' : 'vid-off', 'Video', vidActive, false);
+    var noteBtn = makeBtn('note', 'Note', false, false);
+    var sayBtn  = makeBtn('chat', 'Say',  false, false);
+    var endBtn  = makeBtn('end',  'End',  false, true);
+    micBtn._label = 'Mic';
+    vidBtn._label = 'Video';
+
+    micBtn.addEventListener('click', function () { opts.onMicToggle(); });
+    vidBtn.addEventListener('click', function () { opts.onVideoToggle(); });
+    noteBtn.addEventListener('click', function () { opts.onNote(); });
+    sayBtn.addEventListener('click', function () { opts.onSay(); });
+    endBtn.addEventListener('click', function () { opts.onEnd(); });
+
+    wrap.append(micBtn, vidBtn, noteBtn, sayBtn, endBtn);
 
     return {
       node: wrap,
-      setMicActive: function (active) { updateMicBtn(active); },
-      setVideoActive: function (active) {
-        vidBtn.className = 'sb-btn' + (active ? ' sb-active' : '');
-      },
+      setMicActive: function (active) { refreshBtn(micBtn, active ? 'mic' : 'mic-off', active); },
+      setVideoActive: function (active) { refreshBtn(vidBtn, active ? 'vid' : 'vid-off', active); },
     };
   }
 
@@ -254,7 +242,6 @@
     var frames = 0;
     return {
       node: banner,
-      // Returns a no-op when localStream is null (disabled at mount time)
       checkAndUpdate: function (micEnabled, rms) {
         if (micEnabled) {
           frames = 0;
@@ -265,14 +252,10 @@
         if (rms > MUTE_DETECT_THRESHOLD) {
           frames++;
           if (frames >= MUTE_DETECT_FRAMES) {
-            if (!banner.hidden && hideTimer) {
-              clearTimeout(hideTimer);
-            }
+            if (!banner.hidden && hideTimer) { clearTimeout(hideTimer); }
             banner.hidden = false;
             hideTimer = setTimeout(function () {
-              banner.hidden = true;
-              hideTimer = null;
-              frames = 0;
+              banner.hidden = true; hideTimer = null; frames = 0;
             }, MUTE_BANNER_MS);
           }
         } else {
@@ -282,18 +265,18 @@
     };
   }
 
+  function makeNullBanner() {
+    return { node: el('span'), checkAndUpdate: function () {} };
+  }
+
   function runAudioLoop(analyserSelf, analyserRemote, onFrame) {
     var rafId = null;
     var stopped = false;
-
     function tick() {
       if (stopped) return;
-      var selfRms = rmsFromAnalyser(analyserSelf);
-      var remoteRms = rmsFromAnalyser(analyserRemote);
-      onFrame(selfRms, remoteRms);
+      onFrame(rmsFromAnalyser(analyserSelf), rmsFromAnalyser(analyserRemote));
       rafId = requestAnimationFrame(tick);
     }
-
     rafId = requestAnimationFrame(tick);
     return {
       stop: function () {
@@ -302,8 +285,6 @@
       },
     };
   }
-
-  // ---- End-call dialog (built inline in mount; kept here as named factory) ----
 
   function buildEndDialog(onConfirm) {
     var dlg = document.createElement('dialog');
@@ -319,74 +300,42 @@
     return dlg;
   }
 
-  // ---- mount (orchestrator only — no rendering logic here) ----
+  // ---- Session lifecycle (extracted from mount to keep mount ≤40 lines) ----
 
-  function mount(container, opts) {
-    // mount is ≤40 lines of own logic: calls builders, wires handles, starts loop.
-    var audioCtx = new AudioContext();
-    var analyserSelf = null;
+  function runSessionLifecycle(root, parts, opts) {
+    // parts: { audioCtx, analyserSelf, remotePanel, baseline, mutedBanner, controls }
     var analyserRemote = null;
     var sourceRemote = null;
-
-    if (opts.localStream) {
-      analyserSelf = audioCtx.createAnalyser();
-      audioCtx.createMediaStreamSource(opts.localStream).connect(analyserSelf);
-    }
-
-    var root = el('div', 'sb-session');
-    var remotePanel = buildRemotePanel({
-      remoteName: opts.remoteName,
-      remoteRoleLabel: opts.remoteRoleLabel,
-      headphonesConfirmed: opts.headphonesConfirmed,
-    });
-    var baseline = buildBaselineStrip();
-    var mutedBanner = opts.localStream ? buildMutedBanner() : { node: el('span'), checkAndUpdate: function () {} };
     var micEnabled = opts.micEnabled !== false;
-    var vidEnabled = opts.videoEnabled !== false;
-    var endDialog = buildEndDialog(function () { opts.onEnd(); });
-
-    var controls = buildControls({
-      micEnabled: micEnabled,
-      videoEnabled: vidEnabled,
-      onMicToggle: function () { micEnabled = !micEnabled; controls.setMicActive(micEnabled); opts.onMicToggle(); },
-      onVideoToggle: function () { vidEnabled = !vidEnabled; controls.setVideoActive(vidEnabled); opts.onVideoToggle(); },
-      onEnd: function () { endDialog.showModal(); },
-      onNote: opts.onNote,
-      onSay: opts.onSay,
-    });
-
-    var selfPreview = buildSelfPreview(opts.localStream);
-    var bottom = el('div', 'sb-bottom');
-    bottom.append(controls.node, selfPreview.node);
-
-    root.append(remotePanel.node, baseline.node, bottom, mutedBanner.node, endDialog);
-    container.appendChild(root);
-
     var elapsedS = 0;
-    var timerInterval = setInterval(function () {
-      elapsedS++;
-      baseline.setElapsed(elapsedS);
-    }, 1000);
-
-    if (opts.remoteStream) attachRemoteStream(opts.remoteStream);
-
-    var loop = runAudioLoop(analyserSelf, analyserRemote, function (selfRms, remoteRms) {
-      remotePanel.setRingLevel(remoteRms);
-      baseline.setLevels(selfRms, remoteRms);
-      mutedBanner.checkAndUpdate(micEnabled, selfRms);
-    });
-
     var tornDown = false;
 
+    var timerInterval = setInterval(function () {
+      elapsedS++;
+      parts.baseline.setElapsed(elapsedS);
+    }, 1000);
+
+    function makeLoopFrame() {
+      return function (selfRms, remoteRms) {
+        parts.remotePanel.setRingLevel(remoteRms);
+        parts.baseline.setLevels(selfRms, remoteRms);
+        parts.mutedBanner.checkAndUpdate(micEnabled, selfRms);
+      };
+    }
+
+    var loop = runAudioLoop(parts.analyserSelf, analyserRemote, makeLoopFrame());
+
     function attachRemoteStream(stream) {
+      loop.stop();
       if (sourceRemote) { try { sourceRemote.disconnect(); } catch (_) {} sourceRemote = null; }
       if (analyserRemote) { try { analyserRemote.disconnect(); } catch (_) {} analyserRemote = null; }
       if (stream) {
-        analyserRemote = audioCtx.createAnalyser();
-        sourceRemote = audioCtx.createMediaStreamSource(stream);
+        analyserRemote = parts.audioCtx.createAnalyser();
+        sourceRemote = parts.audioCtx.createMediaStreamSource(stream);
         sourceRemote.connect(analyserRemote);
       }
-      remotePanel.setStream(stream);
+      parts.remotePanel.setStream(stream);
+      loop = runAudioLoop(parts.analyserSelf, analyserRemote, makeLoopFrame());
     }
 
     function teardown() {
@@ -396,26 +345,71 @@
       clearInterval(timerInterval);
       if (sourceRemote) { try { sourceRemote.disconnect(); } catch (_) {} }
       if (analyserRemote) { try { analyserRemote.disconnect(); } catch (_) {} }
-      if (analyserSelf) { try { analyserSelf.disconnect(); } catch (_) {} }
-      audioCtx.close();
-      remotePanel.teardown();
+      if (parts.analyserSelf) { try { parts.analyserSelf.disconnect(); } catch (_) {} }
+      parts.audioCtx.close();
+      parts.remotePanel.teardown();
       if (root.parentNode) root.parentNode.removeChild(root);
     }
+
+    if (opts.remoteStream) attachRemoteStream(opts.remoteStream);
+
+    // Expose mic state mutation so controls can read it via closure.
+    parts.controls.setMicActive = (function (originalSetMicActive) {
+      return function (active) {
+        micEnabled = active;
+        originalSetMicActive(active);
+      };
+    })(parts.controls.setMicActive);
 
     return {
       teardown: teardown,
       setRemoteStream: function (stream) {
         if (tornDown) return;
-        loop.stop();
         attachRemoteStream(stream);
-        loop = runAudioLoop(analyserSelf, analyserRemote, function (selfRms, remoteRms) {
-          remotePanel.setRingLevel(remoteRms);
-          baseline.setLevels(selfRms, remoteRms);
-          mutedBanner.checkAndUpdate(micEnabled, selfRms);
-        });
       },
     };
   }
 
-  return { mount: mount, deriveToggleView: deriveToggleView, fmtTime: fmtTime };
+  // ---- mount — orchestrator only (≤40 lines) ----
+
+  function mount(container, opts) {
+    var audioCtx = new AudioContext();
+    var analyserSelf = null;
+    if (opts.localStream) {
+      analyserSelf = audioCtx.createAnalyser();
+      audioCtx.createMediaStreamSource(opts.localStream).connect(analyserSelf);
+    }
+
+    var micEnabled = opts.micEnabled !== false;
+    var vidEnabled = opts.videoEnabled !== false;
+    var remotePanel = buildRemotePanel({ remoteName: opts.remoteName, remoteRoleLabel: opts.remoteRoleLabel, headphonesConfirmed: opts.headphonesConfirmed });
+    var baseline = buildBaselineStrip();
+    var mutedBanner = opts.localStream ? buildMutedBanner() : makeNullBanner();
+    var endDialog = buildEndDialog(function () { opts.onEnd(); });
+    var controls = buildControls({
+      micEnabled: micEnabled, videoEnabled: vidEnabled,
+      onMicToggle: function () { micEnabled = !micEnabled; controls.setMicActive(micEnabled); opts.onMicToggle(); },
+      onVideoToggle: function () { vidEnabled = !vidEnabled; controls.setVideoActive(vidEnabled); opts.onVideoToggle(); },
+      onEnd: function () { endDialog.showModal(); },
+      onNote: opts.onNote,
+      onSay: opts.onSay,
+    });
+    var selfPreview = buildSelfPreview(opts.localStream);
+    var bottom = el('div', 'sb-bottom');
+    bottom.append(controls.node, selfPreview.node);
+    var root = el('div', 'sb-session');
+    root.append(remotePanel.node, baseline.node, bottom, mutedBanner.node, endDialog);
+    container.appendChild(root);
+
+    return runSessionLifecycle(root, { audioCtx: audioCtx, analyserSelf: analyserSelf, remotePanel: remotePanel, baseline: baseline, mutedBanner: mutedBanner, controls: controls }, opts);
+  }
+
+  return {
+    mount: mount,
+    deriveToggleView: deriveToggleView,
+    fmtTime: fmtTime,
+    buildBaselineStrip: buildBaselineStrip,
+    buildMutedBanner: buildMutedBanner,
+    runAudioLoop: runAudioLoop,
+  };
 });

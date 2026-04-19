@@ -149,12 +149,6 @@
     } catch (_) { /* older UAs */ }
 
     pc.ontrack = function (ev) {
-      // Set playoutDelayHint directly on the receiver so it survives the
-      // DOM refactor (Sprint 8 removed #remote-audio; audio.js path alone
-      // would be unreachable). ADR-0001 requires minimum playout latency.
-      if (ev.receiver) {
-        try { ev.receiver.playoutDelayHint = 0; } catch (_) {}
-      }
       mod.dispatchRemoteTrack(ev, {
         onAudio: window.sbAudio.attachRemoteAudio,
         onVideo: window.sbVideo.attachRemoteVideo,
@@ -436,6 +430,10 @@
   // on unknown kinds or missing handlers — never throws.
   function dispatchRemoteTrack(ev, handlers) {
     if (!ev || !ev.track || !handlers) return;
+    // ADR-0001: minimum playout latency — set on every incoming track receiver.
+    if (ev.receiver) {
+      try { ev.receiver.playoutDelayHint = 0; } catch (_) {}
+    }
     if (ev.track.kind === 'audio' && typeof handlers.onAudio === 'function') {
       handlers.onAudio(ev);
     } else if (ev.track.kind === 'video' && typeof handlers.onVideo === 'function') {

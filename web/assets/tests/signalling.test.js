@@ -4,8 +4,8 @@
 //          connectTeacher/connectStudent wrappers are browser-only
 //          and covered by the manual two-machine check. Sprint 4
 //          adds a regression guard for the session.stopAll contract
-//          in makeTeardown.
-// Last updated: Sprint 4 (2026-04-17) -- +teardown stopAll regression
+//          in makeTeardown. Sprint 8 adds playoutDelayHint=0 regression guard.
+// Last updated: Sprint 8 (2026-04-19) -- playoutDelayHint regression guard
 
 'use strict';
 
@@ -15,6 +15,23 @@ const { dispatchRemoteTrack, acquireMedia, teardownMedia, makeTeardown } =
   require('../signalling.js');
 
 // --- dispatchRemoteTrack (5 tests) -----------------------------------------
+
+// Sprint 8 regression guard: ADR-0001 minimum playout latency
+test('dispatchRemoteTrack: sets receiver.playoutDelayHint = 0 on every track event', () => {
+  let hint;
+  const receiver = { set playoutDelayHint(v) { hint = v; } };
+  dispatchRemoteTrack({ track: { kind: 'audio' }, receiver }, { onAudio: () => {} });
+  assert.equal(hint, 0, 'playoutDelayHint must be set to 0 on audio track receiver');
+
+  hint = undefined;
+  dispatchRemoteTrack({ track: { kind: 'video' }, receiver }, { onVideo: () => {} });
+  assert.equal(hint, 0, 'playoutDelayHint must be set to 0 on video track receiver');
+});
+
+test('dispatchRemoteTrack: missing receiver does not throw', () => {
+  assert.doesNotThrow(() =>
+    dispatchRemoteTrack({ track: { kind: 'audio' } }, { onAudio: () => {} }));
+});
 
 test('dispatchRemoteTrack: audio track routes to onAudio only', () => {
   let audioCalls = 0; let videoCalls = 0;

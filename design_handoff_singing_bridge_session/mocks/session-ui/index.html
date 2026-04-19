@@ -1,0 +1,1116 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Singing Bridge — Session UI</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    /* Singing Bridge sub-brand — softer/warmer take on RC palette */
+    --sb-ink:        #0F1720;
+    --sb-ink-2:      #3F4651;
+    --sb-ink-3:      #6E7684;
+    --sb-paper:      #FBF6EF;    /* warm cream — the "music lesson" surface */
+    --sb-paper-2:    #F3ECE0;
+    --sb-paper-3:    #E9DFD0;
+    --sb-line:       rgba(15,23,32,0.10);
+    --sb-line-soft:  rgba(15,23,32,0.06);
+
+    --sb-navy:       #1A60AE;    /* inherited RC navy */
+    --sb-navy-deep:  #0D3563;
+    --sb-cyan:       #00AEEF;    /* inherited RC cyan — used SPARINGLY, only for live audio */
+    --sb-rose:       #E17F8B;    /* warm accent — breath / inhale */
+    --sb-amber:      #E3A950;    /* warm accent — sustain */
+    --sb-moss:       #6F9A7A;    /* calm confirm */
+    --sb-clay:       #C8684F;    /* alert (warmer than red) */
+
+    --sb-font-display: 'Fraunces', 'Poppins', serif;
+    --sb-font-ui:      'Poppins', system-ui, sans-serif;
+
+    --sb-r-sm: 10px;
+    --sb-r-md: 16px;
+    --sb-r-lg: 24px;
+    --sb-r-xl: 32px;
+
+    --sb-shadow-card: 0 1px 2px rgba(15,23,32,0.04), 0 12px 30px rgba(15,23,32,0.06);
+    --sb-shadow-deep: 0 2px 6px rgba(15,23,32,0.08), 0 30px 60px rgba(15,23,32,0.14);
+  }
+
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--sb-paper);
+    color: var(--sb-ink);
+    font-family: var(--sb-font-ui);
+    font-size: 15px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ==== Chrome (toolbar) ==== */
+  .chrome {
+    position: sticky; top: 0; z-index: 50;
+    background: rgba(251,246,239,0.92);
+    backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--sb-line);
+  }
+  .chrome-inner {
+    max-width: 1680px; margin: 0 auto;
+    padding: 14px 28px;
+    display: flex; align-items: center; justify-content: space-between; gap: 24px;
+  }
+  .brand {
+    display: flex; align-items: baseline; gap: 10px;
+    font-family: var(--sb-font-display);
+    font-size: 22px; font-weight: 600; letter-spacing: -0.01em;
+  }
+  .brand .mark {
+    display: inline-block; width: 14px; height: 14px;
+    border-radius: 50%; background: var(--sb-ink); position: relative; top: 1px;
+    box-shadow: 0 0 0 3px var(--sb-paper), 0 0 0 4px var(--sb-ink);
+  }
+  .brand-amp {
+    font-family: var(--sb-font-display);
+    font-style: italic; font-weight: 400; color: var(--sb-ink-3);
+  }
+  .chrome-meta {
+    font-size: 12px; color: var(--sb-ink-3);
+    text-transform: uppercase; letter-spacing: 0.14em;
+  }
+  .var-tabs {
+    display: inline-flex; gap: 0;
+    background: var(--sb-paper-2);
+    padding: 4px;
+    border-radius: 999px;
+    border: 1px solid var(--sb-line);
+  }
+  .var-tab {
+    padding: 7px 18px; font-size: 13px; font-weight: 500;
+    border: 0; background: transparent; color: var(--sb-ink-2);
+    border-radius: 999px; cursor: pointer;
+    font-family: var(--sb-font-ui);
+    letter-spacing: 0.01em;
+    transition: background .18s ease, color .18s ease;
+  }
+  .var-tab[aria-pressed="true"] {
+    background: var(--sb-ink); color: var(--sb-paper);
+  }
+  .var-tab:hover:not([aria-pressed="true"]) { color: var(--sb-ink); }
+
+  /* ==== Stage: side-by-side ==== */
+  .stage {
+    max-width: 1680px; margin: 0 auto;
+    padding: 28px;
+  }
+  .stage-head {
+    display: flex; align-items: flex-end; justify-content: space-between; gap: 24px;
+    margin-bottom: 20px;
+  }
+  .stage-title h1 {
+    font-family: var(--sb-font-display);
+    font-weight: 500; font-size: 34px; line-height: 1.1;
+    margin: 0 0 6px; letter-spacing: -0.02em;
+  }
+  .stage-title h1 em { font-style: italic; color: var(--sb-ink-3); font-weight: 400; }
+  .stage-title p { margin: 0; color: var(--sb-ink-2); font-size: 14px; max-width: 58ch; }
+
+  .pair {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 20px;
+  }
+  @media (max-width: 1100px) {
+    .pair { grid-template-columns: 1fr; }
+  }
+
+  .pane-label {
+    display: flex; align-items: center; gap: 10px;
+    font-size: 11px; font-weight: 600; letter-spacing: 0.18em;
+    text-transform: uppercase; color: var(--sb-ink-3);
+    margin-bottom: 10px;
+  }
+  .pane-label::before {
+    content: ""; width: 8px; height: 8px; border-radius: 50%;
+    background: var(--sb-ink);
+  }
+  .pane-label.student::before { background: var(--sb-rose); }
+
+  /* Each variation root gets its own namespace so styles don't collide */
+  .v-root { --mount-bg: var(--sb-paper); }
+  .v-pane {
+    background: #000;
+    border-radius: var(--sb-r-lg);
+    overflow: hidden;
+    position: relative;
+    aspect-ratio: 3 / 4;
+  }
+  @media (min-width: 1100px) {
+    .v-pane { aspect-ratio: 3 / 4; max-height: 78vh; }
+  }
+
+  /* ==== Tweaks panel ==== */
+  .tweaks {
+    position: fixed; right: 20px; bottom: 20px; z-index: 100;
+    width: 300px; background: #fff; border-radius: var(--sb-r-md);
+    box-shadow: var(--sb-shadow-deep);
+    border: 1px solid var(--sb-line);
+    overflow: hidden;
+    font-size: 13px;
+    display: none;
+  }
+  .tweaks.open { display: block; }
+  .tweaks-head {
+    padding: 12px 16px;
+    background: var(--sb-ink); color: var(--sb-paper);
+    font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.14em;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .tweaks-body { padding: 14px 16px; }
+  .tweak-row {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 8px 0; border-top: 1px solid var(--sb-line-soft);
+  }
+  .tweak-row:first-child { border-top: 0; padding-top: 0; }
+  .tweak-label { color: var(--sb-ink-2); font-size: 13px; }
+  .tweak-sub { display: block; color: var(--sb-ink-3); font-size: 11px; margin-top: 2px; }
+  .seg {
+    display: inline-flex; background: var(--sb-paper-2);
+    border-radius: 999px; padding: 2px; border: 1px solid var(--sb-line);
+  }
+  .seg button {
+    padding: 4px 12px; font-size: 12px; border: 0; background: transparent;
+    color: var(--sb-ink-2); border-radius: 999px; cursor: pointer;
+    font-family: var(--sb-font-ui); font-weight: 500;
+  }
+  .seg button[aria-pressed="true"] { background: var(--sb-ink); color: var(--sb-paper); }
+
+  .switch {
+    position: relative; width: 38px; height: 22px; border-radius: 999px;
+    background: var(--sb-paper-3); border: 0; cursor: pointer;
+    transition: background .18s ease;
+  }
+  .switch::after {
+    content: ""; position: absolute; top: 2px; left: 2px;
+    width: 18px; height: 18px; border-radius: 50%;
+    background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+    transition: transform .18s ease;
+  }
+  .switch[aria-checked="true"] { background: var(--sb-moss); }
+  .switch[aria-checked="true"]::after { transform: translateX(16px); }
+
+  /* ==== Shared micro ==== */
+  .dotted-baseline {
+    height: 6px;
+    background-image: radial-gradient(circle, var(--sb-ink) 1.2px, transparent 1.4px);
+    background-size: 12px 6px;
+    background-repeat: repeat-x;
+    background-position: left center;
+    opacity: 0.25;
+  }
+
+  /* ==== Footer / caption ==== */
+  .captions {
+    max-width: 1680px; margin: 0 auto; padding: 4px 28px 40px;
+    display: grid; grid-template-columns: 1fr 1fr; gap: 20px;
+    color: var(--sb-ink-3); font-size: 12px;
+  }
+  @media (max-width: 1100px) { .captions { grid-template-columns: 1fr; } }
+  .captions b { color: var(--sb-ink); font-weight: 600; }
+</style>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel" data-presets="react">
+
+// ==== hooks.jsx ====
+// hooks.jsx — shared state / fake audio amplitude / breathing timer
+
+const useTweakState = () => {
+  const defaults = /*EDITMODE-BEGIN*/{
+    "variation": "A",
+    "showMeter": true,
+    "state": "live",
+    "audioLevelTeacher": 0.55,
+    "audioLevelStudent": 0.35
+  }/*EDITMODE-END*/;
+
+  const [tweaks, setTweaks] = React.useState(defaults);
+  const [tweaksOpen, setTweaksOpen] = React.useState(false);
+
+  React.useEffect(() => {
+    const onMsg = (e) => {
+      if (!e.data || typeof e.data !== 'object') return;
+      if (e.data.type === '__activate_edit_mode') setTweaksOpen(true);
+      if (e.data.type === '__deactivate_edit_mode') setTweaksOpen(false);
+    };
+    window.addEventListener('message', onMsg);
+    window.parent.postMessage({ type: '__edit_mode_available' }, '*');
+    return () => window.removeEventListener('message', onMsg);
+  }, []);
+
+  const setTweak = (k, v) => {
+    setTweaks(prev => {
+      const next = { ...prev, [k]: v };
+      window.parent.postMessage({ type: '__edit_mode_set_keys', edits: { [k]: v } }, '*');
+      return next;
+    });
+  };
+
+  return { tweaks, setTweak, tweaksOpen, setTweaksOpen };
+};
+
+// Fake audio amplitude oscillator — phrase-shaped (attack / sustain / release)
+const useAudio = (role, baseline = 0.5) => {
+  const [level, setLevel] = React.useState(baseline);
+  React.useEffect(() => {
+    let raf, t0 = performance.now();
+    // Different phase per role so teacher & student don't pulse in sync
+    const phase = role === 'teacher' ? 0 : Math.PI * 0.6;
+    const period = role === 'teacher' ? 3800 : 3200; // musical phrase length
+    const tick = (now) => {
+      const t = (now - t0) / period * Math.PI * 2 + phase;
+      // phrase envelope: sin swell + subtle tremolo + noise
+      const env = 0.5 + 0.5 * Math.sin(t);
+      const trem = 0.06 * Math.sin(t * 11);
+      const noise = 0.05 * (Math.random() - 0.5);
+      const v = Math.max(0, Math.min(1, 0.22 + env * 0.6 + trem + noise));
+      setLevel(v);
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [role]);
+  return level;
+};
+
+// Simple clock ticker — returns elapsed seconds since mount
+const useElapsed = () => {
+  const [s, setS] = React.useState(847); // start at ~14 min for realism
+  React.useEffect(() => {
+    const id = setInterval(() => setS(v => v + 1), 1000);
+    return () => clearInterval(id);
+  }, []);
+  return s;
+};
+const fmtTime = (s) => {
+  const mm = Math.floor(s / 60).toString().padStart(2, '0');
+  const ss = (s % 60).toString().padStart(2, '0');
+  return `${mm}:${ss}`;
+};
+
+Object.assign(window, { useTweakState, useAudio, useElapsed, fmtTime });
+
+
+// ==== portraits.jsx ====
+// portraits.jsx — SVG stand-ins for teacher and student video feeds.
+// Warm painted portraits rather than stock-photo realism; suits the
+// "private lesson" tone while keeping everything offline.
+
+const TeacherPortrait = ({level = 0.5}) => (
+  <svg viewBox="0 0 400 600" preserveAspectRatio="xMidYMid slice"
+       style={{width:"100%", height:"100%", display:"block"}}>
+    <defs>
+      <linearGradient id="tp-bg" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stopColor="#EED6B8"/>
+        <stop offset="1" stopColor="#C9A47D"/>
+      </linearGradient>
+      <radialGradient id="tp-spot" cx="0.7" cy="0.25" r="0.8">
+        <stop offset="0" stopColor="#FFE9C8" stopOpacity="0.9"/>
+        <stop offset="1" stopColor="#C9A47D" stopOpacity="0"/>
+      </radialGradient>
+    </defs>
+    <rect width="400" height="600" fill="url(#tp-bg)"/>
+    <rect width="400" height="600" fill="url(#tp-spot)"/>
+    {/* piano in bg */}
+    <rect x="-40" y="440" width="500" height="200" fill="#2A1D18" opacity="0.75"/>
+    <rect x="-40" y="440" width="500" height="6" fill="#6E4A2E"/>
+    {[...Array(14)].map((_,i)=>(
+      <rect key={i} x={-40+i*35} y="455" width="32" height="70" fill="#F8EFE1"/>
+    ))}
+    {[...Array(13)].map((_,i)=>{
+      const pattern = [1,1,0,1,1,1,0];
+      if(!pattern[i%7]) return null;
+      return <rect key={'b'+i} x={-26+i*35} y="455" width="18" height="42" fill="#1A100B"/>
+    })}
+    {/* body */}
+    <path d="M60 600 C 60 470 140 420 200 420 C 260 420 340 470 340 600 Z" fill="#6E8B8A"/>
+    <path d="M140 460 C 140 440 260 440 260 460 L 260 600 L 140 600 Z" fill="#8DA9A4"/>
+    {/* neck */}
+    <rect x="178" y="340" width="44" height="90" fill="#D9A57A"/>
+    {/* head */}
+    <ellipse cx="200" cy="290" rx="78" ry="92" fill="#E7B98C"/>
+    {/* hair — warm auburn updo */}
+    <path d="M132 260 C 130 180 180 148 205 150 C 255 152 275 200 272 262 C 268 240 250 220 236 214 C 240 230 238 252 230 258 C 215 240 178 236 162 252 C 148 246 138 252 132 260 Z" fill="#5B2E1B"/>
+    <ellipse cx="200" cy="180" rx="30" ry="22" fill="#5B2E1B"/>
+    {/* eyes */}
+    <ellipse cx="178" cy="294" rx="5" ry="3" fill="#2A1A10"/>
+    <ellipse cx="222" cy="294" rx="5" ry="3" fill="#2A1A10"/>
+    <path d="M168 282 Q 178 278 188 282" stroke="#3A271A" strokeWidth="1.6" fill="none"/>
+    <path d="M212 282 Q 222 278 232 282" stroke="#3A271A" strokeWidth="1.6" fill="none"/>
+    {/* nose */}
+    <path d="M200 300 Q 196 318 200 326 Q 204 328 208 326" stroke="#B98461" strokeWidth="1.6" fill="none"/>
+    {/* mouth — opens with level */}
+    <ellipse cx="200" cy={345 + level*4} rx={14 + level*4} ry={3 + level*7} fill="#8E3A3A"/>
+    <ellipse cx="200" cy={344 + level*4} rx={12 + level*3} ry={1 + level*3} fill="#5B1E1E"/>
+    {/* cheek blush */}
+    <ellipse cx="156" cy="318" rx="14" ry="8" fill="#E17F8B" opacity="0.25"/>
+    <ellipse cx="244" cy="318" rx="14" ry="8" fill="#E17F8B" opacity="0.25"/>
+    {/* earring */}
+    <circle cx="128" cy="310" r="4" fill="#E3A950"/>
+    <circle cx="272" cy="310" r="4" fill="#E3A950"/>
+  </svg>
+);
+
+const StudentPortrait = ({level = 0.3}) => (
+  <svg viewBox="0 0 400 600" preserveAspectRatio="xMidYMid slice"
+       style={{width:"100%", height:"100%", display:"block"}}>
+    <defs>
+      <linearGradient id="sp-bg" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stopColor="#D6E3E8"/>
+        <stop offset="1" stopColor="#A7BDC7"/>
+      </linearGradient>
+    </defs>
+    <rect width="400" height="600" fill="url(#sp-bg)"/>
+    {/* bookshelf bg */}
+    <rect x="30" y="100" width="340" height="10" fill="#8B6F4E"/>
+    <rect x="30" y="250" width="340" height="10" fill="#8B6F4E"/>
+    {[0,1,2,3,4,5,6,7,8,9,10,11].map(i=>(
+      <rect key={i} x={40+i*27} y="115" width="22" height="130"
+            fill={['#7A4B3A','#4A6B7A','#9A7346','#3F5A3D','#7A3A5A'][i%5]}/>
+    ))}
+    {/* headphones arc — signature "wears headphones" detail */}
+    <path d="M110 260 Q 200 180 290 260" fill="none" stroke="#1F2A33" strokeWidth="10" strokeLinecap="round"/>
+    <rect x="94" y="258" width="32" height="58" rx="8" fill="#1F2A33"/>
+    <rect x="274" y="258" width="32" height="58" rx="8" fill="#1F2A33"/>
+    {/* body — jumper */}
+    <path d="M60 600 C 60 470 140 430 200 430 C 260 430 340 470 340 600 Z" fill="#9A6C5C"/>
+    <ellipse cx="200" cy="452" rx="70" ry="22" fill="#8B5D4E"/>
+    {/* neck */}
+    <rect x="182" y="360" width="36" height="80" fill="#E9C4A2"/>
+    {/* head */}
+    <ellipse cx="200" cy="310" rx="70" ry="84" fill="#F2D0AE"/>
+    {/* hair — dark bob */}
+    <path d="M134 300 C 130 228 175 190 205 190 C 245 190 272 220 270 298 C 262 274 250 268 240 266 C 240 258 230 254 220 256 C 210 248 195 248 185 256 C 175 252 160 258 158 268 C 148 270 138 280 134 300 Z" fill="#2D1B12"/>
+    {/* eyes */}
+    <ellipse cx="180" cy="310" rx="4" ry="3" fill="#1A100B"/>
+    <ellipse cx="220" cy="310" rx="4" ry="3" fill="#1A100B"/>
+    {/* nose */}
+    <path d="M200 318 Q 197 334 200 342 Q 203 344 207 342" stroke="#C19275" strokeWidth="1.4" fill="none"/>
+    {/* mouth */}
+    <ellipse cx="200" cy={360 + level*3} rx={11 + level*3} ry={2 + level*5} fill="#8E3A3A"/>
+    <ellipse cx="200" cy={359 + level*3} rx={9 + level*2} ry={1 + level*2.5} fill="#5B1E1E"/>
+    {/* cheek */}
+    <ellipse cx="160" cy="334" rx="11" ry="7" fill="#E17F8B" opacity="0.3"/>
+    <ellipse cx="240" cy="334" rx="11" ry="7" fill="#E17F8B" opacity="0.3"/>
+  </svg>
+);
+
+Object.assign(window, { TeacherPortrait, StudentPortrait });
+
+
+// ==== variation-a.jsx ====
+// variation-a.jsx — "The warm room"
+// Conventional two-tile layout, reimagined as a warm paper-and-piano
+// space. Ambient breath ring around the speaker. Self-preview inset.
+// A discreet audio meter runs along the dotted baseline under the video.
+
+const VariationA = ({role, tweaks}) => {
+  const isTeacher = role === 'teacher';
+  const remoteLevel = window.useAudio(isTeacher ? 'student' : 'teacher', 0.4);
+  const selfLevel = window.useAudio(isTeacher ? 'teacher' : 'student', 0.3);
+  const elapsed = window.useElapsed();
+  const Remote = isTeacher ? window.StudentPortrait : window.TeacherPortrait;
+  const remoteName = isTeacher ? 'Alex Price' : 'Ms. Eleanor Hart';
+  const remoteRole = isTeacher ? 'Student · Lesson 7' : 'Your teacher';
+
+  const ring = Math.round(remoteLevel * 100);
+
+  return (
+    <div style={va.root}>
+      {/* Remote video w/ breath ring */}
+      <div style={va.remoteWrap}>
+        <div style={{...va.breathRing, boxShadow: `inset 0 0 0 ${4 + remoteLevel*10}px rgba(225,127,139,${0.15 + remoteLevel*0.35})`}}/>
+        <Remote level={remoteLevel}/>
+        {/* name plate */}
+        <div style={va.namePlate}>
+          <div style={va.nameName}>{remoteName}</div>
+          <div style={va.nameRole}>{remoteRole}</div>
+        </div>
+        {/* headphones check */}
+        <div style={va.hpCheck}>
+          <span style={va.hpDot}/> Headphones on
+        </div>
+      </div>
+
+      {/* Dotted baseline with optional meter */}
+      <div style={va.baseline}>
+        {tweaks.showMeter && (
+          <div style={va.meterRow} aria-label="Audio levels">
+            <MeterBar label={isTeacher ? 'YOU' : 'YOU'} level={selfLevel} side="left"/>
+            <div style={va.meterMid}>{window.fmtTime(elapsed)}</div>
+            <MeterBar label={isTeacher ? 'ALEX' : 'ELEANOR'} level={remoteLevel} side="right"/>
+          </div>
+        )}
+        {!tweaks.showMeter && (
+          <div style={va.dottedOnly}>
+            <span>{window.fmtTime(elapsed)}</span>
+          </div>
+        )}
+      </div>
+
+      {/* Bottom: controls + self preview */}
+      <div style={va.bottom}>
+        <div style={va.controls}>
+          <IconBtn icon="mic"     label="Muted" active={false}/>
+          <IconBtn icon="vid"     label="Video" active={true}/>
+          <IconBtn icon="note"    label="Note"  active={false}/>
+          <IconBtn icon="chat"    label="Say"   active={false}/>
+          <IconBtn icon="end"     label="End"   end={true}/>
+        </div>
+        <div style={va.selfWrap}>
+          <div style={{borderRadius:12, overflow:"hidden", width:"100%", height:"100%"}}>
+            {isTeacher ? <window.TeacherPortrait level={selfLevel}/> : <window.StudentPortrait level={selfLevel}/>}
+          </div>
+          <div style={va.selfLabel}>You</div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const MeterBar = ({label, level, side}) => {
+  const n = 14;
+  const active = Math.round(level * n);
+  return (
+    <div style={{display:"flex", alignItems:"center", gap:8, flexDirection: side === 'right' ? 'row-reverse' : 'row'}}>
+      <span style={{fontSize:10, fontWeight:600, letterSpacing:".14em", color:"rgba(251,246,239,0.7)"}}>{label}</span>
+      <div style={{display:"flex", gap:2, flexDirection: side === 'right' ? 'row-reverse' : 'row'}}>
+        {[...Array(n)].map((_,i)=>{
+          const on = i < active;
+          const color = i < n*0.6 ? '#F3ECE0' : i < n*0.85 ? '#E3A950' : '#E17F8B';
+          return <span key={i} style={{width:3, height: 6 + i*1.2, background: on ? color : "rgba(251,246,239,0.15)", borderRadius:1, transition:"background .05s"}}/>;
+        })}
+      </div>
+    </div>
+  );
+};
+
+const IconBtn = ({icon, label, active, end}) => (
+  <button style={{
+    ...va.btn,
+    ...(end ? va.btnEnd : active ? va.btnActive : {}),
+  }}>
+    <IconGlyph name={icon}/>
+    <span style={{fontSize:11, fontWeight:500, letterSpacing:".04em"}}>{label}</span>
+  </button>
+);
+
+const IconGlyph = ({name}) => {
+  const c = "currentColor";
+  switch (name) {
+    case 'mic':  return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="1.6"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0014 0"/><path d="M12 18v3"/></svg>;
+    case 'vid':  return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="1.6"><rect x="3" y="6" width="13" height="12" rx="2"/><path d="M16 10l5-3v10l-5-3z"/></svg>;
+    case 'note': return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="1.6"><path d="M9 18V5l10-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="16" cy="16" r="3"/></svg>;
+    case 'chat': return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="1.6"><path d="M4 5h16v11H8l-4 4z"/></svg>;
+    case 'end':  return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="1.6"><path d="M3 13a13 13 0 0118 0l-2 3-4-1-1-3a10 10 0 00-4 0l-1 3-4 1z"/></svg>;
+    default: return null;
+  }
+};
+
+const va = {
+  root: { position:"absolute", inset:0, display:"flex", flexDirection:"column", background:"#0F1720", color:"#FBF6EF", padding:"16px 16px 14px" },
+  remoteWrap: { position:"relative", flex:"1 1 auto", borderRadius:20, overflow:"hidden", background:"#000", minHeight:0 },
+  breathRing: { position:"absolute", inset:0, zIndex:2, pointerEvents:"none", borderRadius:20, transition:"box-shadow .08s ease-out" },
+  namePlate: { position:"absolute", left:16, top:16, background:"rgba(15,23,32,0.55)", backdropFilter:"blur(6px)", padding:"8px 14px", borderRadius:12, zIndex:3 },
+  nameName: { fontFamily:"var(--sb-font-display)", fontSize:17, fontWeight:500, letterSpacing:"-0.01em" },
+  nameRole: { fontSize:11, opacity:0.75, letterSpacing:".08em", textTransform:"uppercase", marginTop:2 },
+  hpCheck: { position:"absolute", right:16, top:16, background:"rgba(111,154,122,0.9)", color:"#fff", padding:"6px 12px", borderRadius:999, fontSize:11, fontWeight:500, display:"flex", alignItems:"center", gap:6, zIndex:3 },
+  hpDot: { width:6, height:6, borderRadius:"50%", background:"#fff" },
+  baseline: { padding:"12px 4px 10px" },
+  meterRow: { display:"flex", alignItems:"center", justifyContent:"space-between", gap:14 },
+  meterMid: { fontFamily:"var(--sb-font-display)", fontStyle:"italic", fontSize:15, color:"rgba(251,246,239,0.85)" },
+  dottedOnly: {
+    height: 22, display:"flex", alignItems:"center", justifyContent:"center",
+    backgroundImage:"radial-gradient(circle, rgba(251,246,239,0.35) 1.2px, transparent 1.4px)",
+    backgroundSize:"12px 6px", backgroundRepeat:"repeat-x", backgroundPosition:"left center",
+    fontFamily:"var(--sb-font-display)", fontStyle:"italic", fontSize:14, color:"rgba(251,246,239,0.7)"
+  },
+  bottom: { display:"flex", justifyContent:"space-between", alignItems:"flex-end", gap:12 },
+  controls: { display:"flex", gap:8 },
+  btn: { display:"flex", flexDirection:"column", alignItems:"center", gap:4, width:56, height:56, borderRadius:16, border:"1px solid rgba(251,246,239,0.12)", background:"rgba(251,246,239,0.06)", color:"#FBF6EF", cursor:"pointer", transition:"background .15s" },
+  btnActive: { background:"#FBF6EF", color:"#0F1720", borderColor:"#FBF6EF" },
+  btnEnd: { background:"#C8684F", color:"#fff", borderColor:"#C8684F" },
+  selfWrap: { width:110, height:130, borderRadius:14, background:"#000", position:"relative", overflow:"hidden", boxShadow:"0 6px 20px rgba(0,0,0,0.4)", border:"1px solid rgba(251,246,239,0.12)" },
+  selfLabel: { position:"absolute", left:8, bottom:8, fontSize:10, fontWeight:600, letterSpacing:".1em", color:"#FBF6EF", background:"rgba(15,23,32,0.65)", padding:"3px 8px", borderRadius:999 }
+};
+
+window.VariationA = VariationA;
+
+
+// ==== variation-b.jsx ====
+// variation-b.jsx — "The listening room"
+// Audio-first: video is intentionally small and framed; the dominant
+// element is a live waveform/scope drawn across the canvas that reacts
+// to both voices. Controls are minimal, set into a warm paper dock.
+
+const VariationB = ({role, tweaks}) => {
+  const isTeacher = role === 'teacher';
+  const remoteLevel = window.useAudio(isTeacher ? 'student' : 'teacher', 0.4);
+  const selfLevel = window.useAudio(isTeacher ? 'teacher' : 'student', 0.3);
+  const elapsed = window.useElapsed();
+  const Remote = isTeacher ? window.StudentPortrait : window.TeacherPortrait;
+  const remoteName = isTeacher ? 'Alex Price' : 'Ms. Eleanor Hart';
+
+  return (
+    <div style={vb.root}>
+      <div style={vb.paper}>
+
+        {/* Heading + headphones confirm */}
+        <div style={vb.heading}>
+          <div>
+            <div style={vb.eyebrow}>In session · {window.fmtTime(elapsed)}</div>
+            <h2 style={vb.title}>
+              <em>Listening for</em>
+              <br/>{isTeacher ? 'Alex' : 'Eleanor'}.
+            </h2>
+          </div>
+          <div style={vb.hp}>
+            <HpGlyph/>
+            <div>
+              <div style={{fontWeight:600, fontSize:13}}>Headphones confirmed</div>
+              <div style={{fontSize:11, color:"var(--sb-ink-3)", marginTop:2}}>AEC off · Opus music mode</div>
+            </div>
+          </div>
+        </div>
+
+        {/* Middle row: passport frame + big scope */}
+        <div style={vb.middleRow}>
+          <div style={vb.frame}>
+            <div style={vb.frameInner}>
+              <Remote level={remoteLevel}/>
+            </div>
+            <div style={vb.frameLabel}>
+              <div style={vb.frameName}>{remoteName}</div>
+              <div style={vb.frameMeta}>{isTeacher ? 'Student' : 'Teacher'} · <em>live</em></div>
+            </div>
+          </div>
+          <div style={vb.scope}>
+            <WaveformScope remoteLevel={remoteLevel} selfLevel={selfLevel} showMeter={tweaks.showMeter}/>
+          </div>
+        </div>
+
+        {/* Self preview card */}
+        <div style={vb.self}>
+          <div style={{width:44, height:44, borderRadius:"50%", overflow:"hidden", background:"#000", flexShrink:0}}>
+            {isTeacher ? <window.TeacherPortrait level={selfLevel}/> : <window.StudentPortrait level={selfLevel}/>}
+          </div>
+          <div style={{flex:1, minWidth:0}}>
+            <div style={{fontSize:12, fontWeight:600, color:"var(--sb-ink-2)"}}>You are {role === 'teacher' ? 'teaching' : 'singing'}.</div>
+            <SelfLevel level={selfLevel}/>
+          </div>
+        </div>
+
+        {/* Controls */}
+        <div style={vb.controls}>
+          <PaperBtn label="Mute"/>
+          <PaperBtn label="Video"/>
+          <PaperBtn label="Chat"/>
+          <PaperBtn label="End lesson" primary/>
+        </div>
+
+      </div>
+    </div>
+  );
+};
+
+const HpGlyph = () => (
+  <svg width="28" height="28" viewBox="0 0 32 32" fill="none">
+    <path d="M6 18a10 10 0 0120 0" stroke="#0F1720" strokeWidth="2" strokeLinecap="round"/>
+    <rect x="4" y="18" width="6" height="9" rx="2" fill="#0F1720"/>
+    <rect x="22" y="18" width="6" height="9" rx="2" fill="#0F1720"/>
+  </svg>
+);
+
+// Live waveform — SVG path, updated each frame via ref-driven d attribute.
+// More reliable than canvas when nested inside grid layouts.
+const WaveformScope = ({remoteLevel, selfLevel, showMeter}) => {
+  const remoteRef = React.useRef(remoteLevel);
+  const selfRef = React.useRef(selfLevel);
+  remoteRef.current = remoteLevel;
+  selfRef.current = selfLevel;
+  const pathR = React.useRef(null);
+  const pathS = React.useRef(null);
+  const meterR = React.useRef(null);
+  const meterS = React.useRef(null);
+  const W = 800, H = 400;
+  React.useEffect(() => {
+    let raf, t0 = performance.now();
+    const build = (level, yOffset, freqA, freqB, phase, height) => {
+      let d = '';
+      for (let x = 0; x <= W; x += 4) {
+        const u = x / W;
+        const env = Math.sin(u * Math.PI);
+        const amp = height * level * env;
+        const y = H/2 + yOffset + Math.sin(u*freqA + phase) * amp + Math.sin(u*freqB + phase*1.4) * amp * 0.3;
+        d += (x === 0 ? 'M' : 'L') + x.toFixed(1) + ' ' + y.toFixed(1) + ' ';
+      }
+      return d;
+    };
+    const tick = (now) => {
+      const t = (now - t0) / 1000;
+      if (pathR.current) pathR.current.setAttribute('d', build(remoteRef.current, 0, 18, 42, t*5, H*0.32));
+      if (pathS.current) pathS.current.setAttribute('d', build(selfRef.current, -H*0.12, 13, 33, -t*4, H*0.22));
+      if (meterR.current) meterR.current.textContent = `REMOTE  ${Math.round(-60 + remoteRef.current*60)} dB`;
+      if (meterS.current) meterS.current.textContent = `SELF     ${Math.round(-60 + selfRef.current*60)} dB`;
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, []);
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none"
+         style={{width:"100%", height:"100%", display:"block"}}>
+      {/* dotted baseline */}
+      {[...Array(Math.floor(W/14))].map((_,i)=>(
+        <circle key={i} cx={i*14 + 6} cy={H/2 + H*0.36} r="1.4" fill="rgba(15,23,32,0.22)"/>
+      ))}
+      {/* self wave (ink, back) */}
+      <path ref={pathS} fill="none" stroke="rgba(15,23,32,0.55)" strokeWidth="2" strokeLinecap="round" vectorEffect="non-scaling-stroke"/>
+      {/* remote wave (rose, front) */}
+      <path ref={pathR} fill="none" stroke="rgba(225,127,139,0.95)" strokeWidth="3" strokeLinecap="round" vectorEffect="non-scaling-stroke"/>
+      {/* meter text */}
+      {showMeter && (
+        <g style={{fontFamily:"Poppins, sans-serif", fontSize:14, fill:"rgba(15,23,32,0.6)"}}>
+          <text ref={meterR} x={W-14} y="26" textAnchor="end"/>
+          <text ref={meterS} x={W-14} y="46" textAnchor="end"/>
+        </g>
+      )}
+      {/* Axis label */}
+      <text x="14" y="26" style={{fontFamily:"Fraunces, serif", fontStyle:"italic", fontSize:15, fill:"rgba(15,23,32,0.45)"}}>live</text>
+    </svg>
+  );
+};
+
+const SelfLevel = ({level}) => (
+  <div style={{display:"flex", gap:2, marginTop:6, height:10}}>
+    {[...Array(20)].map((_,i)=>{
+      const on = i < Math.round(level*20);
+      return <div key={i} style={{flex:1, background: on ? 'var(--sb-moss)' : 'rgba(15,23,32,0.08)', borderRadius:1}}/>;
+    })}
+  </div>
+);
+
+const PaperBtn = ({label, primary}) => (
+  <button style={{
+    padding:"11px 20px",
+    fontFamily:"var(--sb-font-ui)",
+    fontSize:13, fontWeight:500,
+    border:"1px solid " + (primary ? "var(--sb-clay)" : "rgba(15,23,32,0.15)"),
+    background: primary ? "var(--sb-clay)" : "#fff",
+    color: primary ? "#fff" : "var(--sb-ink)",
+    borderRadius:999, cursor:"pointer",
+    letterSpacing:".02em"
+  }}>{label}</button>
+);
+
+const vb = {
+  root: { position:"absolute", inset:0, display:"flex", padding:"14px", background:"var(--sb-ink)" },
+  paper: { flex:1, background:"var(--sb-paper)", borderRadius:"calc(var(--sb-r-lg) - 4px)", padding:"24px 24px 18px", display:"flex", flexDirection:"column", gap:"16px", position:"relative", overflow:"hidden" },
+  heading: { display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:16, flexShrink:0 },
+  middleRow: { display:"flex", gap:18, flex:"1 1 auto", minHeight:0 },
+  eyebrow: { fontSize:10, fontWeight:600, letterSpacing:".2em", textTransform:"uppercase", color:"var(--sb-ink-3)" },
+  title: { fontFamily:"var(--sb-font-display)", fontSize:30, fontWeight:500, letterSpacing:"-0.015em", margin:"4px 0 0", lineHeight:1.05 },
+  hp: { display:"flex", gap:10, alignItems:"center", background:"var(--sb-paper-2)", padding:"10px 14px", borderRadius:14, border:"1px solid var(--sb-line-soft)" },
+  frame: { width:120, display:"flex", flexDirection:"column", alignItems:"center", gap:10, flexShrink:0 },
+  frameInner: { width:110, height:140, borderRadius:10, overflow:"hidden", background:"#000", border:"3px solid #fff", boxShadow:"0 6px 18px rgba(0,0,0,0.12)" },
+  frameLabel: { textAlign:"center" },
+  frameName: { fontFamily:"var(--sb-font-display)", fontSize:15, fontWeight:500 },
+  frameMeta: { fontSize:11, color:"var(--sb-ink-3)" },
+  scope: { flex:"1 1 auto", borderRadius:14, background:"var(--sb-paper-2)", border:"1px solid var(--sb-line-soft)", overflow:"hidden", position:"relative", minWidth:0, minHeight:180 },
+  self: { display:"flex", gap:12, alignItems:"center", padding:"12px 14px", background:"var(--sb-paper-2)", borderRadius:12, border:"1px solid var(--sb-line-soft)", flexShrink:0 },
+  controls: { display:"flex", gap:10, justifyContent:"flex-end", flexWrap:"wrap", flexShrink:0 },
+};
+
+window.VariationB = VariationB;
+
+
+// ==== variation-c.jsx ====
+// variation-c.jsx — "The stave"
+// A bold, music-teacher-native UI. The session sits ON a musical stave.
+// The student's pitch is tracked as a moving note on the stave relative
+// to a target; the teacher's guidance note floats alongside.
+// Controls become musical artefacts: tuning fork (mute), metronome
+// (tempo/chat), a fermata (pause), a double-bar (end).
+
+const VariationC = ({role, tweaks}) => {
+  const isTeacher = role === 'teacher';
+  const remoteLevel = window.useAudio(isTeacher ? 'student' : 'teacher', 0.45);
+  const selfLevel = window.useAudio(isTeacher ? 'teacher' : 'student', 0.35);
+  const elapsed = window.useElapsed();
+  const Remote = isTeacher ? window.StudentPortrait : window.TeacherPortrait;
+  const remoteName = isTeacher ? 'Alex Price' : 'Ms. Eleanor Hart';
+  const lessonTitle = isTeacher ? 'Aria · Caro mio ben' : 'Your lesson · Caro mio ben';
+
+  // Fake pitch tracking: target pitch is A4 (y=mid-stave), student pitch wobbles
+  const [pitchCents, setPitchCents] = React.useState(0);
+  React.useEffect(() => {
+    let raf, t0 = performance.now();
+    const tick = (now) => {
+      const t = (now - t0) / 1000;
+      // wanders around target, with a couple of sharp/flat excursions
+      const v = Math.sin(t * 0.9) * 25 + Math.sin(t * 2.3) * 10 + (Math.random()-0.5) * 6;
+      setPitchCents(v);
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, []);
+
+  return (
+    <div style={vc.root}>
+      {/* Top row: lesson identity */}
+      <div style={vc.top}>
+        <div>
+          <div style={vc.eyebrow}>{isTeacher ? 'TEACHING' : 'LESSON IN PROGRESS'} · {window.fmtTime(elapsed)}</div>
+          <div style={vc.lessonTitle}>
+            <span style={vc.clef}>𝄞</span>
+            <span style={{fontFamily:"var(--sb-font-display)", fontStyle:"italic"}}>{lessonTitle}</span>
+          </div>
+        </div>
+        <div style={vc.withBlock}>
+          <div style={vc.withAvatar}>
+            <Remote level={remoteLevel}/>
+          </div>
+          <div>
+            <div style={{fontSize:11, letterSpacing:".14em", textTransform:"uppercase", color:"var(--sb-ink-3)"}}>{isTeacher ? 'With' : 'With'}</div>
+            <div style={{fontFamily:"var(--sb-font-display)", fontSize:18, fontWeight:500}}>{remoteName}</div>
+          </div>
+        </div>
+      </div>
+
+      {/* Stave canvas */}
+      <div style={vc.stave}>
+        <Stave pitchCents={pitchCents} remoteLevel={remoteLevel} selfLevel={selfLevel} showMeter={tweaks.showMeter} isTeacher={isTeacher}/>
+      </div>
+
+      {/* Footer controls — musical artefacts */}
+      <div style={vc.footer}>
+        <div style={vc.selfRow}>
+          <div style={vc.selfAvatar}>
+            {isTeacher ? <window.TeacherPortrait level={selfLevel}/> : <window.StudentPortrait level={selfLevel}/>}
+          </div>
+          <div>
+            <div style={{fontSize:11, letterSpacing:".14em", textTransform:"uppercase", color:"var(--sb-ink-3)"}}>You</div>
+            <div style={{fontFamily:"var(--sb-font-display)", fontSize:16}}>{isTeacher ? 'Ms. Eleanor Hart' : 'Alex Price'}</div>
+          </div>
+          <div style={vc.hpChip}>♪ Headphones</div>
+        </div>
+        <div style={vc.musical}>
+          <MusicalBtn label="Mute" glyph={<TuningFork/>}/>
+          <MusicalBtn label="Video" glyph={<Eye/>}/>
+          <MusicalBtn label="Tempo" glyph={<Metronome/>}/>
+          <MusicalBtn label="Chat" glyph={<Quill/>}/>
+          <MusicalBtn label="End" glyph={<DoubleBar/>} danger/>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// --- Stave (SVG-based, ref-driven animation) ---
+const Stave = ({pitchCents, remoteLevel, selfLevel, showMeter, isTeacher}) => {
+  const pitchRef = React.useRef(pitchCents);
+  const rRef = React.useRef(remoteLevel);
+  const sRef = React.useRef(selfLevel);
+  pitchRef.current = pitchCents;
+  rRef.current = remoteLevel;
+  sRef.current = selfLevel;
+
+  const W = 900, H = 320;
+  const midY = H / 2 - 20;
+  const lineGap = 14;
+  const noteCX = W * 0.55;
+  const noteR = lineGap * 0.7;
+
+  const noteheadRef = React.useRef(null);
+  const glowRef = React.useRef(null);
+  const stemRef = React.useRef(null);
+  const centsTextRef = React.useRef(null);
+  const rWaveRef = React.useRef(null);
+  const sWaveRef = React.useRef(null);
+
+  React.useEffect(() => {
+    let raf, t0 = performance.now();
+    const stripY = H - 32;
+    const build = (level, freqA, phase, height) => {
+      let d = '';
+      for (let x = 0; x <= W; x += 4) {
+        const u = x / W;
+        const amp = height * level * Math.sin(u * Math.PI);
+        const y = stripY + Math.sin(u * freqA + phase) * amp;
+        d += (x === 0 ? 'M' : 'L') + x.toFixed(1) + ' ' + y.toFixed(1) + ' ';
+      }
+      return d;
+    };
+    const tick = (now) => {
+      const t = (now - t0) / 1000;
+      const pc = pitchRef.current;
+      const maxCents = 100;
+      const pY = midY - (pc / maxCents) * lineGap * 2.2;
+      const inTune = Math.abs(pc) < 10;
+      const color = inTune ? '#6F9A7A' : '#E17F8B';
+      const glowR = noteR * 1.6 + rRef.current * noteR * 1.4;
+      if (noteheadRef.current) {
+        noteheadRef.current.setAttribute('cy', pY);
+        noteheadRef.current.setAttribute('fill', color);
+      }
+      if (glowRef.current) {
+        glowRef.current.setAttribute('cy', pY);
+        glowRef.current.setAttribute('r', glowR);
+        glowRef.current.setAttribute('fill', inTune ? 'rgba(111,154,122,0.35)' : 'rgba(225,127,139,0.45)');
+      }
+      if (stemRef.current) {
+        stemRef.current.setAttribute('y1', pY);
+        stemRef.current.setAttribute('y2', pY - lineGap * 3);
+      }
+      if (centsTextRef.current) {
+        const sign = pc > 0 ? '+' : '';
+        const label = inTune ? 'in tune' : pc < 0 ? 'flat' : 'sharp';
+        centsTextRef.current.textContent = `${sign}${pc.toFixed(0)}¢ ${label}`;
+      }
+      if (rWaveRef.current) rWaveRef.current.setAttribute('d', build(rRef.current, 30, t*6, 16));
+      if (sWaveRef.current) sWaveRef.current.setAttribute('d', build(sRef.current, 22, -t*5, 10));
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, []);
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet"
+         style={{width:"100%", height:"100%", display:"block"}}>
+      {/* stave lines */}
+      {[-2,-1,0,1,2].map(i => (
+        <line key={i} x1="40" x2={W-40} y1={midY + i*lineGap} y2={midY + i*lineGap}
+              stroke="rgba(15,23,32,0.55)" strokeWidth="1"/>
+      ))}
+      {/* bar lines */}
+      {[1,2,3].map(b => {
+        const x = (W - 80) * b / 4 + 40;
+        return <line key={b} x1={x} x2={x} y1={midY - 2*lineGap} y2={midY + 2*lineGap}
+                     stroke="rgba(15,23,32,0.55)" strokeWidth="1"/>;
+      })}
+      {/* treble clef */}
+      <text x="50" y={midY + lineGap*0.8} fontSize={lineGap * 5.4}
+            fontFamily="serif" fill="#0F1720">𝄞</text>
+      {/* time sig */}
+      <text x="112" y={midY - 2} fontSize={lineGap * 1.9}
+            fontFamily="Fraunces, serif" fill="#0F1720" fontWeight="600">4</text>
+      <text x="112" y={midY + lineGap * 1.9} fontSize={lineGap * 1.9}
+            fontFamily="Fraunces, serif" fill="#0F1720" fontWeight="600">4</text>
+
+      {/* Target note (A4) */}
+      <ellipse cx={noteCX} cy={midY} rx={noteR * 1.25} ry={noteR * 0.85}
+               fill="rgba(26,96,174,0.18)" transform={`rotate(-18 ${noteCX} ${midY})`}/>
+      <line x1={noteCX + noteR} x2={noteCX + noteR}
+            y1={midY} y2={midY - lineGap * 3.5}
+            stroke="#1A60AE" strokeWidth="1.2"/>
+      <text x={noteCX} y={midY - lineGap * 4} textAnchor="middle"
+            fontFamily="Poppins, sans-serif" fontSize="11" fill="#1A60AE">target · A4</text>
+
+      {/* Student pitch notehead */}
+      <circle ref={glowRef} cx={noteCX} cy={midY} r={noteR * 1.8}
+              fill="rgba(111,154,122,0.35)"/>
+      <ellipse ref={noteheadRef} cx={noteCX} cy={midY} rx={noteR * 1.2} ry={noteR * 0.85}
+               fill="#6F9A7A" transform={`rotate(-18 ${noteCX} ${midY})`}/>
+      <line ref={stemRef} x1={noteCX + noteR} x2={noteCX + noteR}
+            y1={midY} y2={midY - lineGap * 3}
+            stroke="#0F1720" strokeWidth="1.6"/>
+
+      {/* Cents readout */}
+      {showMeter && (
+        <text ref={centsTextRef} x={W - 50} y={midY + lineGap * 4.5} textAnchor="end"
+              fontFamily="Poppins, sans-serif" fontSize="13" fill="#0F1720" fontWeight="500">+0¢ in tune</text>
+      )}
+
+      {/* Running waveform strip */}
+      <path ref={rWaveRef} fill="none" stroke="rgba(15,23,32,0.45)" strokeWidth="1.6"/>
+      <path ref={sWaveRef} fill="none" stroke="rgba(15,23,32,0.22)" strokeWidth="1.1"/>
+    </svg>
+  );
+};
+
+const drawNotehead = () => {}; // unused (switched to SVG)
+
+// Musical control glyphs
+const TuningFork = () => <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M7 2v7a3 3 0 006 0V2"/><path d="M10 12v6"/><path d="M8 18h4"/></svg>;
+const Eye = () => <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M1 10s3-6 9-6 9 6 9 6-3 6-9 6-9-6-9-6z"/><circle cx="10" cy="10" r="2.5"/></svg>;
+const Metronome = () => <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M6 2h8l3 16H3z"/><path d="M10 5l-3 12"/></svg>;
+const Quill = () => <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M3 17L15 5"/><path d="M12 2l6 6-6 4-4-4z"/></svg>;
+const DoubleBar = () => <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M7 3v14M11 3v14M14 3v14"/></svg>;
+
+const MusicalBtn = ({label, glyph, danger}) => (
+  <button style={{
+    display:"flex", flexDirection:"column", alignItems:"center", gap:3,
+    width:56, height:56,
+    border:"1px solid " + (danger ? "var(--sb-clay)" : "rgba(15,23,32,0.15)"),
+    background: danger ? "var(--sb-clay)" : "#fff",
+    color: danger ? "#fff" : "var(--sb-ink)",
+    borderRadius:12, cursor:"pointer",
+    fontFamily:"var(--sb-font-ui)",
+    boxShadow: "0 1px 2px rgba(0,0,0,0.05)"
+  }}>
+    {glyph}
+    <span style={{fontSize:9, fontWeight:600, letterSpacing:".1em", textTransform:"uppercase"}}>{label}</span>
+  </button>
+);
+
+const vc = {
+  root: { position:"absolute", inset:0, display:"flex", flexDirection:"column", padding:"18px", background:"var(--sb-ink)", color:"var(--sb-paper)" },
+  top: { display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:14, padding:"4px 6px 14px" },
+  eyebrow: { fontSize:10, letterSpacing:".22em", textTransform:"uppercase", color:"rgba(251,246,239,0.55)", fontWeight:600 },
+  lessonTitle: { fontSize:20, fontWeight:400, display:"flex", alignItems:"center", gap:8, marginTop:4, letterSpacing:"-.01em" },
+  clef: { fontSize:34, lineHeight:0.8, color:"var(--sb-rose)" },
+  withBlock: { display:"flex", gap:10, alignItems:"center" },
+  withAvatar: { width:44, height:44, borderRadius:"50%", overflow:"hidden", background:"#000", border:"2px solid var(--sb-paper)", flexShrink:0 },
+  stave: { flex:"1 1 auto", borderRadius:12, overflow:"hidden", background:"#F3ECE0", minHeight:0, border:"1px solid rgba(251,246,239,0.08)" },
+  footer: { display:"flex", justifyContent:"space-between", alignItems:"center", gap:10, padding:"14px 4px 0", flexWrap:"wrap" },
+  selfRow: { display:"flex", alignItems:"center", gap:10 },
+  selfAvatar: { width:42, height:42, borderRadius:"50%", overflow:"hidden", background:"#000", flexShrink:0 },
+  hpChip: { marginLeft:6, fontSize:10, letterSpacing:".12em", textTransform:"uppercase", color:"rgba(251,246,239,0.65)", padding:"4px 10px", borderRadius:999, border:"1px solid rgba(251,246,239,0.2)" },
+  musical: { display:"flex", gap:8 }
+};
+
+window.VariationC = VariationC;
+
+
+// ==== app.jsx ====
+// app.jsx — chrome, variation tabs, tweaks panel, two pane mounts
+
+const App = () => {
+  const { tweaks, setTweak, tweaksOpen, setTweaksOpen } = window.useTweakState();
+  const Var = tweaks.variation === 'A' ? window.VariationA
+           : tweaks.variation === 'B' ? window.VariationB
+           : window.VariationC;
+  const label = tweaks.variation === 'A' ? 'Warm room'
+              : tweaks.variation === 'B' ? 'Listening room'
+              : 'The stave';
+  const blurb = tweaks.variation === 'A'
+    ? 'A conventional two-tile call, re-skinned as a warm paper & piano room. Ambient breath-ring around the speaker. Familiar territory, done thoughtfully.'
+    : tweaks.variation === 'B'
+    ? 'Audio-first. Video shrinks to a passport frame, and the live waveform becomes the centrepiece — because in a singing lesson, you\'re listening more than looking.'
+    : 'Music-teacher-native. The session sits on a live stave with real-time pitch tracking against the target note. Controls become tuning forks, metronomes, fermatas, double-bars.';
+
+  return (
+    <>
+      <div className="chrome">
+        <div className="chrome-inner">
+          <div className="brand">
+            <span className="mark"/>
+            Singing Bridge <span className="brand-amp">by Rich Consultancy</span>
+          </div>
+          <div className="var-tabs" role="tablist">
+            {['A','B','C'].map(v => (
+              <button key={v} className="var-tab"
+                      aria-pressed={tweaks.variation === v}
+                      onClick={() => setTweak('variation', v)}>
+                Variation {v}
+              </button>
+            ))}
+          </div>
+          <div className="chrome-meta">Session UI · Online singing lessons</div>
+        </div>
+      </div>
+
+      <div className="stage">
+        <div className="stage-head">
+          <div className="stage-title">
+            <h1><em>Variation {tweaks.variation} —</em> {label}</h1>
+            <p>{blurb}</p>
+          </div>
+          <div style={{fontSize:12, color:"var(--sb-ink-3)", textAlign:"right"}}>
+            Both panes live. <br/>Teacher left · Student right.
+          </div>
+        </div>
+
+        <div className="pair">
+          <div>
+            <div className="pane-label teacher">Teacher's view</div>
+            <div className="v-pane">
+              <Var role="teacher" tweaks={tweaks}/>
+            </div>
+          </div>
+          <div>
+            <div className="pane-label student">Student's view</div>
+            <div className="v-pane">
+              <Var role="student" tweaks={tweaks}/>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="captions">
+        <div>
+          <b>Teacher's view</b> — {tweaks.variation === 'A'
+            ? 'sees the student full-bleed with a name plate and a headphones-confirmed badge; self-preview as a small inset; controls laid out horizontally at the foot.'
+            : tweaks.variation === 'B'
+            ? 'sees Alex in a small framed portrait; the canvas is dominated by a live dual waveform (rose = remote, ink = self) so the teacher can watch phrasing, not faces.'
+            : 'sees the student\'s pitch drift around the target note in real time. Green = in tune, rose = sharp/flat. Cents readout visible when the meter is on.'}
+        </div>
+        <div>
+          <b>Student's view</b> — {tweaks.variation === 'A'
+            ? 'identical mirror of the teacher\'s layout with roles swapped. Reduces cognitive load — both sides navigate the same chrome.'
+            : tweaks.variation === 'B'
+            ? 'sees Eleanor in the framed portrait, same giant scope. Deliberately de-emphasises self-consciousness about appearance.'
+            : 'sees themselves reflected on the stave too — target note stays the same, their own notehead moves. Signature: "you are singing on the staff, not in front of a camera."'}
+        </div>
+      </div>
+
+      {/* Tweaks panel */}
+      <div className={"tweaks " + (tweaksOpen ? "open" : "")}>
+        <div className="tweaks-head">
+          <span>Tweaks</span>
+          <button onClick={() => setTweaksOpen(false)}
+                  style={{background:"none", border:0, color:"inherit", cursor:"pointer", fontSize:16, lineHeight:1}}>×</button>
+        </div>
+        <div className="tweaks-body">
+          <div className="tweak-row">
+            <div>
+              <div className="tweak-label">Variation</div>
+              <span className="tweak-sub">Switch UI approach</span>
+            </div>
+            <div className="seg" role="group">
+              {['A','B','C'].map(v => (
+                <button key={v}
+                        aria-pressed={tweaks.variation === v}
+                        onClick={() => setTweak('variation', v)}>{v}</button>
+              ))}
+            </div>
+          </div>
+          <div className="tweak-row">
+            <div>
+              <div className="tweak-label">Audio meter</div>
+              <span className="tweak-sub">Show numeric dB / cents readouts</span>
+            </div>
+            <button className="switch"
+                    aria-checked={tweaks.showMeter}
+                    onClick={() => setTweak('showMeter', !tweaks.showMeter)}/>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+};
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+
+
+</script>
+</body>
+</html>

@@ -3,7 +3,7 @@
 //          RoomState under a single `write().await` scope; no `.await`
 //          inside the guard except collecting data.
 // Role: The admission workflow described in §4.7.
-// Exports: join_lobby, watch_lobby, admit, reject
+// Exports: join_lobby, watch_lobby, admit, reject, confirm_headphones
 // Depends: tokio, state, protocol, session_log
 // Invariants: ≤ 1 teacher_conn, ≤ 1 active_session, LobbyEntry placement is
 //             XOR between lobby and active_session.
@@ -206,6 +206,10 @@ pub async fn join_lobby(
     true
 }
 
+/// Mark the calling student's lobby entry as headphones-confirmed and push a
+/// `LobbyState` update to the teacher. Idempotent: a duplicate call when the
+/// entry is already confirmed is a silent no-op with no second broadcast.
+/// Returns `false` only on a fatal pump error (caller should close the loop).
 pub async fn confirm_headphones(state: &Arc<AppState>, ctx: &ConnContext) -> bool {
     let (Some(slug), Some(entry_id)) = (ctx.slug.as_ref(), ctx.entry_id) else {
         send_error(&ctx.tx, ErrorCode::EntryNotFound, "not in lobby").await;
@@ -230,6 +234,10 @@ pub async fn confirm_headphones(state: &Arc<AppState>, ctx: &ConnContext) -> boo
                 return true;
             }
             Some(pos) => {
+                if rs.lobby[pos].headphones_confirmed {
+                    // Already confirmed — no-op, suppress duplicate broadcast.
+                    return true;
+                }
                 rs.lobby[pos].headphones_confirmed = true;
                 let update = ServerMsg::LobbyState { entries: rs.lobby_view() };
                 let teacher_tx = rs.teacher_conn.as_ref().map(|c| c.tx.clone());

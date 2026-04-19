@@ -8,6 +8,7 @@
 mod common;
 
 use common::{recv_json, send_ws, spawn_app};
+use futures_util::StreamExt as _;
 
 // ---------------------------------------------------------------------------
 // Happy path
@@ -65,11 +66,11 @@ async fn teacher_headphones_confirmed_rejected() {
 }
 
 // ---------------------------------------------------------------------------
-// Duplicate confirm idempotence — second confirm keeps state true
+// Duplicate confirm idempotence — second confirm produces no second broadcast
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn duplicate_headphones_confirmed_is_idempotent() {
+async fn duplicate_headphones_confirmed_suppresses_second_broadcast() {
     let app = spawn_app().await;
     let cookie = app.signup_teacher("t@example.test", "alice").await;
 
@@ -88,15 +89,22 @@ async fn duplicate_headphones_confirmed_is_idempotent() {
     .await;
     let _ = recv_json(&mut teacher).await; // lobby_state with student
 
-    // First confirm.
+    // First confirm — teacher receives exactly one broadcast.
     send_ws(&mut student, &serde_json::json!({"type":"headphones_confirmed"})).await;
     let u1 = recv_json(&mut teacher).await;
     assert_eq!(u1["entries"][0]["headphones_confirmed"], true);
 
-    // Second confirm — state already true; server still broadcasts an update.
+    // Second confirm — state already true; server must NOT broadcast again.
     send_ws(&mut student, &serde_json::json!({"type":"headphones_confirmed"})).await;
-    let u2 = recv_json(&mut teacher).await;
-    assert_eq!(u2["entries"][0]["headphones_confirmed"], true);
+
+    // Verify no second broadcast: a short-window timeout on teacher's WS must expire.
+    // We use a 200 ms deadline — enough for the duplicate to be processed server-side
+    // without waiting a full 2 s for the normal recv_json timeout.
+    let no_extra = tokio::time::timeout(
+        std::time::Duration::from_millis(200),
+        teacher.next(),
+    ).await;
+    assert!(no_extra.is_err(), "teacher must NOT receive a second lobby_state for duplicate confirm");
 }
 
 // ---------------------------------------------------------------------------
@@ -144,11 +152,11 @@ async fn headphones_confirmed_after_admission_returns_entry_not_found() {
 }
 
 // ---------------------------------------------------------------------------
-// Ordering guard — student sends HeadphonesConfirmed before LobbyJoin
+// Role guard — student sends HeadphonesConfirmed without LobbyJoin first
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn headphones_confirmed_before_lobby_join_returns_entry_not_found() {
+async fn headphones_confirmed_without_lobby_join_returns_not_in_session() {
     let app = spawn_app().await;
     let cookie = app.signup_teacher("t@example.test", "alice").await;
 

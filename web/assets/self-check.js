@@ -7,8 +7,10 @@
 // Exports: window.sbSelfCheck.show(stream, opts) → { teardown() }
 // Depends: DOM, getUserMedia (stream provided by caller), theme.css (.sb-self-check)
 // Invariants: teacher sessionStorage gate is UX-only convenience, not a trust boundary;
+//             confirm button disabled until headphones checkbox is checked;
+//             null stream renders overlay without media (degraded path — mic meter hidden);
 //             all tracks stopped on teardown; overlay removed from DOM on teardown.
-// Last updated: Sprint 9 (2026-04-19) -- initial implementation
+// Last updated: Sprint 9 (2026-04-19) -- refactored: buildOverlayDOM / startMicMeter / show
 
 (function (root, factory) {
   'use strict';
@@ -30,45 +32,25 @@
     return node;
   }
 
-  function show(stream, opts) {
-    var role = opts.role || 'student';
-    var onConfirm = opts.onConfirm || function () {};
+  // ---- DOM builder (pure render, no side-effects) ----
 
-    // Teacher gate: skip if already checked this session.
-    if (role === 'teacher' && typeof sessionStorage !== 'undefined') {
-      if (sessionStorage.getItem(TEACHER_SESSION_KEY)) {
-        // Stop any provided stream immediately — OS camera/mic indicators should clear.
-        if (stream) stream.getTracks().forEach(function (t) { t.stop(); });
-        onConfirm(false);
-        return { teardown: function () {} };
-      }
-    }
-
+  function buildOverlayDOM() {
     var overlay = el('div', 'sb-self-check-overlay');
     overlay.setAttribute('role', 'dialog');
     overlay.setAttribute('aria-modal', 'true');
     overlay.setAttribute('aria-label', 'Setup check');
 
     var inner = el('div', 'sb-self-check-inner');
-
     var heading = el('h2', 'sb-self-check-heading');
     heading.textContent = 'Quick setup check';
 
-    // Camera preview.
     var previewWrap = el('div', 'sb-self-check-preview');
     var vid = document.createElement('video');
-    vid.autoplay = true;
-    vid.playsInline = true;
-    vid.muted = true;
-    if (stream) {
-      vid.srcObject = stream;
-      vid.play().catch(function () {});
-    }
+    vid.autoplay = true; vid.playsInline = true; vid.muted = true;
     var previewLabel = el('p', 'sb-self-check-preview-label');
     previewLabel.textContent = 'Camera preview';
     previewWrap.append(vid, previewLabel);
 
-    // Mic level bar.
     var meterWrap = el('div', 'sb-self-check-meter-wrap');
     var meterLabel = el('span', 'sb-self-check-meter-label');
     meterLabel.textContent = 'Mic level';
@@ -77,37 +59,35 @@
     meterBar.appendChild(meterFill);
     meterWrap.append(meterLabel, meterBar);
 
-    // Headphones toggle.
     var hpWrap = el('div', 'sb-self-check-headphones');
     var hpLabel = el('label', 'sb-self-check-hp-label');
     var hpCheck = document.createElement('input');
     hpCheck.type = 'checkbox';
     hpCheck.className = 'sb-self-check-hp-check';
     var hpText = el('span');
-    hpText.textContent = 'I\'m wearing headphones';
+    hpText.textContent = "I'm wearing headphones";
     hpLabel.append(hpCheck, hpText);
     hpWrap.appendChild(hpLabel);
 
-    // Confirm button — disabled until headphones checkbox is checked.
     var confirmBtn = el('button', 'sb-self-check-confirm');
     confirmBtn.type = 'button';
     confirmBtn.textContent = 'Ready';
     confirmBtn.disabled = true;
 
-    hpCheck.addEventListener('change', function () {
-      confirmBtn.disabled = !hpCheck.checked;
-    });
-
     inner.append(heading, previewWrap, meterWrap, hpWrap, confirmBtn);
     overlay.appendChild(inner);
-    document.body.appendChild(overlay);
 
-    // Mic level animation via AudioContext.
+    return { overlay: overlay, vid: vid, meterFill: meterFill, hpCheck: hpCheck, confirmBtn: confirmBtn };
+  }
+
+  // ---- Mic meter loop (media side-effect, isolated) ----
+
+  function startMicMeter(stream, meterFill) {
+    var stopped = false;
+    var rafId = null;
     var audioCtx = null;
     var analyser = null;
     var source = null;
-    var rafId = null;
-    var stopped = false;
 
     if (stream && typeof AudioContext !== 'undefined') {
       try {
@@ -121,33 +101,61 @@
           if (stopped) return;
           analyser.getByteTimeDomainData(buf);
           var sum = 0;
-          for (var i = 0; i < buf.length; i++) {
-            var v = (buf[i] / 128) - 1;
-            sum += v * v;
-          }
-          var rms = Math.sqrt(sum / buf.length);
-          meterFill.style.width = Math.min(100, Math.round(rms * 400)) + '%';
+          for (var i = 0; i < buf.length; i++) { var v = (buf[i] / 128) - 1; sum += v * v; }
+          meterFill.style.width = Math.min(100, Math.round(Math.sqrt(sum / buf.length) * 400)) + '%';
           rafId = requestAnimationFrame(tick);
         })();
       } catch (_) {}
     }
 
-    function teardown() {
-      if (stopped) return;
-      stopped = true;
-      if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null; }
-      if (source) { try { source.disconnect(); } catch (_) {} }
-      if (analyser) { try { analyser.disconnect(); } catch (_) {} }
-      if (audioCtx) { try { audioCtx.close(); } catch (_) {} }
-      // Stop all tracks.
-      if (stream) {
-        stream.getTracks().forEach(function (t) { t.stop(); });
-      }
+    return {
+      stop: function () {
+        stopped = true;
+        if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null; }
+        if (source) { try { source.disconnect(); } catch (_) {} }
+        if (analyser) { try { analyser.disconnect(); } catch (_) {} }
+        if (audioCtx) { try { audioCtx.close(); } catch (_) {} }
+      },
+    };
+  }
+
+  // ---- Teardown helper ----
+
+  function makeTeardown(overlay, stream, meter) {
+    var done = false;
+    return function teardown() {
+      if (done) return;
+      done = true;
+      meter.stop();
+      if (stream) stream.getTracks().forEach(function (t) { t.stop(); });
       if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+    };
+  }
+
+  // ---- Public: show — orchestrator only ----
+
+  function show(stream, opts) {
+    var role = opts.role || 'student';
+    var onConfirm = opts.onConfirm || function () {};
+
+    if (role === 'teacher' && typeof sessionStorage !== 'undefined') {
+      if (sessionStorage.getItem(TEACHER_SESSION_KEY)) {
+        if (stream) stream.getTracks().forEach(function (t) { t.stop(); });
+        onConfirm(false);
+        return { teardown: function () {} };
+      }
     }
 
-    confirmBtn.addEventListener('click', function () {
-      var hp = hpCheck.checked;
+    var dom = buildOverlayDOM();
+    if (stream) { dom.vid.srcObject = stream; dom.vid.play().catch(function () {}); }
+    var meter = startMicMeter(stream, dom.meterFill);
+    var teardown = makeTeardown(dom.overlay, stream, meter);
+
+    dom.hpCheck.addEventListener('change', function () {
+      dom.confirmBtn.disabled = !dom.hpCheck.checked;
+    });
+    dom.confirmBtn.addEventListener('click', function () {
+      var hp = dom.hpCheck.checked;
       if (role === 'teacher' && typeof sessionStorage !== 'undefined') {
         sessionStorage.setItem(TEACHER_SESSION_KEY, '1');
       }
@@ -155,6 +163,7 @@
       onConfirm(hp);
     });
 
+    document.body.appendChild(dom.overlay);
     return { teardown: teardown };
   }
 

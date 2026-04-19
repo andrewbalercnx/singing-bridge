@@ -16,6 +16,7 @@ param adminSshPublicKey string
 @secure()
 param turnSharedSecret string
 param maintainerIp string  // SSH allow-list; restrict to VPN/home IP
+param adminEmail string    // Let's Encrypt account email for certbot
 
 var vmSize = 'Standard_D2als_v7'
 
@@ -88,6 +89,19 @@ resource nsg 'Microsoft.Network/networkSecurityGroups@2023-04-01' = {
           destinationPortRange: '5349'
         }
       }
+      {
+        name: 'AllowHttp80'
+        properties: {
+          priority: 150
+          protocol: 'Tcp'
+          access: 'Allow'
+          direction: 'Inbound'
+          sourceAddressPrefix: '*'
+          sourcePortRange: '*'
+          destinationAddressPrefix: '*'
+          destinationPortRange: '80'
+        }
+      }
     ]
   }
 }
@@ -123,6 +137,12 @@ resource nic 'Microsoft.Network/networkInterfaces@2023-04-01' = {
 
 // Cloud-init with coturn config. TURN secret injected via Bicep replace()
 // because raw triple-quoted strings cannot interpolate variables.
+//
+// TLS bootstrapping: certbot cannot run at first boot because the DNS A record
+// does not exist until after the VM's static IP is known (deploy step 5 → step 6).
+// Instead, cloud-init installs /usr/local/bin/sb-setup-tls.sh. After the DNS A
+// record propagates, the operator runs that script once (see deploy runbook step 6a).
+// Subsequent renewals are handled automatically by the certbot deploy hook.
 var cloudInitTemplate = '''
 #cloud-config
 package_update: true
@@ -158,8 +178,38 @@ write_files:
       denied-peer-ip=fe80::-febf:ffff:ffff:ffff:ffff:ffff:ffff:ffff
       log-file=/var/log/turnserver.log
       simple-log
+      cert=/etc/coturn/certs/fullchain.pem
+      pkey=/etc/coturn/certs/privkey.pem
+  - path: /etc/letsencrypt/renewal-hooks/deploy/coturn.sh
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      set -e
+      cp /etc/letsencrypt/live/turn.singing.rcnx.io/fullchain.pem /etc/coturn/certs/fullchain.pem
+      cp /etc/letsencrypt/live/turn.singing.rcnx.io/privkey.pem   /etc/coturn/certs/privkey.pem
+      chown turnserver:turnserver /etc/coturn/certs/*.pem
+      chmod 644 /etc/coturn/certs/fullchain.pem
+      chmod 600 /etc/coturn/certs/privkey.pem
+      systemctl restart coturn
+  - path: /usr/local/bin/sb-setup-tls.sh
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      # Run once after the DNS A record for turn.singing.rcnx.io has propagated.
+      set -e
+      certbot certonly --standalone --non-interactive --agree-tos \
+        --email ADMIN_EMAIL_PLACEHOLDER \
+        -d turn.singing.rcnx.io
+      /etc/letsencrypt/renewal-hooks/deploy/coturn.sh
+      echo "TLS setup complete. Verifying port 5349..."
+      ss -tlnp | grep 5349
 runcmd:
+  - mkdir -p /etc/coturn/certs
+  - chown turnserver:turnserver /etc/coturn/certs
+  - touch /var/log/turnserver.log
+  - chown turnserver:turnserver /var/log/turnserver.log
   - ufw allow 22/tcp
+  - ufw allow 80/tcp
   - ufw allow 3478
   - ufw allow 3478/udp
   - ufw allow 5349/tcp
@@ -167,7 +217,7 @@ runcmd:
   - systemctl enable --now coturn
 '''
 
-var cloudInit = base64(replace(cloudInitTemplate, 'TURN_SECRET_PLACEHOLDER', turnSharedSecret))
+var cloudInit = base64(replace(replace(cloudInitTemplate, 'TURN_SECRET_PLACEHOLDER', turnSharedSecret), 'ADMIN_EMAIL_PLACEHOLDER', adminEmail))
 
 // ---- VM ----
 resource vm 'Microsoft.Compute/virtualMachines@2023-03-01' = {

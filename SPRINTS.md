@@ -256,6 +256,31 @@ _Protocol_
 
 ---
 
+## Sprint 9: Lobby completion + Warm Room chat
+
+**Goal:** Complete the pre-session experience for both parties and deliver Warm Room–styled chat — during the session and as one-way messaging while the student waits in lobby.
+
+**Deliverables:**
+- Pre-session self-check screen for teacher and student: camera self-preview, mic level indicator, headphones confirmation toggle
+- `HeadphonesConfirmed` message flows server-side; teacher lobby entry shows live headphones chip
+- `headphonesConfirmed` in session-ui mount opts reflects actual confirmed state (not hardcoded `false`)
+- Warm Room chat drawer (in `session-ui.js`): slide-up panel, Fraunces italic header, unread dot on Say button
+- Warm Room lobby message toast (`lobby-toast.js`): dark navy pill, Fraunces italic, auto-dismiss with fade
+- `#chat-panel` and `#lobby-message-banner` static HTML elements removed; replaced by JS-owned components
+- New test files: `self-check.test.js`, `lobby-toast.test.js`; extended `session-ui.test.js`; new Rust integration test `ws_headphones.rs`
+
+**Exit criteria:**
+- Student completes self-check and confirms headphones; teacher sees chip update live in lobby before admitting
+- Session UI chip reflects actual headphones state
+- Say button opens Warm Room chat drawer; messages send and receive in real time; unread dot fires on new message
+- Teacher sends lobby message; student sees styled toast; it auto-dismisses after 8 s
+- Teacher self-check overlay appears once per browser session; doesn't re-appear on reload
+- All existing tests pass; new tests cover the headphones protocol, chat drawer, and toast
+
+**Status:** IN PROGRESS
+
+---
+
 ## Open items (noted, not blocking MVP)
 
 - Persistent "my students" list for the teacher — deliberately out of MVP

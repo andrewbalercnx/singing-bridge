@@ -90,11 +90,12 @@
     let handle = null;
 
     // Self-check while waiting in lobby.
+    // Always show — pass null if capture fails so the overlay degrades gracefully.
     let selfCheckStream = null;
     try {
       selfCheckStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
     } catch (_) {}
-    if (window.sbSelfCheck && selfCheckStream) {
+    if (window.sbSelfCheck) {
       window.sbSelfCheck.show(selfCheckStream, {
         role: 'student',
         onConfirm(hp) {
@@ -134,7 +135,7 @@
           remoteRoleLabel: 'Your teacher',
           localStream: localStream || null,
           remoteStream: null,
-          headphonesConfirmed: headphonesConfirmedState,
+          headphonesConfirmed: false,
           micEnabled: true,
           videoEnabled: true,
           onMicToggle() {

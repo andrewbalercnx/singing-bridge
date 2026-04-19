@@ -16,27 +16,6 @@ param logWorkspaceCustomerId string
 param logWorkspaceKey string
 param storageAccountName string = 'sbprod${uniqueString(resourceGroup().id)}'
 
-// ---- Cloudflare published IPv4 ranges (update when CF publishes new ranges) ----
-// Source: https://www.cloudflare.com/ips-v4
-// Runbook: knowledge/runbook/deploy.md § CF IP range refresh
-param cfIpRanges array = [
-  '173.245.48.0/20'
-  '103.21.244.0/22'
-  '103.22.200.0/22'
-  '103.31.4.0/22'
-  '141.101.64.0/18'
-  '108.162.192.0/18'
-  '190.93.240.0/20'
-  '188.114.96.0/20'
-  '197.234.240.0/22'
-  '198.41.128.0/17'
-  '162.158.0.0/15'
-  '104.16.0.0/13'
-  '104.24.0.0/14'
-  '172.64.0.0/13'
-  '131.0.72.0/22'
-]
-
 // Secrets passed as secure parameters (never logged by ARM).
 @secure()
 param sbTurnSharedSecret string
@@ -94,13 +73,6 @@ resource caStorage 'Microsoft.App/managedEnvironments/storages@2023-05-01' = {
   }
 }
 
-// ---- IP security restrictions from CF ranges ----
-var ipRestrictions = [for (range, i) in cfIpRanges: {
-  name: 'cloudflare-${i}'
-  action: 'Allow'
-  ipAddressRange: range
-}]
-
 // ---- Container App ----
 resource app 'Microsoft.App/containerApps@2023-05-01' = {
   name: appName
@@ -113,7 +85,6 @@ resource app 'Microsoft.App/containerApps@2023-05-01' = {
         external: true
         targetPort: 8080
         transport: 'http'
-        ipSecurityRestrictions: ipRestrictions
       }
       secrets: [
         { name: 'sb-turn-secret', value: sbTurnSharedSecret }

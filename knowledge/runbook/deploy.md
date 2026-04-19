@@ -36,11 +36,31 @@ az deployment group create \
   --parameters \
     adminSshPublicKey="$(cat ~/.ssh/id_ed25519.pub)" \
     turnSharedSecret=<same-32-byte-secret-as-above> \
-    maintainerIp=<your-ip>/32
+    maintainerIp=<your-ip>/32 \
+    adminEmail=andrew.bale@rcnx.io
 
-# 6. Configure DNS (Cloudflare dashboard or Terraform):
-#    singing.rcnx.io     A  <container-app-fqdn>   proxied (orange)
-#    turn.singing.rcnx.io A  <vm-static-ip>        DNS-only (grey)
+# Get the coturn static IP for DNS:
+az network public-ip show -n sb-turn-pip -g sb-prod-rg --query ipAddress -o tsv
+
+# 6. Configure DNS (Wix or other registrar):
+#    singing      CNAME  <container-app-fqdn>          (get from step 4 output)
+#    turn.singing A      <vm-static-ip>                (get from step 5 above)
+#    mail.singing CNAME  singing-bridge-mail.singing-bridge.workers.dev
+#    asuid.singing TXT   <domain-verification-token>   (get from step 6a below)
+
+# 6a. Bind TLS cert on the Container App (run after DNS propagates):
+az containerapp hostname add \
+  --name sb-server --resource-group sb-prod-rg \
+  --hostname singing.rcnx.io
+# ^ This will fail with the required TXT token value — add that as asuid.singing, then re-run:
+az containerapp hostname bind \
+  --name sb-server --resource-group sb-prod-rg \
+  --hostname singing.rcnx.io \
+  --environment sb-env \
+  --validation-method CNAME
+
+# 6b. Mint TLS cert on the coturn VM (run after turn.singing DNS propagates):
+ssh azureuser@<vm-static-ip> sudo /usr/local/bin/sb-setup-tls.sh
 
 # 7. Deploy Cloudflare Worker:
 #    wrangler deploy infra/cloudflare/workers/magic-link-relay.js
@@ -56,12 +76,6 @@ az deployment group create \
 Trigger the `Deploy to Azure` workflow dispatch from GitHub Actions.
 The workflow builds the image, pushes to ACR, updates the Container App,
 and verifies `/healthz`.
-
-## Cloudflare IP Range Refresh
-
-CF publishes updated IP ranges at https://www.cloudflare.com/ips-v4.
-When ranges change, update `cfIpRanges` in `infra/bicep/container-app.bicep`
-and re-deploy the Container App.
 
 ## Monitoring
 

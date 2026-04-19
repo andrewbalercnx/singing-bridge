@@ -27,16 +27,20 @@
   const sendDismiss = document.getElementById('send-recording-dismiss');
 
   // Self-check: show once per session before first student interaction.
+  // Always call show — pass null if capture fails so overlay degrades gracefully.
   if (window.sbSelfCheck) {
     navigator.mediaDevices.getUserMedia({ video: true, audio: true }).then(function (stream) {
       window.sbSelfCheck.show(stream, { role: 'teacher', onConfirm: function () {} });
-    }).catch(function () {});
+    }).catch(function () {
+      window.sbSelfCheck.show(null, { role: 'teacher', onConfirm: function () {} });
+    });
   }
 
   // Recording state
   let recorderHandle = null;
   let recordStartTime = null;
   let lastStudentEmail = '';
+  let lastStudentHeadphones = false;
   let localAudioTrack = null;
 
   function setRecordState(state) {
@@ -145,6 +149,7 @@
     admit.textContent = 'Admit';
     admit.addEventListener('click', () => {
       lastStudentEmail = entry.email;
+      lastStudentHeadphones = !!entry.headphones_confirmed;
       handleProxy.admit(entry.id);
     });
     const reject = document.createElement('button');
@@ -211,7 +216,7 @@
         remoteRoleLabel: 'Student',
         localStream: localStream || null,
         remoteStream: null,
-        headphonesConfirmed: false,
+        headphonesConfirmed: lastStudentHeadphones,
         micEnabled: true,
         videoEnabled: true,
         onMicToggle() {

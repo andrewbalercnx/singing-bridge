@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PDF &rarr; Piano Audio (spike)</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+</head>
+<body>
+  <main>
+    <h1>PDF &rarr; Piano Audio</h1>
+    <p class="lede">Upload a score, pick the piano part, listen to it rendered on a piano.</p>
+
+    <ol class="steps">
+      <li id="step-upload" class="step is-active">
+        <h2><span class="num">1</span> Upload score</h2>
+        <p class="help">Accepts PDF, MusicXML (.xml / .musicxml / .mxl). Max 20 MB.</p>
+        <form id="upload-form">
+          <input type="file" id="file-input" accept=".pdf,.xml,.musicxml,.mxl" required>
+          <button type="submit">Upload</button>
+          <button type="button" id="fixture-btn" class="secondary">Or load two-part fixture</button>
+        </form>
+        <p class="status" id="upload-status"></p>
+      </li>
+
+      <li id="step-omr" class="step">
+        <h2><span class="num">2</span> Recognise notation</h2>
+        <p class="help">PDFs run through Audiveris OMR. MusicXML uploads skip straight ahead.</p>
+        <button type="button" id="omr-btn" disabled>Recognise</button>
+        <p class="status" id="omr-status"></p>
+      </li>
+
+      <li id="step-select" class="step">
+        <h2><span class="num">3</span> Select the piano accompaniment</h2>
+        <p class="help">Pick which part to render. It will be voiced as piano regardless of the source instrument.</p>
+        <div id="parts-list"></div>
+        <button type="button" id="select-btn" disabled>Use this part</button>
+        <p class="status" id="select-status"></p>
+      </li>
+
+      <li id="step-render" class="step">
+        <h2><span class="num">4</span> Render &amp; play</h2>
+        <p class="help">Renders MIDI to WAV via FluidSynth + a piano SoundFont.</p>
+        <button type="button" id="render-btn" disabled>Render audio</button>
+        <p class="status" id="render-status"></p>
+        <audio id="audio-player" controls hidden></audio>
+        <p class="downloads" id="downloads"></p>
+      </li>
+    </ol>
+  </main>
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>

@@ -1,0 +1,84 @@
+:root {
+  --bg: #0f1117;
+  --panel: #171a21;
+  --panel-active: #1f2430;
+  --ink: #e8eaef;
+  --ink-dim: #9ba1ae;
+  --accent: #f3b55b;
+  --accent-ink: #1a1300;
+  --ok: #7ed07e;
+  --err: #ef6a6a;
+  --border: #2a2f3a;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: var(--bg);
+  color: var(--ink);
+  line-height: 1.45;
+}
+main {
+  max-width: 720px;
+  margin: 3rem auto;
+  padding: 0 1.25rem;
+}
+h1 { font-size: 1.7rem; margin: 0 0 .25rem; }
+.lede { color: var(--ink-dim); margin: 0 0 2rem; }
+
+ol.steps { list-style: none; padding: 0; margin: 0; }
+.step {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1.1rem 1.25rem;
+  margin-bottom: 1rem;
+  opacity: 0.5;
+  pointer-events: none;
+}
+.step.is-active { opacity: 1; pointer-events: auto; background: var(--panel-active); }
+.step.is-done { opacity: 1; }
+.step h2 {
+  margin: 0 0 .25rem;
+  font-size: 1.1rem;
+  display: flex; align-items: center; gap: .6rem;
+}
+.num {
+  display: inline-grid; place-items: center;
+  width: 1.6rem; height: 1.6rem;
+  border-radius: 50%;
+  background: var(--border);
+  color: var(--ink-dim);
+  font-size: .85rem;
+}
+.step.is-active .num, .step.is-done .num { background: var(--accent); color: var(--accent-ink); }
+.help { color: var(--ink-dim); font-size: .9rem; margin: .25rem 0 .9rem; }
+
+button {
+  background: var(--accent); color: var(--accent-ink);
+  border: 0; border-radius: 6px;
+  padding: .5rem .95rem; font-weight: 600; cursor: pointer;
+}
+button:disabled { opacity: .4; cursor: not-allowed; }
+button.secondary { background: transparent; color: var(--ink-dim); border: 1px solid var(--border); }
+
+input[type=file] { color: var(--ink-dim); margin-right: .5rem; }
+.status { min-height: 1.2em; font-size: .9rem; margin: .6rem 0 0; color: var(--ink-dim); }
+.status.ok { color: var(--ok); }
+.status.err { color: var(--err); }
+
+#parts-list label {
+  display: flex; gap: .6rem; align-items: baseline;
+  padding: .45rem .6rem;
+  border: 1px solid var(--border); border-radius: 6px;
+  margin-bottom: .4rem;
+  cursor: pointer;
+}
+#parts-list label:hover { border-color: var(--accent); }
+#parts-list .name { font-weight: 600; }
+#parts-list .instr { color: var(--ink-dim); font-size: .85rem; }
+#parts-list .empty { color: var(--err); font-size: .8rem; }
+
+#audio-player { width: 100%; margin-top: .8rem; }
+.downloads { font-size: .85rem; }
+.downloads a { color: var(--accent); }

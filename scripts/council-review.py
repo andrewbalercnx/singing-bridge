@@ -2003,17 +2003,18 @@ def _run_parallel_council(
     config: dict,
     *,
     verbose: bool,
-) -> tuple[dict[str, str], int]:
+) -> tuple[dict[str, str], int, dict[str, dict]]:
     """Fan out to every active member, collect their reviews, write
     each to ``council_dir/<role>.md``, return (council_reviews,
-    successful_count). Sprint 6: extracted from main() to control
-    complexity (R1 #20)."""
+    successful_count, member_stats). Sprint 6: extracted from main() to
+    control complexity (R1 #20)."""
     codex_stagger = config["council"].get("codex_stagger_seconds", 2)
     retry_delay = config["council"].get("retry_delay_seconds", 5)
     parallel_timeout = config["council"].get("parallel_timeout_seconds", 180)
 
     print(f"  Running {len(active_members)} council members in parallel...")
     council_reviews: dict[str, str] = {}
+    member_stats: dict[str, dict] = {}
 
     with ThreadPoolExecutor(max_workers=len(active_members)) as executor:
         futures = {
@@ -2030,15 +2031,21 @@ def _run_parallel_council(
         }
         for future in as_completed(futures):
             member = futures[future]
+            role = member["role"]
             try:
                 role, review_text, elapsed = future.result(timeout=parallel_timeout + 30)
                 council_reviews[role] = review_text
                 (council_dir / f"{role}.md").write_text(review_text)
-                status = "UNAVAILABLE" if "UNAVAILABLE" in review_text else "done"
-                if verbose or status == "UNAVAILABLE":
+                unavailable = "UNAVAILABLE" in review_text
+                member_stats[role] = {
+                    "elapsed_s": round(elapsed, 2),
+                    "output_tokens_est": len(review_text) // 4,
+                    "unavailable": unavailable,
+                }
+                status = "UNAVAILABLE" if unavailable else "done"
+                if verbose or unavailable:
                     print(f"    {member['label']:25s} {status:12s} ({elapsed:.1f}s)")
             except Exception as e:  # noqa: BLE001
-                role = member["role"]
                 print(
                     f"  [debug] {member['label']} future error: "
                     f"{type(e).__name__}: {e}",
@@ -2050,12 +2057,17 @@ def _run_parallel_council(
                     f"**Error:** ({type(e).__name__})\n\n"
                     f"This expert was unable to complete their review."
                 )
+                member_stats[role] = {
+                    "elapsed_s": None,
+                    "output_tokens_est": 0,
+                    "unavailable": True,
+                }
                 print(f"    {member['label']:25s} FAILED       ({type(e).__name__})")
 
     successful = sum(1 for r in council_reviews.values() if "UNAVAILABLE" not in r)
     print()
     print(f"  Council complete: {successful}/{len(active_members)} experts succeeded")
-    return council_reviews, successful
+    return council_reviews, successful, member_stats
 
 
 def _print_header(
@@ -2128,6 +2140,41 @@ def _print_next_steps(
         print("  Options: cut scope, override with higher max_rounds, or accept Known Debt.")
 
 
+def _materials_breakdown(materials: str) -> dict:
+    """Estimate token cost of each section in the assembled materials string.
+
+    Sections are delimited by '### ' headers. Classifies each by its
+    header prefix into: plan, changes, file_list, codegraph, source_files,
+    tracker, other.
+    """
+    totals: dict[str, int] = {
+        "plan": 0, "changes": 0, "file_list": 0,
+        "codegraph": 0, "source_files": 0, "other": 0,
+    }
+    # Split on any markdown heading (## or ###) preceded by a blank line.
+    # Prepend sentinel so the first section is also captured.
+    import re as _re
+    chunks = _re.split(r"\n\n#{2,3} ", "\n\n" + materials)
+    for chunk in chunks:
+        if not chunk.strip():
+            continue
+        first_line = chunk.lstrip().splitlines()[0].lower()
+        tokens = len(chunk) // 4
+        if "plan_sprint" in first_line or "approved plan" in first_line or "primary" in first_line:
+            totals["plan"] += tokens
+        elif "changes.md" in first_line:
+            totals["changes"] += tokens
+        elif "changed files" in first_line:
+            totals["file_list"] += tokens
+        elif "codebase" in first_line or "codegraph" in first_line or "structure context" in first_line:
+            totals["codegraph"] += tokens
+        elif any(ext in first_line for ext in (".rs", ".py", ".js", ".ts", ".go", ".java")):
+            totals["source_files"] += tokens
+        else:
+            totals["other"] += tokens
+    return {f"est_mat_{k}_tokens": v for k, v in totals.items()}
+
+
 def _estimate_prompt_tokens(
     active_members: list[dict],
     materials: str,
@@ -2149,13 +2196,15 @@ def _estimate_prompt_tokens(
     # differs slightly. Use the first member as representative.
     input_tokens_per_member = (len(sample_sys) + len(sample_usr)) // 4
     max_output_per_member = active_members[0].get("max_tokens", 4096)
-    return {
+    result = {
         "est_input_tokens_per_member": input_tokens_per_member,
         "est_input_tokens_total": input_tokens_per_member * len(active_members),
         "est_max_output_tokens_total": max_output_per_member * len(active_members),
         "est_materials_tokens": len(materials) // 4,
         "active_lens_count": len(active_members),
     }
+    result.update(_materials_breakdown(materials))
+    return result
 
 
 def _safe_emit_metrics(
@@ -2269,12 +2318,13 @@ def main():
     _codex_call_index = 0
     _codex_call_lock = threading.Lock()
 
-    council_reviews, successful = _run_parallel_council(
+    council_reviews, successful, member_stats = _run_parallel_council(
         active_members, materials, api_keys,
         sprint, title, round_num, review_type,
         tracker_content, council_dir, config,
         verbose=ns.verbose,
     )
+    prompt_token_estimates["member_stats"] = member_stats
 
     if successful < QUORUM_THRESHOLD:
         print(f"  ERROR: Quorum not met ({successful} < {QUORUM_THRESHOLD}). Aborting.", file=sys.stderr)
@@ -2304,6 +2354,8 @@ def main():
     )
     elapsed = time.monotonic() - start
     print(f"  Consolidator complete ({elapsed:.1f}s)")
+    prompt_token_estimates["est_consolidator_output_tokens"] = len(consolidated) // 4
+    prompt_token_estimates["est_consolidator_elapsed_s"] = round(elapsed, 2)
 
     review_output_file = repo_root / f"REVIEW_Sprint{sprint}.md"
     review_output_file.write_text(consolidated)
@@ -2315,6 +2367,15 @@ def main():
         routed_lenses=routed_lenses,
     )
     print(f"    Findings tracker: {tracker_file.name}")
+    try:
+        all_findings = _read_tracker(tracker_file)
+        new_this_round = [f for f in all_findings if f.get("round") == round_num]
+        prompt_token_estimates["new_findings_this_round"] = len(new_this_round)
+        prompt_token_estimates["new_findings_high"] = sum(1 for f in new_this_round if f.get("severity", "").lower() == "high")
+        prompt_token_estimates["new_findings_medium"] = sum(1 for f in new_this_round if f.get("severity", "").lower() == "medium")
+        prompt_token_estimates["new_findings_low"] = sum(1 for f in new_this_round if f.get("severity", "").lower() == "low")
+    except Exception:  # noqa: BLE001
+        pass
 
     verdict = extract_verdict(consolidated)
     if verdict:

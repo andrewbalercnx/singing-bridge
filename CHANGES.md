@@ -11,6 +11,34 @@
 > **Commit:** `<sha>`
 > ```
 
+## Sprint 9: Lobby completion + Warm Room chat — 2026-04-19
+
+**Files changed:**
+- `server/src/ws/protocol.rs` — `HeadphonesConfirmed` ClientMsg; `headphones_confirmed: bool` in `LobbyEntryView`; serde default + roundtrip tests
+- `server/src/state.rs` — `headphones_confirmed` field on `LobbyEntry`; propagated via `view()`
+- `server/src/ws/connection.rs` — `entry_id: Option<EntryId>` for O(1) headphones lookup
+- `server/src/ws/lobby.rs` — `confirm_headphones()` with idempotence short-circuit; `join_lobby` populates `ctx.entry_id`
+- `server/src/ws/mod.rs` — `HeadphonesConfirmed` dispatch; role guard
+- `server/tests/ws_headphones.rs` — 5 integration tests: happy path, role guard, idempotence, post-admission guard, ordering guard
+- `web/assets/self-check.js` — camera self-preview, mic level meter, headphones toggle; teacher sessionStorage gate; null-stream degraded path; refactored into `buildOverlayDOM`/`startMicMeter`/`makeTeardown`/`show`
+- `web/assets/chat-drawer.js` — Warm Room chat drawer; split into `buildDrawerHeader`/`buildDrawerForm`/`buildMessageLog` helpers
+- `web/assets/lobby-toast.js` — dark navy pill toast; max-3 eviction; two-stage auto-dismiss
+- `web/assets/session-panels.js` — extracted from session-ui.js: `buildRemotePanel`, `buildControls`, `buildEndDialog`; reduces session-ui.js from 442 to 324 lines
+- `web/assets/session-ui.js` — chat drawer wiring, `appendChatMsg` on handle, `setSayBadge`, uses `sbSessionPanels`
+- `web/assets/signalling.js` — `sendHeadphonesConfirmed` on student handle; `Signalling` class moved to factory (Node-testable)
+- `web/assets/teacher.js` — `lastStudentHeadphones` tracking; headphones chip in lobby entries; self-check always shown
+- `web/assets/student.js` — self-check + headphones flush race fix; lobby toast; `onLobbyMessage` wiring
+- `web/assets/theme.css` — `.sb-btn-badge`, `.sb-chat-drawer*`, `.sb-lobby-toast*`, `.sb-self-check*`, `.headphones-chip`
+- `web/teacher.html`, `web/student.html` — removed `#chat-panel`/`#lobby-message-banner`; added script tags
+- `web/assets/tests/self-check.test.js` — 14 tests incl. disabled-gating regression, null-stream, teacher stream-stop
+- `web/assets/tests/chat-drawer.test.js` — 13 tests for chat drawer incl. open/close/unread/submit
+- `web/assets/tests/lobby-toast.test.js` — 5 tests for toast lifecycle
+- `web/assets/tests/session-ui.test.js` — headphonesConfirmed propagation tests, post-teardown appendChatMsg
+- `web/assets/tests/signalling.test.js` — Signalling frame-ordering regression guard (4 tests)
+- `server/tests/http_teach_debug_marker.rs` — session-panels.js load-order assertions
+
+**Commit:** `3e1e592`
+
 ## Sprint 8: Variation A "The Warm Room" Session UI — 2026-04-19
 
 **Files changed:**

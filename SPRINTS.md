@@ -277,7 +277,7 @@ _Protocol_
 - Teacher self-check overlay appears once per browser session; doesn't re-appear on reload
 - All existing tests pass; new tests cover the headphones protocol, chat drawer, and toast
 
-**Status:** IN PROGRESS
+**Status:** COMPLETE
 
 ---
 

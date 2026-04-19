@@ -2,7 +2,7 @@
 // Purpose: Unit tests for session-ui.js: fmtTime, deriveToggleView,
 //          buildBaselineStrip (setElapsed, setLevels), buildMutedBanner
 //          (checkAndUpdate), runAudioLoop onFrame contract, mount lifecycle.
-// Last updated: Sprint 8 (2026-04-19) -- tests call actual shipped functions
+// Last updated: Sprint 9 (2026-04-19) -- sbSessionPanels wiring; headphonesConfirmed propagation tests
 
 'use strict';
 

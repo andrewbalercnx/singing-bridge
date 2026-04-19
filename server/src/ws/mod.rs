@@ -9,7 +9,7 @@
 //             Role is decided on the first LobbyJoin/LobbyWatch and immutable
 //             thereafter. SessionMetrics rate-limited to 1 frame per 5 s.
 //             loss_bp clamped to [0, 10000] before persist (100% = 10000 bp).
-// Last updated: Sprint 7 (2026-04-18) -- Chat + LobbyMessage handlers
+// Last updated: Sprint 9 (2026-04-19) -- HeadphonesConfirmed handler
 
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 

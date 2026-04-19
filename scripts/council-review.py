@@ -842,12 +842,62 @@ def preflight_code_review(
     )
 
 
-def _render_source_file(path: str, repo_root: Path) -> str:
-    """Render one source file as a code-fenced section. Shared between
-    tracked and untracked rendering so they can't diverge."""
+def _get_sprint_base_sha(sprint: str, repo_root: Path) -> str | None:
+    """Return the sprint base commit SHA, or None if not recorded."""
+    base_file = repo_root / f".sprint-base-commit-{sprint}"
+    if base_file.exists():
+        sha = base_file.read_text().strip()
+        return sha if sha else None
+    return None
+
+
+def _file_header_block(full_path: Path, max_lines: int = 20) -> str:
+    """Return the leading comment/header block of a source file (up to max_lines)."""
+    try:
+        lines = full_path.read_text(errors="replace").splitlines()
+    except Exception:
+        return ""
+    header: list[str] = []
+    for line in lines[:max_lines]:
+        if not line.strip() and len(header) >= 3:
+            break
+        header.append(line)
+    return "\n".join(header)
+
+
+def _render_source_file(path: str, repo_root: Path, sprint: str | None = None) -> str:
+    """Render one source file for reviewers.
+
+    When a sprint base commit is available, emit the file header block plus
+    a git diff of only the changed lines (with 8 lines of context). This
+    replaces full-file content and cuts source-file token cost by ~70%.
+
+    Falls back to full content (up to 200 lines) for new files or when no
+    sprint base is recorded.
+    """
     full_path = repo_root / path
-    content = read_file_safe(full_path, max_lines=200)
     ext = Path(path).suffix.lstrip(".")
+
+    if sprint:
+        base_sha = _get_sprint_base_sha(sprint, repo_root)
+        if base_sha:
+            diff_result = subprocess.run(
+                ["git", "diff", "-U8", f"{base_sha}..HEAD", "--", path],
+                capture_output=True, text=True,
+                cwd=str(repo_root),
+            )
+            if diff_result.returncode == 0 and diff_result.stdout.strip():
+                header = _file_header_block(full_path)
+                header_section = f"```{ext}\n{header}\n```\n" if header else ""
+                diff_lines = diff_result.stdout.strip().splitlines()
+                if len(diff_lines) > 300:
+                    diff_lines = diff_lines[:300]
+                    diff_lines.append("... [diff truncated at 300 lines]")
+                diff_text = "\n".join(diff_lines)
+                return f"### {path}\n{header_section}```diff\n{diff_text}\n```"
+
+    # Fallback: full content (new file or no sprint base)
+    content = read_file_safe(full_path, max_lines=200)
     return f"### {path}\n```{ext}\n{content}\n```"
 
 
@@ -896,7 +946,7 @@ def gather_code_materials(
                 source_files.append(f)
 
     for f in source_files[:15]:
-        sections.append(_render_source_file(f, repo_root))
+        sections.append(_render_source_file(f, repo_root, sprint=sprint))
 
     # Compute the insertion anchor so the banner (if any) stays first.
     anchor = 1 if banner else 0

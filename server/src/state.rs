@@ -10,7 +10,7 @@
 //             AppState::room / ::room_or_insert (no direct DashMap access
 //             from async fns). BLOCK_LIST_CAP enforced on every block insert;
 //             oldest entry evicted when cap is reached (FIFO).
-// Last updated: Sprint 6 (2026-04-18) -- add recording_active, BlobStore
+// Last updated: Sprint 9 (2026-04-19) -- headphones_confirmed in LobbyEntry
 
 use std::net::IpAddr;
 use std::sync::atomic::{AtomicU16, AtomicUsize, Ordering};
@@ -88,6 +88,7 @@ pub struct LobbyEntry {
     pub joined_at: Instant,
     pub joined_at_unix: i64,
     pub conn: ClientHandle,
+    pub headphones_confirmed: bool,
 }
 
 impl LobbyEntry {
@@ -100,6 +101,7 @@ impl LobbyEntry {
             tier: self.tier,
             tier_reason: self.tier_reason.clone(),
             joined_at_unix: self.joined_at_unix,
+            headphones_confirmed: self.headphones_confirmed,
         }
     }
 }

@@ -12,7 +12,7 @@
 //             paths only (no user input reaches innerHTML);
 //             exactly one RAF loop per mount; teardown is idempotent;
 //             mount is an orchestrator only (≤40 lines of own logic).
-// Last updated: Sprint 8 (2026-04-19) -- initial implementation
+// Last updated: Sprint 9 (2026-04-19) -- chat drawer wiring, appendChatMsg on handle
 
 (function (root, factory) {
   'use strict';
@@ -208,6 +208,10 @@
     micBtn._label = 'Mic';
     vidBtn._label = 'Video';
 
+    // Unread badge dot on Say button.
+    var sayBadge = el('span', 'sb-btn-badge'); sayBadge.hidden = true;
+    sayBtn.appendChild(sayBadge);
+
     micBtn.addEventListener('click', function () { opts.onMicToggle(); });
     vidBtn.addEventListener('click', function () { opts.onVideoToggle(); });
     noteBtn.addEventListener('click', function () { opts.onNote(); });
@@ -220,6 +224,7 @@
       node: wrap,
       setMicActive: function (active) { refreshBtn(micBtn, active ? 'mic' : 'mic-off', active); },
       setVideoActive: function (active) { refreshBtn(vidBtn, active ? 'vid' : 'vid-off', active); },
+      setSayBadge: function (visible) { sayBadge.hidden = !visible; },
     };
   }
 
@@ -386,22 +391,44 @@
     var baseline = buildBaselineStrip();
     var mutedBanner = opts.localStream ? buildMutedBanner() : makeNullBanner();
     var endDialog = buildEndDialog(function () { opts.onEnd(); });
+
+    // Chat drawer — built if onSendChat is provided.
+    var _g = typeof globalThis !== 'undefined' ? globalThis : (typeof window !== 'undefined' ? window : {});
+    var chatDrawer = null;
+    if (opts.onSendChat && _g.sbChatDrawer) {
+      chatDrawer = _g.sbChatDrawer.buildChatDrawer({
+        onSendChat: opts.onSendChat,
+        onUnreadChange: function (hasUnread) {
+          if (controls && controls.setSayBadge) controls.setSayBadge(hasUnread);
+        },
+      });
+    }
+
     var controls = buildControls({
       micEnabled: micEnabled, videoEnabled: vidEnabled,
       onMicToggle: function () { micEnabled = !micEnabled; controls.setMicActive(micEnabled); opts.onMicToggle(); },
       onVideoToggle: function () { vidEnabled = !vidEnabled; controls.setVideoActive(vidEnabled); opts.onVideoToggle(); },
       onEnd: function () { endDialog.showModal(); },
       onNote: opts.onNote,
-      onSay: opts.onSay,
+      onSay: chatDrawer ? function () { chatDrawer.toggle(); } : (opts.onSay || function () {}),
     });
     var selfPreview = buildSelfPreview(opts.localStream);
     var bottom = el('div', 'sb-bottom');
     bottom.append(controls.node, selfPreview.node);
     var root = el('div', 'sb-session');
     root.append(remotePanel.node, baseline.node, bottom, mutedBanner.node, endDialog);
+    if (chatDrawer) root.append(chatDrawer.node);
     container.appendChild(root);
 
-    return runSessionLifecycle(root, { audioCtx: audioCtx, analyserSelf: analyserSelf, remotePanel: remotePanel, baseline: baseline, mutedBanner: mutedBanner, controls: controls }, opts);
+    var lifecycle = runSessionLifecycle(root, { audioCtx: audioCtx, analyserSelf: analyserSelf, remotePanel: remotePanel, baseline: baseline, mutedBanner: mutedBanner, controls: controls }, opts);
+
+    return {
+      teardown: lifecycle.teardown,
+      setRemoteStream: lifecycle.setRemoteStream,
+      appendChatMsg: function (from, text) {
+        if (chatDrawer) chatDrawer.appendMsg(from, text);
+      },
+    };
   }
 
   return {

@@ -2,7 +2,7 @@
 // Purpose: Teacher UI wiring. Student-supplied strings rendered via
 //          textContent only (no innerHTML — XSS prevention). Sprint 8:
 //          replaced wireControls with sbSessionUI.mount into #session-root.
-// Last updated: Sprint 8 (2026-04-19) -- session-ui mount replaces wireControls
+// Last updated: Sprint 9 (2026-04-19) -- chat drawer via session-ui, teacher self-check, headphones chip
 
 'use strict';
 
@@ -26,11 +26,12 @@
   const sendStatus = document.getElementById('send-recording-status');
   const sendDismiss = document.getElementById('send-recording-dismiss');
 
-  // Chat elements
-  const chatPanel = document.getElementById('chat-panel');
-  const chatLog = document.getElementById('chat-log');
-  const chatForm = document.getElementById('chat-form');
-  const chatInput = document.getElementById('chat-input');
+  // Self-check: show once per session before first student interaction.
+  if (window.sbSelfCheck) {
+    navigator.mediaDevices.getUserMedia({ video: true, audio: true }).then(function (stream) {
+      window.sbSelfCheck.show(stream, { role: 'teacher', onConfirm: function () {} });
+    }).catch(function () {});
+  }
 
   // Recording state
   let recorderHandle = null;
@@ -88,31 +89,6 @@
     });
   }
 
-  function appendChat(from, text) {
-    if (!chatLog) return;
-    const li = document.createElement('li');
-    li.className = 'chat-msg from-' + from;
-    const label = document.createElement('span');
-    label.className = 'chat-label';
-    label.textContent = from === 'teacher' ? 'You' : 'Student';
-    const body = document.createElement('span');
-    body.className = 'chat-body';
-    body.textContent = text;
-    li.append(label, document.createTextNode(': '), body);
-    chatLog.appendChild(li);
-    chatLog.scrollTop = chatLog.scrollHeight;
-  }
-
-  if (chatForm) {
-    chatForm.addEventListener('submit', (e) => {
-      e.preventDefault();
-      const text = chatInput ? chatInput.value.trim() : '';
-      if (!text || !sessionHandle) return;
-      sessionHandle.sendChat(text);
-      if (chatInput) chatInput.value = '';
-    });
-  }
-
   function stopRecorder() {
     if (!recorderHandle) return;
     const startTime = recordStartTime;
@@ -154,7 +130,10 @@
     const badge = document.createElement('span');
     badge.className = `tier-badge ${entry.tier || 'degraded'}`;
     badge.textContent = entry.tier || 'degraded';
-    li.append(meta, document.createTextNode(' '), badge);
+    const hpChip = document.createElement('span');
+    hpChip.className = 'headphones-chip' + (entry.headphones_confirmed ? ' confirmed' : '');
+    hpChip.textContent = entry.headphones_confirmed ? '🎧 Headphones' : 'No headphones confirmed';
+    li.append(meta, document.createTextNode(' '), badge, document.createTextNode(' '), hpChip);
     if (entry.tier_reason) {
       const r = document.createElement('span');
       r.className = 'tier-reason';
@@ -218,7 +197,7 @@
       for (const entry of entries) listEl.append(renderEntry(entry));
     },
     onChat({ from, text }) {
-      appendChat(from, text);
+      if (sessionUiHandle) sessionUiHandle.appendChatMsg(from, text);
     },
     onPeerConnected({ dataChannel, audioTrack, videoTrack, localStream }) {
       statusEl.textContent = 'Connected.';
@@ -245,7 +224,7 @@
         },
         onEnd() { if (sessionHandle) sessionHandle.hangup(); },
         onNote() { console.log('[sprint9] note panel'); },
-        onSay() { if (chatPanel) chatPanel.hidden = false; },
+        onSendChat(text) { if (sessionHandle) sessionHandle.sendChat(text); },
       });
       dataChannel.addEventListener('message', (e) => {
         statusEl.textContent = `Student says: ${e.data}`;
@@ -257,8 +236,6 @@
       localAudioTrack = null;
       if (sessionUiHandle) { sessionUiHandle.teardown(); sessionUiHandle = null; }
       if (qualityBadge) qualityBadge.hidden = true;
-      if (chatPanel) chatPanel.hidden = true;
-      if (chatLog) chatLog.replaceChildren();
       if (reconnectBanner) reconnectBanner.hidden = true;
       if (floorNotice) floorNotice.hidden = true;
       if (recorderHandle) stopRecorder();

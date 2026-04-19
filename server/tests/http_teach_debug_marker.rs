@@ -3,7 +3,7 @@
 //          correctly and that both HTML pages carry the required DOM structure.
 //          Sprint 8: updated assertions for Variation A session-root layout;
 //          removed static #mute/#video-off/#hangup checks (now dynamic via session-ui.js).
-// Last updated: Sprint 8 (2026-04-19) -- session-root + theme.css + no Google Fonts asserts
+// Last updated: Sprint 9 (2026-04-19) -- self-check, lobby-toast, chat-drawer script tag asserts
 
 mod common;
 
@@ -84,6 +84,15 @@ async fn test_dev_teach_html_carries_debug_marker_student_view() {
     let session_ui_idx = body.find(r#"src="/assets/session-ui.js""#).expect("student.html missing session-ui.js");
     assert!(session_ui_idx < signalling_idx, "session-ui.js must load before signalling.js");
 
+    // Sprint 9: new script tags present and load order maintained.
+    let self_check_idx = body.find(r#"src="/assets/self-check.js""#).expect("student.html missing self-check.js");
+    let lobby_toast_idx = body.find(r#"src="/assets/lobby-toast.js""#).expect("student.html missing lobby-toast.js");
+    let chat_drawer_idx = body.find(r#"src="/assets/chat-drawer.js""#).expect("student.html missing chat-drawer.js");
+    assert!(chat_drawer_idx < session_ui_idx, "chat-drawer.js must load before session-ui.js");
+    // self-check and lobby-toast just need to be present before session scripts.
+    let _ = self_check_idx;
+    let _ = lobby_toast_idx;
+
     drop(cookie);
     app.shutdown().await;
 }
@@ -146,6 +155,12 @@ async fn test_dev_teach_html_carries_debug_marker_teacher_view() {
 
     let t_session_ui = body.find(r#"src="/assets/session-ui.js""#).expect("teacher.html missing session-ui.js");
     assert!(t_session_ui < t_signalling, "teacher: session-ui.js must load before signalling.js");
+
+    // Sprint 9: teacher gets self-check and chat-drawer; chat-drawer before session-ui.
+    let t_self_check = body.find(r#"src="/assets/self-check.js""#).expect("teacher.html missing self-check.js");
+    let t_chat_drawer = body.find(r#"src="/assets/chat-drawer.js""#).expect("teacher.html missing chat-drawer.js");
+    assert!(t_chat_drawer < t_session_ui, "teacher: chat-drawer.js must load before session-ui.js");
+    let _ = t_self_check;
 
     app.shutdown().await;
 }

@@ -21,7 +21,7 @@
 //             is the sole sender.setParameters mutation site AFTER
 //             session subsystems start; priority hints at transceiver
 //             creation are the only pre-session setParameters calls.
-// Last updated: Sprint 8 (2026-04-19) -- set playoutDelayHint=0 directly in ontrack handler
+// Last updated: Sprint 9 (2026-04-19) -- sendHeadphonesConfirmed on student handle
 
 (function (root, factory) {
   'use strict';
@@ -418,6 +418,9 @@
       sendChat: function (text) { sig.send({ type: 'chat', text: text }); },
       sendRecordConsent: function (s, granted) {
         sig.send({ type: 'record_consent', slug: s, granted: granted });
+      },
+      sendHeadphonesConfirmed: function () {
+        sig.send({ type: 'headphones_confirmed' });
       },
     };
   }

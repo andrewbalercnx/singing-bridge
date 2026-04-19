@@ -9,7 +9,7 @@
 //             pump's rx.recv() returns None and the task exits cleanly.
 //             `peer_ip` is resolved once at upgrade time and never changes.
 //             `last_metrics_at` gates the 5 s session-metrics rate limit.
-// Last updated: Sprint 5 (2026-04-18) -- add peer_ip, last_metrics_at
+// Last updated: Sprint 9 (2026-04-19) -- entry_id for HeadphonesConfirmed lookup
 
 use std::net::IpAddr;
 
@@ -18,7 +18,7 @@ use tokio::task::JoinHandle;
 
 use crate::auth::magic_link::TeacherId;
 use crate::state::{ConnectionId, SlugKey};
-use crate::ws::protocol::{PumpDirective, Role};
+use crate::ws::protocol::{EntryId, PumpDirective, Role};
 
 pub struct ConnContext {
     pub id: ConnectionId,
@@ -34,4 +34,8 @@ pub struct ConnContext {
     pub peer_ip: IpAddr,
     /// Timestamp of the last accepted SessionMetrics frame (rate-limit: 1/5 s).
     pub last_metrics_at: Option<std::time::Instant>,
+    /// The lobby EntryId assigned when this connection called `join_lobby`.
+    /// None until `LobbyJoin` is processed; used as direct key for
+    /// `HeadphonesConfirmed` without scanning the lobby vec.
+    pub entry_id: Option<EntryId>,
 }

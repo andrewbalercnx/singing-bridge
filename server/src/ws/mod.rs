@@ -149,6 +149,7 @@ async fn run(
         pump,
         peer_ip,
         last_metrics_at: None,
+        entry_id: None,
     };
 
     // Inbound loop, select'd against shutdown.
@@ -271,6 +272,7 @@ async fn handle_client_msg(
         ClientMsg::LobbyMessage { entry_id, text } => {
             handle_lobby_message(ctx, state, entry_id, text).await
         }
+        ClientMsg::HeadphonesConfirmed => handle_headphones_confirmed(ctx, state).await,
     }
 }
 
@@ -323,7 +325,8 @@ async fn handle_lobby_join(
     }
     ctx.slug = Some(key.clone());
     ctx.role = Some(Role::Student);
-    lobby::join_lobby(state, ctx, &key, ctx.peer_ip, email, browser, device_class, tier, tier_reason).await
+    let peer_ip = ctx.peer_ip;
+    lobby::join_lobby(state, ctx, &key, peer_ip, email, browser, device_class, tier, tier_reason).await
 }
 
 async fn handle_lobby_watch(ctx: &mut ConnContext, state: &Arc<AppState>, slug: String) -> bool {
@@ -665,6 +668,14 @@ async fn handle_lobby_message(
         .send(PumpDirective::Send(ServerMsg::LobbyMessage { text }))
         .await;
     true
+}
+
+async fn handle_headphones_confirmed(ctx: &ConnContext, state: &Arc<AppState>) -> bool {
+    if ctx.role != Some(Role::Student) {
+        send_error(ctx, ErrorCode::NotInSession, "only students may confirm headphones").await;
+        return true;
+    }
+    lobby::confirm_headphones(state, ctx).await
 }
 
 async fn parse_slug_or_err(ctx: &ConnContext, raw: &str) -> Option<SlugKey> {

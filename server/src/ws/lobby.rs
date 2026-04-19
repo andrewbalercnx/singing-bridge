@@ -9,7 +9,7 @@
 //             XOR between lobby and active_session.
 //             Blocked IP → close 1008 "blocked". Plain reject → close 1000.
 //             Block-with-ttl → close 1008 "blocked".
-// Last updated: Sprint 5 (2026-04-18) -- block list, session log open_row, R1 fixes
+// Last updated: Sprint 9 (2026-04-19) -- entry_id write-back, confirm_headphones
 
 use std::net::IpAddr;
 use std::sync::Arc;
@@ -130,7 +130,7 @@ async fn send_error(
 
 pub async fn join_lobby(
     state: &Arc<AppState>,
-    ctx: &ConnContext,
+    ctx: &mut ConnContext,
     slug: &SlugKey,
     peer_ip: IpAddr,
     email: String,
@@ -175,6 +175,7 @@ pub async fn join_lobby(
                 joined_at: Instant::now(),
                 joined_at_unix: now_unix,
                 conn: client_handle,
+                headphones_confirmed: false,
             });
             let teacher_tx = rs.teacher_conn.as_ref().map(|c| c.tx.clone());
             let update = ServerMsg::LobbyState {
@@ -196,7 +197,48 @@ pub async fn join_lobby(
         return false;
     }
 
+    // Write entry_id back so HeadphonesConfirmed can do a direct lookup.
+    ctx.entry_id = Some(entry_id);
+
     if let (Some(tx), Some(update)) = (teacher_tx, update) {
+        send(&tx, update).await;
+    }
+    true
+}
+
+pub async fn confirm_headphones(state: &Arc<AppState>, ctx: &ConnContext) -> bool {
+    let (Some(slug), Some(entry_id)) = (ctx.slug.as_ref(), ctx.entry_id) else {
+        send_error(&ctx.tx, ErrorCode::EntryNotFound, "not in lobby").await;
+        return true;
+    };
+
+    let room = match state.room_or_insert(slug.clone()) {
+        Ok(r) => r,
+        Err(_) => {
+            send_error(&ctx.tx, ErrorCode::Internal, "server overloaded").await;
+            return true;
+        }
+    };
+
+    let (teacher_tx, update) = {
+        let mut rs = room.write().await;
+        let pos = rs.lobby.iter().position(|e| e.id == entry_id);
+        match pos {
+            None => {
+                drop(rs);
+                send_error(&ctx.tx, ErrorCode::EntryNotFound, "entry not found").await;
+                return true;
+            }
+            Some(pos) => {
+                rs.lobby[pos].headphones_confirmed = true;
+                let update = ServerMsg::LobbyState { entries: rs.lobby_view() };
+                let teacher_tx = rs.teacher_conn.as_ref().map(|c| c.tx.clone());
+                (teacher_tx, update)
+            }
+        }
+    };
+
+    if let Some(tx) = teacher_tx {
         send(&tx, update).await;
     }
     true

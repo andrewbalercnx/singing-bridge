@@ -2,7 +2,7 @@
    Purpose: Design tokens (colours, typography, radii, shadows) + Variation A session layout CSS.
    Role: Shared stylesheet; loaded by teacher.html and student.html.
    Invariants: all fonts self-hosted (no external font URLs); no Google Fonts reference.
-   Last updated: Sprint 8 (2026-04-19) -- initial implementation */
+   Last updated: Sprint 9 (2026-04-19) -- self-check, chat-drawer, lobby-toast, headphones-chip */
 
 /* ---- Self-hosted fonts ---- */
 @font-face {
@@ -367,6 +367,195 @@
   font-size: 13px;
   font-weight: 500;
 }
+
+/* ---- Say button unread badge ---- */
+.sb-btn-badge {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 8px;
+  height: 8px;
+  background: var(--sb-clay);
+  border-radius: 50%;
+  pointer-events: none;
+}
+.sb-btn { position: relative; }
+
+/* ---- Chat drawer ---- */
+.sb-chat-drawer {
+  position: absolute;
+  bottom: 80px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(400px, 90vw);
+  background: var(--sb-navy);
+  border-radius: var(--sb-r-md);
+  box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+  display: flex;
+  flex-direction: column;
+  max-height: 320px;
+  z-index: 10;
+}
+.sb-chat-drawer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px 8px;
+}
+.sb-chat-drawer-title {
+  font-family: var(--sb-font-display);
+  font-style: italic;
+  font-size: 16px;
+  color: var(--sb-paper);
+  margin: 0;
+}
+.sb-chat-drawer-close {
+  background: none;
+  border: none;
+  color: var(--sb-paper);
+  font-size: 20px;
+  cursor: pointer;
+  padding: 0 4px;
+  opacity: 0.6;
+}
+.sb-chat-drawer-close:hover { opacity: 1; }
+.sb-chat-log {
+  list-style: none;
+  margin: 0;
+  padding: 0 16px;
+  overflow-y: auto;
+  flex: 1;
+}
+.sb-chat-msg {
+  padding: 4px 0;
+  font-size: 13px;
+  color: var(--sb-paper);
+}
+.sb-chat-label { font-weight: 500; opacity: 0.7; }
+.sb-chat-body { opacity: 0.9; }
+.sb-chat-form {
+  display: flex;
+  gap: 8px;
+  padding: 8px 16px 12px;
+}
+.sb-chat-input {
+  flex: 1;
+  background: rgba(251,246,239,0.08);
+  border: 1px solid rgba(251,246,239,0.2);
+  border-radius: var(--sb-r-sm);
+  color: var(--sb-paper);
+  padding: 6px 10px;
+  font-family: var(--sb-font-ui);
+  font-size: 13px;
+}
+.sb-chat-input::placeholder { color: rgba(251,246,239,0.4); }
+.sb-chat-send {
+  background: var(--sb-sage);
+  border: none;
+  border-radius: var(--sb-r-sm);
+  color: var(--sb-navy);
+  padding: 6px 12px;
+  font-family: var(--sb-font-ui);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+/* ---- Lobby toast ---- */
+.sb-lobby-toast-container {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 100;
+  pointer-events: none;
+}
+.sb-lobby-toast {
+  background: var(--sb-navy, #1a2332);
+  color: var(--sb-paper, #fbf6ef);
+  border-radius: 24px;
+  padding: 10px 20px;
+  font-family: var(--sb-font-ui);
+  font-size: 14px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+  opacity: 1;
+  transition: opacity 0.4s ease;
+}
+.sb-lobby-toast-fade { opacity: 0; }
+.sb-lobby-toast-label {
+  font-family: var(--sb-font-display);
+  font-style: italic;
+  font-weight: 500;
+  margin-right: 4px;
+}
+
+/* ---- Self-check overlay ---- */
+.sb-self-check-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(26,35,50,0.85);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+}
+.sb-self-check-inner {
+  background: var(--sb-parchment, #f4ede2);
+  border-radius: var(--sb-r-lg, 16px);
+  padding: 32px;
+  width: min(400px, 90vw);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.sb-self-check-heading {
+  font-family: var(--sb-font-display);
+  font-size: 22px;
+  color: var(--sb-navy);
+  margin: 0;
+}
+.sb-self-check-preview video {
+  width: 100%;
+  border-radius: var(--sb-r-sm);
+  background: #000;
+}
+.sb-self-check-preview-label { font-size: 12px; opacity: 0.6; margin: 4px 0 0; }
+.sb-self-check-meter-wrap { display: flex; align-items: center; gap: 8px; }
+.sb-self-check-meter-label { font-size: 13px; }
+.sb-self-check-meter-bar {
+  flex: 1;
+  height: 8px;
+  background: rgba(0,0,0,0.1);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.sb-self-check-meter-fill {
+  height: 100%;
+  width: 0;
+  background: var(--sb-sage, #7a9e8a);
+  border-radius: 4px;
+  transition: width 0.08s;
+}
+.sb-self-check-headphones label { display: flex; align-items: center; gap: 8px; font-size: 14px; cursor: pointer; }
+.sb-self-check-confirm {
+  background: var(--sb-sage);
+  border: none;
+  border-radius: var(--sb-r-sm);
+  color: var(--sb-navy);
+  padding: 10px 24px;
+  font-family: var(--sb-font-ui);
+  font-size: 15px;
+  font-weight: 500;
+  cursor: pointer;
+  align-self: flex-end;
+}
+
+/* ---- Headphones chip in lobby list ---- */
+.headphones-chip { font-size: 12px; opacity: 0.5; }
+.headphones-chip.confirmed { opacity: 1; color: var(--sb-sage, #7a9e8a); }
 
 /* Mobile responsive */
 @media (max-width: 600px) {

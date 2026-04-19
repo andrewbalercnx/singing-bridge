@@ -362,6 +362,50 @@ test('say button click calls onSay', () => {
 });
 
 // ---------------------------------------------------------------------------
+// appendChatMsg (Sprint 9)
+// ---------------------------------------------------------------------------
+
+test('mount returns appendChatMsg function on handle', () => {
+  const container = document.createElement('div');
+  const h = mod.mount(container, defaultOpts());
+  assert.equal(typeof h.appendChatMsg, 'function');
+  h.teardown();
+});
+
+test('appendChatMsg does not throw when sbChatDrawer is absent', () => {
+  const container = document.createElement('div');
+  const opts = Object.assign(defaultOpts(), { onSendChat() {} });
+  // window.sbChatDrawer is not set in test env; appendChatMsg should be a no-op.
+  const h = mod.mount(container, opts);
+  assert.doesNotThrow(() => h.appendChatMsg('teacher', 'hi'));
+  h.teardown();
+});
+
+test('appendChatMsg routes to chatDrawer.appendMsg when drawer is present', () => {
+  const msgs = [];
+  const fakeDrawer = {
+    node: document.createElement('div'),
+    open() {},
+    close() {},
+    toggle() {},
+    appendMsg(from, text) { msgs.push({ from, text }); },
+    hasUnread() { return false; },
+  };
+  // Inject a fake sbChatDrawer into globalThis (what session-ui.js reads in Node).
+  const savedDrawer = globalThis.sbChatDrawer;
+  globalThis.sbChatDrawer = { buildChatDrawer() { return fakeDrawer; } };
+
+  const container = document.createElement('div');
+  const opts = Object.assign(defaultOpts(), { onSendChat() {} });
+  const h = mod.mount(container, opts);
+  h.appendChatMsg('teacher', 'hello');
+  assert.deepEqual(msgs, [{ from: 'teacher', text: 'hello' }]);
+  h.teardown();
+
+  globalThis.sbChatDrawer = savedDrawer;
+});
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 

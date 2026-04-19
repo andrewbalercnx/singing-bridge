@@ -4,7 +4,7 @@
   Purpose: Teacher-side landing page. The sb:debug placeholder is
            replaced server-side with a <meta name="sb-debug"> tag
            when config.dev is true (empty string otherwise).
-  Last updated: Sprint 8 (2026-04-19) -- Variation A session UI (session-root)
+  Last updated: Sprint 9 (2026-04-19) -- self-check, chat-drawer script tags
 -->
 <html lang="en">
 <head>
@@ -51,16 +51,6 @@
         <span id="rec-indicator" class="rec-indicator" hidden aria-label="Recording active">REC</span>
       </div>
 
-      <!-- In-session chat (toggled by Say button via onSay callback) -->
-      <div id="chat-panel" hidden aria-label="Chat">
-        <h3>Chat</h3>
-        <ul id="chat-log" aria-live="polite"></ul>
-        <form id="chat-form">
-          <input id="chat-input" type="text" maxlength="500" placeholder="Message…" autocomplete="off">
-          <button type="submit">Send</button>
-        </form>
-      </div>
-
       <span id="quality-badge" class="quality-badge good" hidden>good</span>
 
       <!-- Post-session: send recording link -->
@@ -88,6 +78,8 @@
     <script src="/assets/audio.js"></script>
     <script src="/assets/video.js"></script>
     <script src="/assets/debug-overlay.js"></script>
+    <script src="/assets/self-check.js"></script>
+    <script src="/assets/chat-drawer.js"></script>
     <script src="/assets/session-ui.js"></script>
     <script src="/assets/adapt.js"></script>
     <script src="/assets/quality.js"></script>

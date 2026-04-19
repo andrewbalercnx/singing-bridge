@@ -10,7 +10,7 @@
 //             Signal.payload ≤ 16 KiB independent of the 64 KiB frame cap.
 //             LobbyReject.block_ttl_secs is clamped [0, 86400] server-side.
 //             Chat.text validated: non-empty, ≤ MAX_CHAT_BYTES then ≤ MAX_CHAT_CHARS.
-// Last updated: Sprint 7 (2026-04-18) -- chat messages (Chat, LobbyMessage)
+// Last updated: Sprint 9 (2026-04-19) -- HeadphonesConfirmed + headphones_confirmed in LobbyEntryView
 
 use std::borrow::Cow;
 
@@ -96,6 +96,8 @@ pub struct LobbyEntryView {
     pub tier: Tier,
     pub tier_reason: Option<String>,
     pub joined_at_unix: i64,
+    #[serde(default)]
+    pub headphones_confirmed: bool,
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -171,6 +173,7 @@ pub enum ClientMsg {
         entry_id: EntryId,
         text: String,
     },
+    HeadphonesConfirmed,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

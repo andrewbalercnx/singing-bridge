@@ -1,7 +1,7 @@
 // File: web/assets/student.js
 // Purpose: Student join form + lobby/session UI driver. Sprint 8:
 //          replaced wireControls with sbSessionUI.mount into #session-root.
-// Last updated: Sprint 8 (2026-04-19) -- session-ui mount replaces wireControls
+// Last updated: Sprint 9 (2026-04-19) -- self-check, lobby toast, chat drawer via session-ui
 
 'use strict';
 
@@ -25,30 +25,9 @@
   const consentDecline = document.getElementById('consent-decline');
   const consentCountdown = document.getElementById('consent-countdown');
   const recIndicator = document.getElementById('rec-indicator');
-  const lobbyMsgBanner = document.getElementById('lobby-message-banner');
-  const lobbyMsgText = document.getElementById('lobby-message-text');
-  const chatPanel = document.getElementById('chat-panel');
-  const chatLog = document.getElementById('chat-log');
-  const chatForm = document.getElementById('chat-form');
-  const chatInput = document.getElementById('chat-input');
 
   let consentTimer = null;
-  let lobbyMsgTimer = null;
-
-  function appendChat(from, text) {
-    if (!chatLog) return;
-    const li = document.createElement('li');
-    li.className = 'chat-msg from-' + from;
-    const label = document.createElement('span');
-    label.className = 'chat-label';
-    label.textContent = from === 'teacher' ? 'Teacher' : 'You';
-    const body = document.createElement('span');
-    body.className = 'chat-body';
-    body.textContent = text;
-    li.append(label, document.createTextNode(': '), body);
-    chatLog.appendChild(li);
-    chatLog.scrollTop = chatLog.scrollHeight;
-  }
+  let headphonesConfirmedState = false;
 
   function showConsentBanner(onResponse) {
     if (!consentBanner) return;
@@ -109,13 +88,19 @@
 
     let sessionUiHandle = null;
     let handle = null;
-    if (chatForm) {
-      chatForm.addEventListener('submit', (e) => {
-        e.preventDefault();
-        const text = chatInput ? chatInput.value.trim() : '';
-        if (!text || !handle) return;
-        handle.sendChat(text);
-        if (chatInput) chatInput.value = '';
+
+    // Self-check while waiting in lobby.
+    let selfCheckStream = null;
+    try {
+      selfCheckStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+    } catch (_) {}
+    if (window.sbSelfCheck && selfCheckStream) {
+      window.sbSelfCheck.show(selfCheckStream, {
+        role: 'student',
+        onConfirm(hp) {
+          headphonesConfirmedState = hp;
+          if (hp && handle) handle.sendHeadphonesConfirmed();
+        },
       });
     }
 
@@ -134,14 +119,10 @@
         if (blockedNotice) blockedNotice.hidden = false;
       },
       onChat({ from, text }) {
-        appendChat(from, text);
+        if (sessionUiHandle) sessionUiHandle.appendChatMsg(from, text);
       },
       onLobbyMessage({ text }) {
-        if (!lobbyMsgText || !lobbyMsgBanner) return;
-        lobbyMsgText.textContent = text;
-        lobbyMsgBanner.hidden = false;
-        if (lobbyMsgTimer) clearTimeout(lobbyMsgTimer);
-        lobbyMsgTimer = setTimeout(() => { lobbyMsgBanner.hidden = true; }, 8000);
+        if (window.sbLobbyToast) window.sbLobbyToast.show(text, 8000);
       },
       onPeerConnected({ dataChannel, audioTrack, videoTrack, localStream }) {
         sessionSection.hidden = false;
@@ -153,7 +134,7 @@
           remoteRoleLabel: 'Your teacher',
           localStream: localStream || null,
           remoteStream: null,
-          headphonesConfirmed: false,
+          headphonesConfirmed: headphonesConfirmedState,
           micEnabled: true,
           videoEnabled: true,
           onMicToggle() {
@@ -166,7 +147,7 @@
           },
           onEnd() { if (handle) handle.hangup(); },
           onNote() { console.log('[sprint9] note panel'); },
-          onSay() { if (chatPanel) chatPanel.hidden = false; },
+          onSendChat(text) { if (handle) handle.sendChat(text); },
         });
         dataChannel.addEventListener('message', (ev) => {
           errEl.textContent = `Teacher says: ${ev.data}`;
@@ -176,8 +157,6 @@
       onPeerDisconnected() {
         if (sessionUiHandle) { sessionUiHandle.teardown(); sessionUiHandle = null; }
         sessionSection.hidden = true;
-        if (chatPanel) chatPanel.hidden = true;
-        if (chatLog) chatLog.replaceChildren();
         if (qualityBadge) qualityBadge.hidden = true;
         if (reconnectBanner) reconnectBanner.hidden = true;
         hideConsentBanner();

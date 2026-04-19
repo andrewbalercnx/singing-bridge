@@ -1,8 +1,8 @@
 // File: web/assets/tests/self-check.test.js
 // Purpose: Unit tests for self-check.js: teacher sessionStorage gate (skip/show/write),
 //          student path (always shows), teardown stops all tracks and removes DOM,
-//          confirm callback receives headphones state.
-// Last updated: Sprint 9 (2026-04-19) -- initial implementation
+//          confirm-button disabled-until-checkbox-change gating, confirm callback value.
+// Last updated: Sprint 9 (2026-04-19) -- fix gating tests: disabled state + change event required
 
 'use strict';
 
@@ -23,14 +23,16 @@ function makeEl(tag) {
     set textContent(v) { textContent = String(v); },
     get hidden() { return !!attrs.hidden; },
     set hidden(v) { attrs.hidden = !!v; },
+    get disabled() { return !!attrs.disabled; },
+    set disabled(v) { attrs.disabled = !!v; },
+    get checked() { return !!attrs.checked; },
+    set checked(v) { attrs.checked = !!v; },
     className: '',
     style: { width: '' },
     type: '',
     autoplay: false,
     playsInline: false,
     muted: false,
-    get checked() { return !!attrs.checked; },
-    set checked(v) { attrs.checked = !!v; },
     children,
     parentNode: null,
     srcObject: null,
@@ -59,7 +61,12 @@ function makeEl(tag) {
       attrs['_ev_' + ev] = attrs['_ev_' + ev] || [];
       attrs['_ev_' + ev].push(fn);
     },
-    _dispatchClick() { (attrs['_ev_click'] || []).forEach(fn => fn()); },
+    // Disabled buttons do not fire click in real browsers.
+    _dispatchClick() {
+      if (attrs.disabled) return;
+      (attrs['_ev_click'] || []).forEach(fn => fn());
+    },
+    _dispatchChange() { (attrs['_ev_change'] || []).forEach(fn => fn()); },
     focus() {},
   };
   return node;
@@ -89,10 +96,6 @@ global.cancelAnimationFrame = function (id) {
 };
 
 // AudioContext disabled — prevents RAF animation loop from running in tests.
-// self-check.js only starts the loop when AudioContext is defined; leaving it
-// undefined here keeps the event loop clean so tests exit promptly.
-// (Tests that exercise teardown of the stream still work because they pass
-//  makeStream() and the stream-stop logic is AudioContext-independent.)
 global.AudioContext = undefined;
 
 // Fake sessionStorage.
@@ -121,6 +124,25 @@ function makeStream(trackCount = 2) {
     getVideoTracks() { return tracks[1] ? [tracks[1]] : []; },
     _tracks: tracks,
   };
+}
+
+// Shared tree-walk helpers.
+function findTag(node, tag) {
+  if (node.tag === tag) return node;
+  for (const c of (node.children || [])) {
+    const f = findTag(c, tag);
+    if (f) return f;
+  }
+  return null;
+}
+
+function findBtn(node) { return findTag(node, 'button'); }
+
+// Enable the confirm button by checking the checkbox and dispatching 'change'.
+function enableConfirm(overlayRoot) {
+  const checkbox = findTag(overlayRoot, 'input');
+  checkbox.checked = true;
+  checkbox._dispatchChange();
 }
 
 // ---------------------------------------------------------------------------
@@ -152,16 +174,8 @@ test('teacher: shows overlay when sessionStorage flag is NOT set', () => {
 
 test('teacher: writes sessionStorage flag on confirm', () => {
   const mod = freshMod();
-  const { teardown: _t } = mod.show(makeStream(), { role: 'teacher', onConfirm() {} });
-  // Find the confirm button and click it.
-  function findBtn(node) {
-    if (node.tag === 'button') return node;
-    for (const c of (node.children || [])) {
-      const f = findBtn(c);
-      if (f) return f;
-    }
-    return null;
-  }
+  mod.show(makeStream(), { role: 'teacher', onConfirm() {} });
+  enableConfirm(body.children[0]);
   const btn = findBtn(body.children[0]);
   btn._dispatchClick();
   assert.equal(_storage['sb-teacher-checked'], '1');
@@ -173,14 +187,7 @@ test('teacher: sessionStorage flag written exactly once', () => {
   const origSet = sessionStorage.setItem.bind(sessionStorage);
   sessionStorage.setItem = function (k, v) { spy.push(k); origSet(k, v); };
   mod.show(makeStream(), { role: 'teacher', onConfirm() {} });
-  function findBtn(node) {
-    if (node.tag === 'button') return node;
-    for (const c of (node.children || [])) {
-      const f = findBtn(c);
-      if (f) return f;
-    }
-    return null;
-  }
+  enableConfirm(body.children[0]);
   const btn = findBtn(body.children[0]);
   btn._dispatchClick();
   assert.equal(spy.filter(k => k === 'sb-teacher-checked').length, 1);
@@ -197,44 +204,41 @@ test('student: always shows overlay (no sessionStorage gate)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Confirm callback
+// Confirm button gating — disabled until headphones checkbox change fires
 // ---------------------------------------------------------------------------
+
+test('confirm button is initially disabled', () => {
+  const mod = freshMod();
+  mod.show(makeStream(), { role: 'student', onConfirm() {} });
+  const btn = findBtn(body.children[0]);
+  assert.ok(btn.disabled, 'confirm button must start disabled');
+});
+
+test('clicking disabled confirm button does not call onConfirm', () => {
+  const mod = freshMod();
+  const results = [];
+  mod.show(makeStream(), { role: 'student', onConfirm(hp) { results.push(hp); } });
+  // Click without first firing the change event — button stays disabled.
+  findBtn(body.children[0])._dispatchClick();
+  assert.deepEqual(results, [], 'onConfirm must not fire when button is still disabled');
+});
+
+test('confirm button enabled after checkbox change event', () => {
+  const mod = freshMod();
+  mod.show(makeStream(), { role: 'student', onConfirm() {} });
+  const overlay = body.children[0];
+  assert.ok(findBtn(overlay).disabled, 'disabled before change');
+  enableConfirm(overlay);
+  assert.ok(!findBtn(overlay).disabled, 'enabled after change');
+});
 
 test('confirm with headphones checked: calls onConfirm(true)', () => {
   const mod = freshMod();
   const results = [];
   mod.show(makeStream(), { role: 'student', onConfirm(hp) { results.push(hp); } });
-  // Find checkbox and button.
-  function findTag(node, tag) {
-    if (node.tag === tag) return node;
-    for (const c of (node.children || [])) {
-      const f = findTag(c, tag);
-      if (f) return f;
-    }
-    return null;
-  }
-  const checkbox = findTag(body.children[0], 'input');
-  checkbox.checked = true;
-  const btn = findTag(body.children[0], 'button');
-  btn._dispatchClick();
+  enableConfirm(body.children[0]);
+  findBtn(body.children[0])._dispatchClick();
   assert.deepEqual(results, [true]);
-});
-
-test('confirm without headphones: calls onConfirm(false)', () => {
-  const mod = freshMod();
-  const results = [];
-  mod.show(makeStream(), { role: 'student', onConfirm(hp) { results.push(hp); } });
-  function findTag(node, tag) {
-    if (node.tag === tag) return node;
-    for (const c of (node.children || [])) {
-      const f = findTag(c, tag);
-      if (f) return f;
-    }
-    return null;
-  }
-  const btn = findTag(body.children[0], 'button');
-  btn._dispatchClick();
-  assert.deepEqual(results, [false]);
 });
 
 // ---------------------------------------------------------------------------

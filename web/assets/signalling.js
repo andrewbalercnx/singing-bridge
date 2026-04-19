@@ -44,39 +44,15 @@
   // --- Browser-only implementation (defined here so Node never
   //     evaluates DOM/WebSocket references) -----------------------------
 
+  // Signalling class is defined in the factory (Node-testable) and aliased here.
+  var Signalling = mod.Signalling;
+
   var WS_PATH = '/ws';
 
   function openWs() {
     var scheme = location.protocol === 'https:' ? 'wss' : 'ws';
     return new WebSocket(scheme + '://' + location.host + WS_PATH);
   }
-
-  function Signalling(sock) {
-    this.sock = sock;
-    this.handlers = new Map();
-    this.queue = [];
-    var self = this;
-    sock.addEventListener('open', function () {
-      for (var i = 0; i < self.queue.length; i++) sock.send(JSON.stringify(self.queue[i]));
-      self.queue = [];
-    });
-    sock.addEventListener('message', function (e) { self._onMessage(e); });
-  }
-  Signalling.prototype._onMessage = function (e) {
-    var msg;
-    try { msg = JSON.parse(e.data); } catch (_) { return; }
-    var list = this.handlers.get(msg.type) || [];
-    for (var i = 0; i < list.length; i++) list[i](msg);
-  };
-  Signalling.prototype.on = function (type, fn) {
-    if (!this.handlers.has(type)) this.handlers.set(type, []);
-    this.handlers.get(type).push(fn);
-  };
-  Signalling.prototype.send = function (msg) {
-    if (this.sock.readyState === 1) this.sock.send(JSON.stringify(msg));
-    else this.queue.push(msg);
-  };
-  Signalling.prototype.close = function () { try { this.sock.close(); } catch (_) {} };
 
   async function makePeerConnection(preloadedIceServers) {
     var iceServers;
@@ -487,7 +463,35 @@
     };
   }
 
+  function Signalling(sock) {
+    this.sock = sock;
+    this.handlers = new Map();
+    this.queue = [];
+    var self = this;
+    sock.addEventListener('open', function () {
+      for (var i = 0; i < self.queue.length; i++) sock.send(JSON.stringify(self.queue[i]));
+      self.queue = [];
+    });
+    sock.addEventListener('message', function (e) { self._onMessage(e); });
+  }
+  Signalling.prototype._onMessage = function (e) {
+    var msg;
+    try { msg = JSON.parse(e.data); } catch (_) { return; }
+    var list = this.handlers.get(msg.type) || [];
+    for (var i = 0; i < list.length; i++) list[i](msg);
+  };
+  Signalling.prototype.on = function (type, fn) {
+    if (!this.handlers.has(type)) this.handlers.set(type, []);
+    this.handlers.get(type).push(fn);
+  };
+  Signalling.prototype.send = function (msg) {
+    if (this.sock.readyState === 1) this.sock.send(JSON.stringify(msg));
+    else this.queue.push(msg);
+  };
+  Signalling.prototype.close = function () { try { this.sock.close(); } catch (_) {} };
+
   return {
+    Signalling: Signalling,
     dispatchRemoteTrack: dispatchRemoteTrack,
     acquireMedia: acquireMedia,
     teardownMedia: teardownMedia,

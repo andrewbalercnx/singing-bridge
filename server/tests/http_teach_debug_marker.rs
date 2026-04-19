@@ -88,7 +88,9 @@ async fn test_dev_teach_html_carries_debug_marker_student_view() {
     let self_check_idx = body.find(r#"src="/assets/self-check.js""#).expect("student.html missing self-check.js");
     let lobby_toast_idx = body.find(r#"src="/assets/lobby-toast.js""#).expect("student.html missing lobby-toast.js");
     let chat_drawer_idx = body.find(r#"src="/assets/chat-drawer.js""#).expect("student.html missing chat-drawer.js");
+    let panels_idx = body.find(r#"src="/assets/session-panels.js""#).expect("student.html missing session-panels.js");
     assert!(chat_drawer_idx < session_ui_idx, "chat-drawer.js must load before session-ui.js");
+    assert!(panels_idx < session_ui_idx, "session-panels.js must load before session-ui.js");
     // self-check and lobby-toast just need to be present before session scripts.
     let _ = self_check_idx;
     let _ = lobby_toast_idx;
@@ -169,7 +171,9 @@ async fn test_dev_teach_html_carries_debug_marker_teacher_view() {
     // Sprint 9: teacher gets self-check and chat-drawer; chat-drawer before session-ui.
     let t_self_check = body.find(r#"src="/assets/self-check.js""#).expect("teacher.html missing self-check.js");
     let t_chat_drawer = body.find(r#"src="/assets/chat-drawer.js""#).expect("teacher.html missing chat-drawer.js");
+    let t_panels = body.find(r#"src="/assets/session-panels.js""#).expect("teacher.html missing session-panels.js");
     assert!(t_chat_drawer < t_session_ui, "teacher: chat-drawer.js must load before session-ui.js");
+    assert!(t_panels < t_session_ui, "teacher: session-panels.js must load before session-ui.js");
     let _ = t_self_check;
 
     // Sprint 9: legacy static chat panel removed from teacher.html.

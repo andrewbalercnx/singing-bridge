@@ -8,7 +8,7 @@
 // Invariants: peer-supplied strings rendered via .textContent only (no innerHTML);
 //             empty/whitespace send is suppressed; onSendChat called once per valid send;
 //             unread flag clears on open.
-// Last updated: Sprint 9 (2026-04-19) -- initial implementation
+// Last updated: Sprint 9 (2026-04-19) -- split into buildDrawerHeader/Form/MessageLog helpers
 
 (function (root, factory) {
   'use strict';
@@ -28,16 +28,9 @@
     return node;
   }
 
-  function buildChatDrawer(opts) {
-    var onSendChat = opts.onSendChat || function () {};
-    var onUnreadChange = opts.onUnreadChange || function () {};
-    var _isOpen = false;
-    var _hasUnread = false;
+  // ---- Sub-builders (single responsibility each) ----
 
-    var drawer = el('div', 'sb-chat-drawer');
-    drawer.setAttribute('aria-label', 'Chat');
-    drawer.hidden = true;
-
+  function buildDrawerHeader(onClose) {
     var header = el('div', 'sb-chat-drawer-header');
     var title = el('h3', 'sb-chat-drawer-title');
     title.textContent = 'Chat';
@@ -45,11 +38,12 @@
     closeBtn.type = 'button';
     closeBtn.textContent = '×';
     closeBtn.setAttribute('aria-label', 'Close chat');
+    closeBtn.addEventListener('click', function () { onClose(); });
     header.append(title, closeBtn);
+    return { node: header };
+  }
 
-    var log = el('ul', 'sb-chat-log');
-    log.setAttribute('aria-live', 'polite');
-
+  function buildDrawerForm(onSubmit) {
     var form = el('form', 'sb-chat-form');
     var input = el('input', 'sb-chat-input');
     input.type = 'text';
@@ -60,59 +54,71 @@
     sendBtn.type = 'submit';
     sendBtn.textContent = 'Send';
     form.append(input, sendBtn);
-
-    drawer.append(header, log, form);
-
-    closeBtn.addEventListener('click', function () { close(); });
-
     form.addEventListener('submit', function (e) {
       e.preventDefault();
       var text = input.value.trim();
       if (!text) return;
-      onSendChat(text);
+      onSubmit(text);
       input.value = '';
     });
+    return { node: form, input: input };
+  }
+
+  function buildMessageLog() {
+    var log = el('ul', 'sb-chat-log');
+    log.setAttribute('aria-live', 'polite');
+    return {
+      node: log,
+      appendMsg: function (from, text) {
+        var li = el('li', 'sb-chat-msg sb-chat-from-' + from);
+        var label = el('span', 'sb-chat-label');
+        label.textContent = from === 'teacher' ? 'Teacher' : 'Student';
+        var body = el('span', 'sb-chat-body');
+        body.textContent = text;
+        li.append(label, document.createTextNode(': '), body);
+        log.appendChild(li);
+        log.scrollTop = log.scrollHeight;
+      },
+    };
+  }
+
+  // ---- Public assembler ----
+
+  function buildChatDrawer(opts) {
+    var onSendChat = opts.onSendChat || function () {};
+    var onUnreadChange = opts.onUnreadChange || function () {};
+    var _isOpen = false;
+    var _hasUnread = false;
+
+    var drawer = el('div', 'sb-chat-drawer');
+    drawer.setAttribute('aria-label', 'Chat');
+    drawer.hidden = true;
 
     function open() {
       _isOpen = true;
       drawer.hidden = false;
-      if (_hasUnread) {
-        _hasUnread = false;
-        onUnreadChange(false);
-      }
-      input.focus();
+      if (_hasUnread) { _hasUnread = false; onUnreadChange(false); }
+      formParts.input.focus();
     }
 
-    function close() {
-      _isOpen = false;
-      drawer.hidden = true;
-    }
+    function close() { _isOpen = false; drawer.hidden = true; }
+    function toggle() { if (_isOpen) { close(); } else { open(); } }
 
-    function toggle() {
-      if (_isOpen) { close(); } else { open(); }
-    }
+    var header = buildDrawerHeader(function () { close(); });
+    var msgLog = buildMessageLog();
+    var formParts = buildDrawerForm(onSendChat);
 
-    function appendMsg(from, text) {
-      var li = el('li', 'sb-chat-msg sb-chat-from-' + from);
-      var label = el('span', 'sb-chat-label');
-      label.textContent = from === 'teacher' ? 'Teacher' : 'Student';
-      var body = el('span', 'sb-chat-body');
-      body.textContent = text;
-      li.append(label, document.createTextNode(': '), body);
-      log.appendChild(li);
-      log.scrollTop = log.scrollHeight;
-      if (!_isOpen) {
-        _hasUnread = true;
-        onUnreadChange(true);
-      }
-    }
+    drawer.append(header.node, msgLog.node, formParts.node);
 
     return {
       node: drawer,
       open: open,
       close: close,
       toggle: toggle,
-      appendMsg: appendMsg,
+      appendMsg: function (from, text) {
+        msgLog.appendMsg(from, text);
+        if (!_isOpen) { _hasUnread = true; onUnreadChange(true); }
+      },
       hasUnread: function () { return _hasUnread; },
     };
   }

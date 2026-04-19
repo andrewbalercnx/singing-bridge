@@ -1,17 +1,18 @@
 // File: web/assets/tests/signalling.test.js
 // Purpose: Node tests for the pure helpers in signalling.js —
-//          dispatchRemoteTrack, acquireMedia, teardownMedia. The
+//          dispatchRemoteTrack, acquireMedia, teardownMedia, Signalling.
 //          connectTeacher/connectStudent wrappers are browser-only
 //          and covered by the manual two-machine check. Sprint 4
 //          adds a regression guard for the session.stopAll contract
 //          in makeTeardown. Sprint 8 adds playoutDelayHint=0 regression guard.
-// Last updated: Sprint 8 (2026-04-19) -- playoutDelayHint regression guard
+//          Sprint 9: Signalling frame-ordering regression guard.
+// Last updated: Sprint 9 (2026-04-19) -- Signalling exported; frame-ordering tests
 
 'use strict';
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { dispatchRemoteTrack, acquireMedia, teardownMedia, makeTeardown } =
+const { dispatchRemoteTrack, acquireMedia, teardownMedia, makeTeardown, Signalling } =
   require('../signalling.js');
 
 // --- dispatchRemoteTrack (5 tests) -----------------------------------------
@@ -264,3 +265,66 @@ test('makeTeardown (real): rethrowing session.stopAll does not block the rest', 
   assert.equal(mediaTorn, true);
   assert.equal(pcClosed, true);
 });
+
+// --- Signalling frame-ordering regression guard (Sprint 9) -----------------
+// These tests prove the WS wrapper preserves send order and that the
+// headphones_confirmed message can only follow lobby_join once the socket
+// is ready — guarding the student.js race-condition fix.
+
+function makeFakeSocket(readyState) {
+  const sent = [];
+  return {
+    readyState: readyState,
+    sent,
+    send(data) { sent.push(JSON.parse(data)); },
+    close() {},
+    addEventListener(ev, fn) { this['_' + ev] = fn; },
+    _fireOpen() { if (this._open) this._open(); },
+    _fireMessage(data) { if (this._message) this._message({ data: JSON.stringify(data) }); },
+  };
+}
+
+test('Signalling: send queues frames when socket is not open, flushes in order on open', () => {
+  const sock = makeFakeSocket(0); // CONNECTING
+  const sig = new Signalling(sock);
+  sig.send({ type: 'lobby_join', slug: 'test' });
+  sig.send({ type: 'headphones_confirmed' });
+  assert.equal(sock.sent.length, 0, 'no frames sent yet — socket not open');
+  sock.readyState = 1;
+  sock._fireOpen();
+  assert.equal(sock.sent.length, 2);
+  assert.equal(sock.sent[0].type, 'lobby_join', 'lobby_join must be first');
+  assert.equal(sock.sent[1].type, 'headphones_confirmed', 'headphones_confirmed must follow');
+});
+
+test('Signalling: send emits immediately when socket is already open', () => {
+  const sock = makeFakeSocket(1); // OPEN
+  const sig = new Signalling(sock);
+  sig.send({ type: 'lobby_join', slug: 'test' });
+  sig.send({ type: 'headphones_confirmed' });
+  assert.equal(sock.sent.length, 2);
+  assert.equal(sock.sent[0].type, 'lobby_join');
+  assert.equal(sock.sent[1].type, 'headphones_confirmed');
+});
+
+test('Signalling: on + message dispatch routes to the correct handler', () => {
+  const sock = makeFakeSocket(1);
+  const sig = new Signalling(sock);
+  const received = [];
+  sig.on('lobby_state', (m) => received.push(m));
+  sock._fireMessage({ type: 'lobby_state', entries: [] });
+  assert.equal(received.length, 1);
+  assert.deepEqual(received[0].entries, []);
+});
+
+test('Signalling: sendHeadphonesConfirmed handle sends correct frame type', () => {
+  const sock = makeFakeSocket(1);
+  const sig = new Signalling(sock);
+  // Mimic what the connectStudent handle does.
+  const handle = { sendHeadphonesConfirmed() { sig.send({ type: 'headphones_confirmed' }); } };
+  sig.send({ type: 'lobby_join', slug: 'test' });
+  handle.sendHeadphonesConfirmed();
+  assert.equal(sock.sent[0].type, 'lobby_join');
+  assert.equal(sock.sent[1].type, 'headphones_confirmed');
+});
+

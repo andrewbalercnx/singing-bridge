@@ -84,6 +84,9 @@ global.AudioContext = class {
   close() { this.closeCalls++; }
 };
 
+// session-ui.js now delegates panel construction to sbSessionPanels.
+globalThis.sbSessionPanels = require('../session-panels.js');
+
 const mod = require('../session-ui.js');
 
 // ---------------------------------------------------------------------------
@@ -402,6 +405,53 @@ test('appendChatMsg routes to chatDrawer.appendMsg when drawer is present', () =
   assert.deepEqual(msgs, [{ from: 'teacher', text: 'hello' }]);
   h.teardown();
 
+  globalThis.sbChatDrawer = savedDrawer;
+});
+
+// ---------------------------------------------------------------------------
+// headphonesConfirmed propagation — regression guard
+// ---------------------------------------------------------------------------
+
+test('mount propagates headphonesConfirmed: true to buildRemotePanel', () => {
+  let captured = null;
+  const savedPanels = globalThis.sbSessionPanels;
+  globalThis.sbSessionPanels = Object.assign({}, savedPanels, {
+    buildRemotePanel(opts) { captured = opts; return savedPanels.buildRemotePanel(opts); },
+  });
+  const h = mod.mount(document.createElement('div'), Object.assign(defaultOpts(), { headphonesConfirmed: true }));
+  h.teardown();
+  globalThis.sbSessionPanels = savedPanels;
+  assert.equal(captured.headphonesConfirmed, true, 'must propagate true, not hardcode false');
+});
+
+test('mount propagates headphonesConfirmed: false to buildRemotePanel', () => {
+  let captured = null;
+  const savedPanels = globalThis.sbSessionPanels;
+  globalThis.sbSessionPanels = Object.assign({}, savedPanels, {
+    buildRemotePanel(opts) { captured = opts; return savedPanels.buildRemotePanel(opts); },
+  });
+  const h = mod.mount(document.createElement('div'), defaultOpts()); // headphonesConfirmed: false
+  h.teardown();
+  globalThis.sbSessionPanels = savedPanels;
+  assert.equal(captured.headphonesConfirmed, false, 'must propagate false, not hardcode true');
+});
+
+// ---------------------------------------------------------------------------
+// appendChatMsg post-teardown safety
+// ---------------------------------------------------------------------------
+
+test('appendChatMsg after teardown() does not throw', () => {
+  const fakeDrawer = {
+    node: document.createElement('div'),
+    open() {}, close() {}, toggle() {},
+    appendMsg() {},
+    hasUnread() { return false; },
+  };
+  const savedDrawer = globalThis.sbChatDrawer;
+  globalThis.sbChatDrawer = { buildChatDrawer() { return fakeDrawer; } };
+  const h = mod.mount(document.createElement('div'), Object.assign(defaultOpts(), { onSendChat() {} }));
+  h.teardown();
+  assert.doesNotThrow(() => h.appendChatMsg('teacher', 'post-teardown message'));
   globalThis.sbChatDrawer = savedDrawer;
 });
 

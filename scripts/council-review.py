@@ -2361,6 +2361,23 @@ def main():
     tracker_file = repo_root / f"FINDINGS_Sprint{sprint}.md"
     tracker_content = tracker_file.read_text() if tracker_file.exists() else None
 
+    # Warn when the previous round left every finding OPEN — this usually means
+    # the editor addressed findings in code but forgot to update the tracker.
+    # An all-OPEN tracker defeats deduplication and the compact representation.
+    if tracker_content and round_num > 1:
+        prior_findings = _read_tracker(tracker_file)
+        if prior_findings:
+            open_count = sum(1 for f in prior_findings if f.get("status", "OPEN") == "OPEN")
+            if open_count == len(prior_findings):
+                print()
+                print("  ⚠️  WARNING: All prior findings are still OPEN in the tracker.")
+                print(f"     ({open_count} findings, 0 resolved)")
+                print("     If you addressed findings in code, update FINDINGS_Sprint"
+                      f"{sprint}.md before this round runs.")
+                print("     Unresolved tracker → consolidator cannot deduplicate → "
+                      "higher finding count, no token saving.")
+                print()
+
     prompt_token_estimates = _estimate_prompt_tokens(
         active_members, materials, sprint, round_num, review_type, tracker_content,
     )

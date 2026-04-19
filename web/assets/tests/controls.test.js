@@ -2,13 +2,13 @@
 // Purpose: Node tests for `deriveToggleView`, the pure view-model
 //          helper that drives the mute / video-off button labels
 //          and aria-pressed attributes.
-// Last updated: Sprint 3 (2026-04-17) -- initial implementation
+// Last updated: Sprint 8 (2026-04-19) -- import relocated to session-ui.js
 
 'use strict';
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { deriveToggleView } = require('../controls.js');
+const { deriveToggleView } = require('../session-ui.js');
 
 test('enabled=true yields onLabel and aria-pressed=false', () => {
   const v = deriveToggleView(true, 'Mute', 'Unmute');

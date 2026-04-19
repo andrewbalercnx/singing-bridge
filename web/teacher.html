@@ -4,13 +4,14 @@
   Purpose: Teacher-side landing page. The sb:debug placeholder is
            replaced server-side with a <meta name="sb-debug"> tag
            when config.dev is true (empty string otherwise).
-  Last updated: Sprint 7 (2026-04-18) -- chat panel + lobby message form
+  Last updated: Sprint 8 (2026-04-19) -- Variation A session UI (session-root)
 -->
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <title>singing-bridge — teacher</title>
   <link rel="stylesheet" href="/assets/styles.css">
+  <link rel="stylesheet" href="/assets/theme.css">
   <!-- sb:debug -->
 </head>
 <body>
@@ -41,26 +42,16 @@
         <p>This student's connection can't support the lesson.</p>
       </div>
 
-      <div class="tiles">
-        <div class="tile remote">
-          <video id="remote-video" autoplay playsinline></video>
-          <audio id="remote-audio" autoplay></audio>
-          <button id="unmute-audio" type="button" hidden>Click to enable audio</button>
-        </div>
-        <div class="tile self">
-          <video id="local-video" autoplay playsinline muted></video>
-        </div>
-      </div>
-      <div class="controls">
-        <button id="mute" type="button" aria-pressed="false">Mute</button>
-        <button id="video-off" type="button" aria-pressed="false">Video off</button>
+      <!-- Session UI mounts here -->
+      <div id="session-root"></div>
+
+      <!-- Recording controls (outside session-root — not part of the session UI) -->
+      <div id="recording-controls" hidden>
         <button id="record" type="button" data-state="idle">Record</button>
-        <button id="hangup" type="button">End session</button>
-        <span id="quality-badge" class="quality-badge good" hidden>good</span>
         <span id="rec-indicator" class="rec-indicator" hidden aria-label="Recording active">REC</span>
       </div>
 
-      <!-- In-session chat -->
+      <!-- In-session chat (toggled by Say button via onSay callback) -->
       <div id="chat-panel" hidden aria-label="Chat">
         <h3>Chat</h3>
         <ul id="chat-log" aria-live="polite"></ul>
@@ -69,6 +60,8 @@
           <button type="submit">Send</button>
         </form>
       </div>
+
+      <span id="quality-badge" class="quality-badge good" hidden>good</span>
 
       <!-- Post-session: send recording link -->
       <dialog id="send-recording-modal">
@@ -95,7 +88,7 @@
     <script src="/assets/audio.js"></script>
     <script src="/assets/video.js"></script>
     <script src="/assets/debug-overlay.js"></script>
-    <script src="/assets/controls.js"></script>
+    <script src="/assets/session-ui.js"></script>
     <script src="/assets/adapt.js"></script>
     <script src="/assets/quality.js"></script>
     <script src="/assets/reconnect.js"></script>

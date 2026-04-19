@@ -1,11 +1,8 @@
 // File: web/assets/teacher.js
 // Purpose: Teacher UI wiring. Student-supplied strings rendered via
-//          textContent only (R4 recommendation — no innerHTML to
-//          prevent XSS). Sprint 4: threads onQuality /
-//          onFloorViolation / onReconnectBanner callbacks through
-//          to the signalling client; renders the quality badge and
-//          mirrors the student-side floor-violation notice.
-// Last updated: Sprint 7 (2026-04-18) -- chat panel + lobby message form
+//          textContent only (no innerHTML — XSS prevention). Sprint 8:
+//          replaced wireControls with sbSessionUI.mount into #session-root.
+// Last updated: Sprint 8 (2026-04-19) -- session-ui mount replaces wireControls
 
 'use strict';
 
@@ -18,7 +15,6 @@
   const listEl = document.getElementById('lobby-list');
   const emptyEl = document.getElementById('lobby-empty');
   const statusEl = document.getElementById('session-status');
-  const localVideo = document.getElementById('local-video');
   const qualityBadge = document.getElementById('quality-badge');
   const reconnectBanner = document.getElementById('reconnect-banner');
   const floorNotice = document.getElementById('floor-violation');
@@ -211,10 +207,7 @@
     return li;
   }
 
-  let controlsHandle = null;
-  // Session handle is closure-scoped (not on window). renderEntry's
-  // Admit/Reject buttons read it via handleProxy, which is also
-  // closure-scoped below.
+  let sessionUiHandle = null;
   let sessionHandle = null;
 
   window.signallingClient.connectTeacher({
@@ -227,19 +220,32 @@
     onChat({ from, text }) {
       appendChat(from, text);
     },
-    onPeerConnected({ dataChannel, audioTrack, videoTrack }) {
+    onPeerConnected({ dataChannel, audioTrack, videoTrack, localStream }) {
       statusEl.textContent = 'Connected.';
       localAudioTrack = audioTrack;
       if (qualityBadge) qualityBadge.hidden = false;
-      if (chatPanel) chatPanel.hidden = false;
       setRecordState('idle');
-      if (videoTrack) {
-        localVideo.srcObject = new MediaStream([videoTrack]);
-      }
-      controlsHandle = window.sbControls.wireControls({
-        audioTrack,
-        videoTrack,
-        onHangup() { if (sessionHandle) sessionHandle.hangup(); },
+      const sessionRoot = document.getElementById('session-root');
+      sessionUiHandle = window.sbSessionUI.mount(sessionRoot, {
+        role: 'teacher',
+        remoteName: lastStudentEmail,
+        remoteRoleLabel: 'Student',
+        localStream: localStream || null,
+        remoteStream: null,
+        headphonesConfirmed: false,
+        micEnabled: true,
+        videoEnabled: true,
+        onMicToggle() {
+          const track = localStream && localStream.getAudioTracks()[0];
+          if (track) track.enabled = !track.enabled;
+        },
+        onVideoToggle() {
+          const track = localStream && localStream.getVideoTracks()[0];
+          if (track) track.enabled = !track.enabled;
+        },
+        onEnd() { if (sessionHandle) sessionHandle.hangup(); },
+        onNote() { console.log('[sprint9] note panel'); },
+        onSay() { if (chatPanel) chatPanel.hidden = false; },
       });
       dataChannel.addEventListener('message', (e) => {
         statusEl.textContent = `Student says: ${e.data}`;
@@ -249,16 +255,14 @@
     onPeerDisconnected() {
       statusEl.textContent = 'Student disconnected.';
       localAudioTrack = null;
-      if (controlsHandle) { controlsHandle.teardown(); controlsHandle = null; }
+      if (sessionUiHandle) { sessionUiHandle.teardown(); sessionUiHandle = null; }
       if (qualityBadge) qualityBadge.hidden = true;
       if (chatPanel) chatPanel.hidden = true;
       if (chatLog) chatLog.replaceChildren();
       if (reconnectBanner) reconnectBanner.hidden = true;
       if (floorNotice) floorNotice.hidden = true;
-      // If recording was active, stop it.
       if (recorderHandle) stopRecorder();
       setRecordState('idle');
-      localVideo.srcObject = null;
     },
     onQuality(summary) {
       if (qualityBadge && summary) {
@@ -271,18 +275,15 @@
     onReconnectBanner(visible) {
       if (reconnectBanner) reconnectBanner.hidden = !visible;
     },
-    onRecordConsentResult(granted) {
+    onRecordConsentResult(granted, remoteStream) {
       if (granted) {
-        // Student consented — start the actual MediaRecorder.
         setRecordState('recording');
         recordStartTime = Date.now();
-        if (window.sbRecorder && controlsHandle) {
-          const remoteAudio = document.getElementById('remote-audio');
-          const remoteStream = remoteAudio && remoteAudio.srcObject;
+        if (window.sbRecorder) {
           recorderHandle = window.sbRecorder.start({
             localAudioTrack,
-            localVideoStream: localVideo.srcObject,
-            remoteStream,
+            localVideoStream: null,
+            remoteStream: remoteStream || null,
           });
         }
       } else {

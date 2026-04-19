@@ -21,7 +21,7 @@
 //             is the sole sender.setParameters mutation site AFTER
 //             session subsystems start; priority hints at transceiver
 //             creation are the only pre-session setParameters calls.
-// Last updated: Sprint 7 (2026-04-18) -- onChat/onLobbyMessage callbacks + sendChat/sendLobbyMessage helpers
+// Last updated: Sprint 8 (2026-04-19) -- set playoutDelayHint=0 directly in ontrack handler
 
 (function (root, factory) {
   'use strict';
@@ -149,6 +149,12 @@
     } catch (_) { /* older UAs */ }
 
     pc.ontrack = function (ev) {
+      // Set playoutDelayHint directly on the receiver so it survives the
+      // DOM refactor (Sprint 8 removed #remote-audio; audio.js path alone
+      // would be unreachable). ADR-0001 requires minimum playout latency.
+      if (ev.receiver) {
+        try { ev.receiver.playoutDelayHint = 0; } catch (_) {}
+      }
       mod.dispatchRemoteTrack(ev, {
         onAudio: window.sbAudio.attachRemoteAudio,
         onVideo: window.sbVideo.attachRemoteVideo,

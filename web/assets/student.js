@@ -1,9 +1,7 @@
 // File: web/assets/student.js
-// Purpose: Student join form + lobby/session UI driver. Sprint 4:
-//          threads onQuality / onFloorViolation / onReconnectBanner
-//          callbacks through to the signalling client; renders the
-//          quality badge and floor-violation notice.
-// Last updated: Sprint 7 (2026-04-18) -- lobby message banner + in-session chat
+// Purpose: Student join form + lobby/session UI driver. Sprint 8:
+//          replaced wireControls with sbSessionUI.mount into #session-root.
+// Last updated: Sprint 8 (2026-04-19) -- session-ui mount replaces wireControls
 
 'use strict';
 
@@ -13,7 +11,6 @@
   const form = document.getElementById('join-form');
   const lobbyStatus = document.getElementById('lobby-status');
   const sessionSection = document.getElementById('session');
-  const localVideo = document.getElementById('local-video');
   const errEl = document.getElementById('error');
   const blockNotice = document.getElementById('block-notice');
   const blockReason = document.getElementById('block-reason');
@@ -110,11 +107,7 @@
     joinSection.hidden = true;
     lobbyStatus.hidden = false;
 
-    let controlsHandle = null;
-    // `handle` is assigned by the await below; `onHangup` fires only
-    // after the session has actually started (after onPeerConnected),
-    // by which time `handle` is populated. Guarded explicitly so the
-    // safety does not depend on an unstated sequencing invariant.
+    let sessionUiHandle = null;
     let handle = null;
     if (chatForm) {
       chatForm.addEventListener('submit', (e) => {
@@ -150,17 +143,30 @@
         if (lobbyMsgTimer) clearTimeout(lobbyMsgTimer);
         lobbyMsgTimer = setTimeout(() => { lobbyMsgBanner.hidden = true; }, 8000);
       },
-      onPeerConnected({ dataChannel, audioTrack, videoTrack }) {
+      onPeerConnected({ dataChannel, audioTrack, videoTrack, localStream }) {
         sessionSection.hidden = false;
-        if (chatPanel) chatPanel.hidden = false;
         if (qualityBadge) qualityBadge.hidden = false;
-        if (videoTrack) {
-          localVideo.srcObject = new MediaStream([videoTrack]);
-        }
-        controlsHandle = window.sbControls.wireControls({
-          audioTrack,
-          videoTrack,
-          onHangup() { if (handle) handle.hangup(); },
+        const sessionRoot = document.getElementById('session-root');
+        sessionUiHandle = window.sbSessionUI.mount(sessionRoot, {
+          role: 'student',
+          remoteName: 'Teacher',
+          remoteRoleLabel: 'Your teacher',
+          localStream: localStream || null,
+          remoteStream: null,
+          headphonesConfirmed: false,
+          micEnabled: true,
+          videoEnabled: true,
+          onMicToggle() {
+            const track = localStream && localStream.getAudioTracks()[0];
+            if (track) track.enabled = !track.enabled;
+          },
+          onVideoToggle() {
+            const track = localStream && localStream.getVideoTracks()[0];
+            if (track) track.enabled = !track.enabled;
+          },
+          onEnd() { if (handle) handle.hangup(); },
+          onNote() { console.log('[sprint9] note panel'); },
+          onSay() { if (chatPanel) chatPanel.hidden = false; },
         });
         dataChannel.addEventListener('message', (ev) => {
           errEl.textContent = `Teacher says: ${ev.data}`;
@@ -168,7 +174,7 @@
         dataChannel.send(JSON.stringify({ hello: true, from: 'student' }));
       },
       onPeerDisconnected() {
-        if (controlsHandle) { controlsHandle.teardown(); controlsHandle = null; }
+        if (sessionUiHandle) { sessionUiHandle.teardown(); sessionUiHandle = null; }
         sessionSection.hidden = true;
         if (chatPanel) chatPanel.hidden = true;
         if (chatLog) chatLog.replaceChildren();
@@ -176,7 +182,6 @@
         if (reconnectBanner) reconnectBanner.hidden = true;
         hideConsentBanner();
         setRecIndicator(false);
-        localVideo.srcObject = null;
         errEl.textContent = 'Teacher disconnected.';
       },
       onQuality(summary) {

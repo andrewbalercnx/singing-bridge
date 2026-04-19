@@ -4,13 +4,15 @@
   Purpose: Student join form + session UI. The sb:debug placeholder
            is replaced server-side with a <meta name="sb-debug"> tag
            when config.dev is true (empty string otherwise).
-  Last updated: Sprint 7 (2026-04-18) -- lobby message banner + chat panel
+  Last updated: Sprint 8 (2026-04-19) -- Variation A session UI (session-root)
 -->
 <html lang="en">
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>singing-bridge — join</title>
   <link rel="stylesheet" href="/assets/styles.css">
+  <link rel="stylesheet" href="/assets/theme.css">
   <!-- sb:debug -->
 </head>
 <body>
@@ -65,24 +67,10 @@
       <!-- REC indicator (visible while recording active) -->
       <span id="rec-indicator" class="rec-indicator" hidden aria-label="Recording active">REC</span>
 
-      <div class="tiles">
-        <div class="tile remote">
-          <video id="remote-video" autoplay playsinline></video>
-          <audio id="remote-audio" autoplay></audio>
-          <button id="unmute-audio" type="button" hidden>Click to enable audio</button>
-        </div>
-        <div class="tile self">
-          <video id="local-video" autoplay playsinline muted></video>
-        </div>
-      </div>
-      <div class="controls">
-        <button id="mute" type="button" aria-pressed="false">Mute</button>
-        <button id="video-off" type="button" aria-pressed="false">Video off</button>
-        <button id="hangup" type="button">End call</button>
-        <span id="quality-badge" class="quality-badge good" hidden>good</span>
-      </div>
+      <!-- Session UI mounts here -->
+      <div id="session-root"></div>
 
-      <!-- In-session chat -->
+      <!-- In-session chat (toggled by Say button via onSay callback) -->
       <div id="chat-panel" hidden aria-label="Chat">
         <h3>Chat</h3>
         <ul id="chat-log" aria-live="polite"></ul>
@@ -91,6 +79,8 @@
           <button type="submit">Send</button>
         </form>
       </div>
+
+      <span id="quality-badge" class="quality-badge good" hidden>good</span>
 
     </section>
 
@@ -114,7 +104,7 @@
     <script src="/assets/audio.js"></script>
     <script src="/assets/video.js"></script>
     <script src="/assets/debug-overlay.js"></script>
-    <script src="/assets/controls.js"></script>
+    <script src="/assets/session-ui.js"></script>
     <script src="/assets/adapt.js"></script>
     <script src="/assets/quality.js"></script>
     <script src="/assets/reconnect.js"></script>

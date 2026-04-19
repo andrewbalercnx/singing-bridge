@@ -228,6 +228,34 @@ _Protocol_
 
 ---
 
+## Sprint 8: Variation A "The Warm Room" Session UI
+
+**Goal:** Implement the Claude Design "Warm Room" brief — breath ring, audio meters, muted banner, control cluster, and self-preview — wired to real WebRTC audio/video.
+
+**Deliverables:**
+- `web/assets/session-ui.js` — Variation A session UI component; `mount(container, opts)` → `{ teardown, setRemoteStream }`
+- `web/assets/theme.css` — design tokens + session layout CSS; self-hosted Fraunces + Poppins WOFF2 fonts
+- `web/assets/fonts/` — WOFF2 assets + `CHECKSUMS.txt` for provenance
+- `deriveToggleView` relocated from deleted `controls.js` to `session-ui.js`
+- `teacher.html` / `student.html` — replaced static tiles/controls with `#session-root`; added `theme.css` and `session-ui.js`; `student.html` gains viewport meta
+- `teacher.js` / `student.js` — replaced `wireControls` with `sbSessionUI.mount`
+- `signalling.js` — `playoutDelayHint = 0` moved into `dispatchRemoteTrack` (now testable)
+- `server/tests/http_teach_debug_marker.rs` — updated assertions for new DOM structure + no-Google-Fonts guard
+- `web/assets/tests/session-ui.test.js` — 27 tests covering fmtTime, deriveToggleView, buildBaselineStrip, buildMutedBanner, runAudioLoop, mount lifecycle, XSS
+- `web/assets/tests/signalling.test.js` — playoutDelayHint regression guard added
+- 185 total JS tests, all Rust tests pass
+
+**Exit criteria:**
+- Session UI mounts into `#session-root` with breath ring driven by remote audio RMS
+- `teardown()` is idempotent; calls `audioCtx.close()` once
+- `localStream: null` mounts without error; no muted banner fires
+- No Google Fonts referenced; fonts are self-hosted with checksums
+- All tests pass
+
+**Status:** COMPLETE — 2026-04-19, commit `644063e` (code review APPROVED R3)
+
+---
+
 ## Open items (noted, not blocking MVP)
 
 - Persistent "my students" list for the teacher — deliberately out of MVP

@@ -11,6 +11,25 @@
 > **Commit:** `<sha>`
 > ```
 
+## Sprint 8: Variation A "The Warm Room" Session UI — 2026-04-19
+
+**Files changed:**
+- `web/assets/session-ui.js` — Variation A session UI: breath ring, audio meters, muted banner, 5-button control cluster, self-preview, end-call dialog; `mount(container, opts)` → `{ teardown, setRemoteStream }`; exports `deriveToggleView` (relocated from deleted `controls.js`), `fmtTime`, `buildBaselineStrip`, `buildMutedBanner`, `runAudioLoop`
+- `web/assets/theme.css` — design tokens (colours, typography, radii, shadows), session layout CSS, `@font-face` declarations, mobile breakpoint
+- `web/assets/fonts/` — self-hosted WOFF2 subsets: Fraunces 400/500 (normal+italic), Poppins 400/500/600; `CHECKSUMS.txt` for provenance
+- `web/assets/signalling.js` — `playoutDelayHint = 0` moved into `dispatchRemoteTrack` (testable via pure export); removed duplicate from `ontrack` handler
+- `web/assets/teacher.js` — replaced `wireControls` with `sbSessionUI.mount` into `#session-root`; removed static `localVideo` reference
+- `web/assets/student.js` — same as teacher.js; removed `localVideo` reference
+- `web/teacher.html` — replaced tiles/controls block with `#session-root`; kept recording buttons outside; added `theme.css` + `session-ui.js`; replaced `controls.js` script tag
+- `web/student.html` — same; added `<meta name="viewport">`; added `theme.css`
+- `web/assets/controls.js` — **deleted**; `deriveToggleView` relocated to `session-ui.js`
+- `web/assets/tests/controls.test.js` — import updated to `session-ui.js`
+- `web/assets/tests/session-ui.test.js` — 27 tests: fmtTime, deriveToggleView, buildBaselineStrip (setElapsed via actual function), buildMutedBanner (checkAndUpdate), runAudioLoop onFrame contract, mount lifecycle, XSS, button callbacks
+- `web/assets/tests/signalling.test.js` — added 2 tests: `playoutDelayHint = 0` regression guard, missing receiver no-throw
+- `server/tests/http_teach_debug_marker.rs` — updated assertions for Sprint 8 DOM structure; added no-Google-Fonts, session-root, viewport meta, session-ui.js/theme.css load-order guards
+
+**Commit:** `644063e`
+
 ## Sprint 6: Session Recording — 2026-04-18
 
 **Files changed:**

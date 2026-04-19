@@ -89,6 +89,11 @@ def index():
     return render_template("index.html")
 
 
+@app.get("/healthz")
+def healthz():
+    return {"ok": True}, 200
+
+
 @app.post("/upload")
 def upload():
     file = request.files.get("file")

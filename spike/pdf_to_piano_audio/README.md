@@ -62,13 +62,43 @@ Recommended piano SoundFonts:
 
 ## Run
 
+Two ways: native Python (fast iteration, needs system deps on the
+host) or Docker (one command, everything self-contained).
+
+### Local Docker (recommended for trialling the flow)
+
+From this directory:
+
+```
+docker compose up --build
+```
+
+Then open <http://localhost:5173/>. First build is ~5–8 min (downloads
+an Ubuntu base, JRE, Audiveris .deb, FluidSynth, SoundFont); rebuilds
+are cached.
+
+- Everything needed is in the image; nothing to install on the host.
+- Upload a PDF, watch it flow upload → OMR → part select → render.
+- Container exposes `:8080` internally, mapped to host `:5173` (change
+  in `docker-compose.yml` if you want a different port).
+- To swap in a nicer piano SoundFont (e.g. Salamander Grand), uncomment
+  the `volumes:` block in `docker-compose.yml` and point `PIANO_SF2` at
+  the mounted path.
+- `docker compose down` to stop; scratch files are lost with the
+  container, which is fine for a trial.
+
+Bumping Audiveris: set `AUDIVERIS_VERSION` as a build arg, e.g.
+`docker compose build --build-arg AUDIVERIS_VERSION=5.10.1`.
+
+### Native Python (no Docker)
+
 ```
 python3 -m spike.pdf_to_piano_audio.app
 ```
 
 Then open <http://127.0.0.1:5173/>. The **"load two-part fixture"**
 button skips the upload + OMR stages and is the easiest way to verify
-the app works end-to-end without Audiveris.
+the app works end-to-end without Audiveris installed on the host.
 
 ## Demoable without Audiveris/FluidSynth?
 

@@ -4,7 +4,9 @@
 #       and a GM SoundFont -- the three external tools the pipeline needs.
 # Last updated: 2026-04-20 -- install Java 17 before Audiveris .deb to satisfy deps
 
-FROM ubuntu:24.04
+# Audiveris ships amd64-only binaries; pin to linux/amd64 so this builds
+# correctly on Apple Silicon (Docker uses Rosetta emulation automatically).
+FROM --platform=linux/amd64 ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -13,11 +15,9 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PIP_BREAK_SYSTEM_PACKAGES=1 \
     PIANO_SF2=/usr/share/sounds/sf2/FluidR3_GM.sf2
 
-# Java 17 must be present before the Audiveris .deb is installed.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates curl \
         python3 python3-pip \
-        openjdk-17-jre-headless \
         fluidsynth fluid-soundfont-gm \
         tesseract-ocr tesseract-ocr-eng \
         libfreetype6 \

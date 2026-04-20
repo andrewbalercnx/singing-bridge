@@ -4,7 +4,7 @@
  * Purpose: Drive the four-step UI for the PDF -> piano-audio spike.
  * Sequential state machine: upload -> omr -> select -> render.
  *
- * Last updated: 2026-04-19 -- initial spike
+ * Last updated: 2026-04-20 -- auto-advance OMR for musicxml uploads; extract runOmr()
  */
 (() => {
   const state = { sessionId: null, kind: null, partIndex: null };
@@ -42,6 +42,21 @@
     return data;
   };
 
+  // After upload/fixture: PDFs need the user to click "Run OMR"; MusicXML
+  // files are parsed automatically (no OCR wait, no user action needed).
+  const afterUpload = async (label) => {
+    markDone("upload");
+    if (state.kind === "pdf") {
+      el("omr-btn").disabled = false;
+      el("omr-btn").textContent = "Run OMR";
+      activate("omr");
+    } else {
+      activate("omr");
+      setStatus("omr-status", "Parsing MusicXML…");
+      await runOmr();
+    }
+  };
+
   // Step 1: upload
   el("upload-form").addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -55,10 +70,7 @@
       state.sessionId = data.session_id;
       state.kind = data.kind;
       setStatus("upload-status", `Uploaded ${file.name} (${data.kind}).`, "ok");
-      markDone("upload");
-      el("omr-btn").disabled = false;
-      el("omr-btn").textContent = data.kind === "pdf" ? "Run OMR" : "Parse MusicXML";
-      activate("omr");
+      await afterUpload(file.name);
     } catch (err) {
       setStatus("upload-status", `Upload failed: ${err.message}`, "err");
     }
@@ -71,19 +83,15 @@
       state.sessionId = data.session_id;
       state.kind = data.kind;
       setStatus("upload-status", "Loaded two-part fixture.", "ok");
-      markDone("upload");
-      el("omr-btn").disabled = false;
-      el("omr-btn").textContent = "Parse MusicXML";
-      activate("omr");
+      await afterUpload("fixture");
     } catch (err) {
       setStatus("upload-status", `Fixture failed: ${err.message}`, "err");
     }
   });
 
   // Step 2: OMR / parse
-  el("omr-btn").addEventListener("click", async () => {
+  const runOmr = async () => {
     el("omr-btn").disabled = true;
-    setStatus("omr-status", "Working…");
     try {
       const data = await postJson(`/${state.sessionId}/omr`);
       const list = el("parts-list");
@@ -109,6 +117,11 @@
       setStatus("omr-status", `Failed: ${err.message}`, "err");
       el("omr-btn").disabled = false;
     }
+  };
+
+  el("omr-btn").addEventListener("click", async () => {
+    setStatus("omr-status", "Working…");
+    await runOmr();
   });
 
   // Step 3: select part

@@ -19,18 +19,22 @@ Depends on:
 
 Invariants & gotchas:
   - Sample rate is fixed at 44.1 kHz, gain at 0.8.
-  - `tempo` is a BPM percentage (100 = original speed, 50 = half speed,
-    200 = double speed). FluidSynth's -T flag accepts a ratio; we
-    convert: ratio = tempo / 100.
+  - `tempo` is a BPM percentage (100 = original speed, 50 = half,
+    200 = double). Tempo scaling is applied by rewriting set_tempo
+    events in a temporary copy of the MIDI file (via mido) before
+    handing off to FluidSynth — FluidSynth has no CLI tempo flag.
 
-Last updated: 2026-04-20 -- add tempo parameter
+Last updated: 2026-04-20 -- tempo via mido MIDI rewrite (not FluidSynth flag)
 """
 from __future__ import annotations
 
 import os
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
+
+import mido
 
 
 class FluidSynthMissing(RuntimeError):
@@ -50,6 +54,23 @@ def _find_fluidsynth() -> str:
     return found
 
 
+def _scale_midi_tempo(midi_path: Path, scale: float) -> Path:
+    """Return a temp file with all set_tempo events scaled by `scale`."""
+    mid = mido.MidiFile(str(midi_path))
+    result = mido.MidiFile(type=mid.type, ticks_per_beat=mid.ticks_per_beat)
+    for track in mid.tracks:
+        new_track = mido.MidiTrack()
+        for msg in track:
+            if msg.type == "set_tempo":
+                new_track.append(msg.copy(tempo=int(msg.tempo / scale)))
+            else:
+                new_track.append(msg)
+        result.tracks.append(new_track)
+    tmp = tempfile.NamedTemporaryFile(suffix=".mid", delete=False)
+    result.save(tmp.name)
+    return Path(tmp.name)
+
+
 def midi_to_wav(
     midi_path: Path,
     out_path: Path,
@@ -66,19 +87,27 @@ def midi_to_wav(
             "(e.g. FluidR3_GM.sf2) and point PIANO_SF2 at it."
         )
 
-    cmd = _find_fluidsynth()
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    # -T: MIDI tempo multiplier as a ratio (100 bpm% → 1.0 = original speed)
-    tempo_ratio = f"{tempo / 100:.3f}"
-    subprocess.run(
-        [
-            cmd, "-ni", "-g", "0.8", "-r", "44100",
-            "-T", tempo_ratio,
-            "-F", str(out_path),
-            str(soundfont_path), str(midi_path),
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
+    scaled_path = None
+    render_midi = midi_path
+    if tempo != 100:
+        scaled_path = _scale_midi_tempo(midi_path, tempo / 100)
+        render_midi = scaled_path
+
+    try:
+        cmd = _find_fluidsynth()
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        subprocess.run(
+            [
+                cmd, "-ni", "-g", "0.8", "-r", "44100",
+                "-F", str(out_path),
+                str(soundfont_path), str(render_midi),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    finally:
+        if scaled_path and scaled_path.exists():
+            scaled_path.unlink()
+
     return out_path

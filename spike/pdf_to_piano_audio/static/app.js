@@ -170,7 +170,9 @@
     el("audio-player").hidden = true;
     setStatus("render-status", "");
     setStatus("select-status", "");
-    el("select-btn").disabled = false;
+    // Re-enable select-btn (was disabled after the previous submission)
+    const anyChecked = !!document.querySelector('input[name="part"]:checked');
+    el("select-btn").disabled = !anyChecked;
     activate("select");
   });
 

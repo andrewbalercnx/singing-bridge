@@ -37,7 +37,7 @@ ol.steps { list-style: none; padding: 0; margin: 0; }
   pointer-events: none;
 }
 .step.is-active { opacity: 1; pointer-events: auto; background: var(--panel-active); }
-.step.is-done { opacity: 1; }
+.step.is-done { opacity: 1; pointer-events: auto; }
 .step h2 {
   margin: 0 0 .25rem;
   font-size: 1.1rem;

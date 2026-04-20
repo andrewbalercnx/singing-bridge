@@ -218,15 +218,21 @@
     var detect = detectTier();
     // Acquired media held here between peer_connected and the first signal(offer).
     var pendingAcq = null;
+    // Promise for the acquisition started in peer_connected. The signal handler
+    // awaits this if the offer arrives before getUserMedia resolves.
+    var mediaReady = null;
     var remoteStream = new MediaStream();
 
     sig.on('peer_connected', async function () {
+      // Start getUserMedia immediately — before awaiting makePeerConnection — so
+      // the Promise is available to the signal handler if the offer races ahead.
+      mediaReady = mod.acquireMedia(window.sbAudio, window.sbVideo);
       refs.pc = await makePeerConnection();
       // Acquire media now but do NOT call addTransceiver — teacher is the answerer.
       // Transceivers come from the student's offer via setRemoteDescription; we wire
       // local tracks afterwards with addTrack so Chrome matches them to the existing
       // sendrecv transceivers rather than creating duplicate recvonly ones.
-      pendingAcq = await mod.acquireMedia(window.sbAudio, window.sbVideo);
+      pendingAcq = await mediaReady;
       refs.media = {
         audio: pendingAcq.audio,
         video: pendingAcq.video,
@@ -281,7 +287,11 @@
       var p = m.payload;
       if (p.sdp) {
         await refs.pc.setRemoteDescription(new RTCSessionDescription(p.sdp));
-        if (p.sdp.type === 'offer' && pendingAcq) {
+        if (p.sdp.type === 'offer') {
+          // If getUserMedia is still in-flight (offer raced ahead of the permission
+          // prompt), wait for it now before adding tracks.
+          if (!pendingAcq && mediaReady) pendingAcq = await mediaReady;
+          if (pendingAcq) {
           // Wire local tracks AFTER setRemoteDescription so addTrack finds the
           // existing transceivers from the offer (recvonly → sendrecv) rather than
           // creating new unmatched ones. This is the correct answerer pattern.
@@ -319,6 +329,7 @@
           var answer = await refs.pc.createAnswer();
           await setMungedLocalDescription(refs.pc, answer);
           sig.send({ type: 'signal', to: 'student', payload: { sdp: refs.pc.localDescription } });
+          } // end if (pendingAcq)
         }
       } else if (p.candidate) {
         try { await refs.pc.addIceCandidate(p.candidate); } catch (_) {}

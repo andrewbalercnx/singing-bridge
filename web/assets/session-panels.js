@@ -52,8 +52,13 @@
   function buildRemotePanel(opts) {
     var wrap = el('div', 'sb-remote-panel');
     var ring = el('div', 'sb-breath-ring');
+    // Muted video for display — browsers block autoplay on unmuted video.
+    // Audio is routed through a separate hidden <audio> element which can
+    // autoplay freely (no user-gesture requirement for audio-only elements).
     var vid = document.createElement('video');
-    vid.autoplay = true; vid.playsInline = true; vid.muted = false;
+    vid.autoplay = true; vid.playsInline = true; vid.muted = true;
+    var aud = document.createElement('audio');
+    aud.autoplay = true;
     var namePlate = el('div', 'sb-name-plate');
     var nameEl = el('div', 'sb-name'); nameEl.textContent = opts.remoteName;
     var roleEl = el('div', 'sb-role'); roleEl.textContent = opts.remoteRoleLabel;
@@ -63,7 +68,7 @@
     var hpText = el('span');
     hpText.textContent = opts.headphonesConfirmed ? 'Headphones on' : 'No headphones';
     hpChip.append(hpDot, hpText);
-    wrap.append(ring, vid, namePlate, hpChip);
+    wrap.append(ring, vid, aud, namePlate, hpChip);
     var smoothLevel = 0;
     return {
       node: wrap,
@@ -78,9 +83,11 @@
       },
       setStream: function (stream) {
         vid.srcObject = stream || null;
+        aud.srcObject = stream || null;
         if (vid.srcObject) vid.play().catch(function () {});
+        if (aud.srcObject) aud.play().catch(function () {});
       },
-      teardown: function () { vid.srcObject = null; },
+      teardown: function () { vid.srcObject = null; aud.srcObject = null; },
     };
   }
 

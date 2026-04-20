@@ -29,7 +29,7 @@ pub enum ConfigError {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MailerKind {
     Dev,
-    CloudflareWorker,
+    Acs,
 }
 
 #[derive(Clone, Debug)]
@@ -56,8 +56,7 @@ pub struct Config {
     pub turn_cred_rate_limit_window_secs: i64,
     // Mailer
     pub mailer_kind: MailerKind,
-    pub cf_worker_url: Option<String>,
-    pub cf_worker_secret: Option<SecretString>,
+    pub acs_connection_string: Option<SecretString>,
     // IP trust
     pub trust_forwarded_for: bool,
     // WS join rate limit
@@ -98,8 +97,7 @@ impl Config {
             turn_cred_rate_limit_per_ip: 10,
             turn_cred_rate_limit_window_secs: 60,
             mailer_kind: MailerKind::Dev,
-            cf_worker_url: None,
-            cf_worker_secret: None,
+            acs_connection_string: None,
             trust_forwarded_for: false,
             ws_join_rate_limit_per_ip: 20,
             ws_join_rate_limit_window_secs: 60,
@@ -156,15 +154,10 @@ impl Config {
             .parse()
             .map_err(|e| ConfigError::Invalid("SB_TURN_TTL_SECS", format!("{e}")))?;
 
-        let mailer_kind = if dev {
-            MailerKind::Dev
-        } else {
-            MailerKind::CloudflareWorker
-        };
-        let cf_worker_url = std::env::var("SB_CF_WORKER_URL").ok();
-        let cf_worker_secret = std::env::var("SB_CF_WORKER_SECRET")
+        let mailer_kind = if dev { MailerKind::Dev } else { MailerKind::Acs };
+        let acs_connection_string = std::env::var("SB_ACS_CONNECTION_STRING")
             .ok()
-            .map(SecretString::new);
+            .map(|s| SecretString::new(&s));
 
         let session_log_pepper = std::env::var("SB_SESSION_LOG_PEPPER")
             .ok()
@@ -204,8 +197,7 @@ impl Config {
             turn_cred_rate_limit_per_ip: 10,
             turn_cred_rate_limit_window_secs: 60,
             mailer_kind,
-            cf_worker_url,
-            cf_worker_secret,
+            acs_connection_string,
             trust_forwarded_for: !dev,
             ws_join_rate_limit_per_ip,
             ws_join_rate_limit_window_secs,
@@ -235,23 +227,9 @@ fn validate_prod_config(c: &Config) -> Result<(), ConfigError> {
     if secret.len() < 32 {
         return Err(ConfigError::TooShort("SB_TURN_SHARED_SECRET", 32));
     }
-    let worker_url = c
-        .cf_worker_url
+    c.acs_connection_string
         .as_ref()
-        .ok_or(ConfigError::Missing("SB_CF_WORKER_URL"))?;
-    // Must be HTTPS to prevent bearer token transmission over plaintext.
-    let worker_parsed = Url::parse(worker_url)
-        .map_err(|e| ConfigError::Invalid("SB_CF_WORKER_URL", format!("{e}")))?;
-    if worker_parsed.scheme() != "https" {
-        return Err(ConfigError::Invalid(
-            "SB_CF_WORKER_URL",
-            "must use HTTPS scheme".into(),
-        ));
-    }
-    let _worker_secret = c
-        .cf_worker_secret
-        .as_ref()
-        .ok_or(ConfigError::Missing("SB_CF_WORKER_SECRET"))?;
+        .ok_or(ConfigError::Missing("SB_ACS_CONNECTION_STRING"))?;
     let pepper = c
         .session_log_pepper
         .as_ref()
@@ -286,52 +264,43 @@ mod tests {
         assert!(matches!(err, ConfigError::Missing("SB_TURN_SHARED_SECRET")));
     }
 
-    #[test]
-    fn prod_short_turn_secret_errors() {
+    fn prod_base(acs: bool) -> Config {
         let mut c = Config::dev_default();
         c.dev = false;
         c.base_url = Url::parse("https://singing.rcnx.io").unwrap();
-        c.turn_shared_secret = Some(SecretString::new("a".repeat(31)));
-        c.cf_worker_url = Some("https://mail.example.com".into());
-        c.cf_worker_secret = Some(SecretString::new("x".repeat(32)));
+        c.turn_shared_secret = Some(SecretString::new("a".repeat(32)));
         c.session_log_pepper = Some(SecretString::new("y".repeat(32)));
+        if acs {
+            c.acs_connection_string = Some(SecretString::new(
+                "endpoint=https://sb.uk.communication.azure.com/;accesskey=dGVzdA==",
+            ));
+        }
+        c
+    }
+
+    #[test]
+    fn prod_short_turn_secret_errors() {
+        let mut c = prod_base(true);
+        c.turn_shared_secret = Some(SecretString::new("a".repeat(31)));
         let err = validate_prod_config(&c).unwrap_err();
         assert!(matches!(err, ConfigError::TooShort("SB_TURN_SHARED_SECRET", 32)));
     }
 
     #[test]
-    fn prod_valid_32_byte_secret_passes() {
-        let mut c = Config::dev_default();
-        c.dev = false;
-        c.base_url = Url::parse("https://singing.rcnx.io").unwrap();
-        c.turn_shared_secret = Some(SecretString::new("a".repeat(32)));
-        c.cf_worker_url = Some("https://mail.example.com".into());
-        c.cf_worker_secret = Some(SecretString::new("x".repeat(32)));
-        c.session_log_pepper = Some(SecretString::new("y".repeat(32)));
-        assert!(validate_prod_config(&c).is_ok());
+    fn prod_valid_config_passes() {
+        assert!(validate_prod_config(&prod_base(true)).is_ok());
     }
 
     #[test]
-    fn prod_http_cf_worker_url_errors() {
-        let mut c = Config::dev_default();
-        c.dev = false;
-        c.base_url = Url::parse("https://singing.rcnx.io").unwrap();
-        c.turn_shared_secret = Some(SecretString::new("a".repeat(32)));
-        c.cf_worker_url = Some("http://mail.example.com".into()); // HTTP!
-        c.cf_worker_secret = Some(SecretString::new("x".repeat(32)));
-        c.session_log_pepper = Some(SecretString::new("y".repeat(32)));
+    fn prod_missing_acs_errors() {
+        let c = prod_base(false);
         let err = validate_prod_config(&c).unwrap_err();
-        assert!(matches!(err, ConfigError::Invalid("SB_CF_WORKER_URL", _)));
+        assert!(matches!(err, ConfigError::Missing("SB_ACS_CONNECTION_STRING")));
     }
 
     #[test]
     fn prod_missing_pepper_errors() {
-        let mut c = Config::dev_default();
-        c.dev = false;
-        c.base_url = Url::parse("https://singing.rcnx.io").unwrap();
-        c.turn_shared_secret = Some(SecretString::new("a".repeat(32)));
-        c.cf_worker_url = Some("https://mail.example.com".into());
-        c.cf_worker_secret = Some(SecretString::new("x".repeat(32)));
+        let mut c = prod_base(true);
         c.session_log_pepper = None;
         let err = validate_prod_config(&c).unwrap_err();
         assert!(matches!(err, ConfigError::Missing("SB_SESSION_LOG_PEPPER")));

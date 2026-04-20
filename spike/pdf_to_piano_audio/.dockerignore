@@ -1,0 +1,10 @@
+# File: spike/pdf_to_piano_audio/.dockerignore
+__pycache__
+*.pyc
+.venv
+venv
+.git
+.gitignore
+.pytest_cache
+.mypy_cache
+.DS_Store

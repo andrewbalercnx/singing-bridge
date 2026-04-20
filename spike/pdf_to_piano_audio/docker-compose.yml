@@ -1,0 +1,22 @@
+# File: spike/pdf_to_piano_audio/docker-compose.yml
+# Purpose: One-command local trial. Run from this directory:
+#   docker compose up --build
+# then open http://localhost:5173/
+
+services:
+  pdf-to-piano-audio:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: singing-bridge-pdf-piano:dev
+    container_name: singing-bridge-pdf-piano
+    ports:
+      - "5173:8080"
+    environment:
+      # Override if you want a different SoundFont mounted in (see volumes).
+      PIANO_SF2: /usr/share/sounds/sf2/FluidR3_GM.sf2
+    # Uncomment to try a nicer piano SF2 from your host:
+    # volumes:
+    #   - /path/to/SalamanderGrandPiano.sf2:/opt/sf2/piano.sf2:ro
+    # and set PIANO_SF2=/opt/sf2/piano.sf2 above.
+    restart: unless-stopped

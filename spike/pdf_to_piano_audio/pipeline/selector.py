@@ -116,10 +116,36 @@ def extract_parts_musicxml(
     part_indices: list[int],
     out_path: Path,
 ) -> Path:
-    voiced = _build_voiced_score(Path(musicxml_path), part_indices)
+    # Build a fresh Score by appending deepcopied parts individually.
+    # Avoids the voice-ID inconsistencies that arise when removing parts
+    # from a full deepcopy (music21's makeTies crashes on missing voice IDs).
+    score = _score(Path(musicxml_path))
+    n = len(score.parts)
+    keep = dict.fromkeys(part_indices)
+    for idx in keep:
+        if idx < 0 or idx >= n:
+            raise IndexError(f"part_index {idx} out of range (0..{n - 1})")
+
+    fresh = stream.Score()
+    for idx in keep:
+        part = copy.deepcopy(score.parts[idx])
+        for instr in list(part.recurse().getElementsByClass(instrument.Instrument)):
+            instr.activeSite.remove(instr)
+        part.insert(0, instrument.Piano())
+        fresh.append(part)
+
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    voiced.write("musicxml", fp=str(out_path))
+    try:
+        fresh.write("musicxml", fp=str(out_path))
+    except Exception:
+        # Flatten polyphonic voices and retry — handles scores where voice
+        # IDs are inconsistent across measures (common in Audiveris output).
+        for part in fresh.parts:
+            for measure in part.recurse().getElementsByClass(stream.Measure):
+                if measure.hasVoices():
+                    measure.flattenUnnecessaryVoices(inPlace=True)
+        fresh.write("musicxml", fp=str(out_path))
     return out_path
 
 

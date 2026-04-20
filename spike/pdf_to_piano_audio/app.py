@@ -163,13 +163,19 @@ def select(session_id: str):
     xml_path = scratch / "score.xml"
     try:
         extract_parts_midi(score_path, part_indices, midi_path)
-        extract_parts_musicxml(score_path, part_indices, xml_path)
     except (IndexError, ValueError) as exc:
         return jsonify({"error": "bad_index", "detail": str(exc)}), 400
 
+    score_url = None
+    try:
+        extract_parts_musicxml(score_path, part_indices, xml_path)
+        score_url = url_for("serve_file", session_id=session_id, name="score.xml")
+    except Exception as exc:
+        app.logger.warning("MusicXML export failed (notation will be skipped): %s", exc)
+
     return jsonify({
         "midi_url": url_for("serve_file", session_id=session_id, name="piano.mid"),
-        "score_url": url_for("serve_file", session_id=session_id, name="score.xml"),
+        "score_url": score_url,
         "part_indices": part_indices,
     })
 

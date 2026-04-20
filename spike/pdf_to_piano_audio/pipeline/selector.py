@@ -30,6 +30,7 @@ Last updated: 2026-04-20 -- accept multiple part indices
 """
 from __future__ import annotations
 
+import copy
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -77,16 +78,27 @@ def extract_parts_midi(
         raise ValueError("part_indices must be non-empty")
 
     score = _score(Path(musicxml_path))
-    score_parts = list(score.parts)
-    n = len(score_parts)
+    n = len(score.parts)
 
-    voiced = stream.Score()
-    for idx in dict.fromkeys(part_indices):  # preserve order, drop duplicates
+    keep = dict.fromkeys(part_indices)  # ordered, deduplicated
+    for idx in keep:
         if idx < 0 or idx >= n:
             raise IndexError(f"part_index {idx} out of range (0..{n - 1})")
-        part_copy = score_parts[idx].flatten()
-        part_copy.insert(0, instrument.Piano())
-        voiced.insert(0, part_copy)
+
+    # Deep-copy the full score so selected parts share the original measure
+    # grid, time signatures, and tempo marks — this is what keeps them in sync.
+    voiced = copy.deepcopy(score)
+
+    # Remove parts not in the selection (iterate in reverse to avoid index shift)
+    for idx in range(len(voiced.parts) - 1, -1, -1):
+        if idx not in keep:
+            voiced.remove(voiced.parts[idx])
+
+    # Re-instrument every remaining part as piano
+    for part in voiced.parts:
+        for instr in list(part.recurse().getElementsByClass(instrument.Instrument)):
+            instr.activeSite.remove(instr)
+        part.insert(0, instrument.Piano())
 
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)

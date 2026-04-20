@@ -5,6 +5,7 @@
 
 services:
   pdf-to-piano-audio:
+    platform: linux/amd64
     build:
       context: .
       dockerfile: Dockerfile

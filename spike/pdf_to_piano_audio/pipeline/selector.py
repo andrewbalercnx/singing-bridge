@@ -34,6 +34,7 @@ import copy
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+import mido
 from music21 import converter, instrument, stream
 
 
@@ -103,4 +104,38 @@ def extract_parts_midi(
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     voiced.write("midi", fp=str(out_path))
+
+    if len(keep) > 1:
+        _assign_unique_channels(out_path)
+
     return out_path
+
+
+def _assign_unique_channels(midi_path: Path) -> None:
+    """Reassign each note-bearing MIDI track to its own channel in-place.
+
+    music21 writes all parts on channel 0. When FluidSynth merges the
+    format-1 tracks the shared channel causes pitchwheel and program-change
+    events from one part to bleed into another, which can throw off
+    playback. Unique channels fix this.
+    """
+    mid = mido.MidiFile(str(midi_path))
+    ch = 0
+    for track in mid.tracks:
+        if not any(m.type in ("note_on", "note_off") for m in track):
+            continue
+        new_msgs: list = []
+        seen_prog = False
+        for msg in track:
+            if hasattr(msg, "channel"):
+                msg = msg.copy(channel=ch)
+            # music21 emits two program_change events per part; keep only one
+            if msg.type == "program_change":
+                if seen_prog:
+                    continue
+                seen_prog = True
+            new_msgs.append(msg)
+        track.clear()
+        track.extend(new_msgs)
+        ch = (ch + 1) % 16  # MIDI has 16 channels; wrap if >15 parts
+    mid.save(str(midi_path))

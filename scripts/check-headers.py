@@ -80,6 +80,8 @@ EXCLUDED_DIRS = {
 # Top-level path prefixes to skip (relative to repo root).
 EXCLUDED_PREFIXES = (
     ".github/actions/",
+    "design_handoff_singing_bridge_session/",
+    "spike/",
 )
 
 # Individual files to skip.

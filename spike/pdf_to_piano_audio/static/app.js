@@ -4,10 +4,56 @@
  * Purpose: Drive the four-step UI for the PDF -> piano-audio spike.
  * Sequential state machine: upload -> omr -> select -> render.
  *
- * Last updated: 2026-04-20 -- multi-select parts, back nav, tempo control
+ * Last updated: 2026-04-20 -- add Verovio notation rendering after part selection
  */
 (() => {
   const state = { sessionId: null, kind: null };
+
+  // Verovio toolkit — initialised once on first use.
+  // verovio-toolkit-wasm.js exposes a global `verovio` object with a
+  // `module` promise; we wait for it before rendering.
+  let vrvTk = null;
+  const vrvReady = new Promise((resolve, reject) => {
+    const poll = () => {
+      if (window.verovio) {
+        verovio.module.then(VerovioModule => {
+          vrvTk = new VerovioModule.toolkit();
+          resolve(vrvTk);
+        }).catch(reject);
+      } else {
+        setTimeout(poll, 150);
+      }
+    };
+    poll();
+  });
+
+  const renderNotation = async (scoreUrl) => {
+    const box = el("notation");
+    box.innerHTML = '<p class="notation-loading">Rendering notation…</p>';
+    box.hidden = false;
+    try {
+      const [xml] = await Promise.all([
+        fetch(scoreUrl).then(r => r.text()),
+        vrvReady,
+      ]);
+      vrvTk.setOptions({
+        adjustPageWidth: 1,
+        adjustPageHeight: 1,
+        scale: 35,
+        pageMarginTop: 40,
+        pageMarginBottom: 40,
+        pageMarginLeft: 40,
+        pageMarginRight: 40,
+      });
+      vrvTk.loadData(xml);
+      const pages = vrvTk.getPageCount();
+      let svgs = "";
+      for (let p = 1; p <= pages; p++) svgs += vrvTk.renderToSVG(p, {});
+      box.innerHTML = svgs;
+    } catch (err) {
+      box.innerHTML = `<p class="status err">Notation render failed: ${escapeHtml(err.message)}</p>`;
+    }
+  };
 
   const el = (id) => document.getElementById(id);
   const steps = {
@@ -156,6 +202,7 @@
       el("audio-player").hidden = true;
       setStatus("render-status", "");
       activate("render");
+      if (data.score_url) renderNotation(data.score_url);
     } catch (err) {
       setStatus("select-status", `Failed: ${err.message}`, "err");
       el("select-btn").disabled = false;
@@ -168,9 +215,10 @@
     unmarkDone("select");
     el("render-btn").disabled = true;
     el("audio-player").hidden = true;
+    el("notation").hidden = true;
+    el("notation").innerHTML = "";
     setStatus("render-status", "");
     setStatus("select-status", "");
-    // Re-enable select-btn (was disabled after the previous submission)
     const anyChecked = !!document.querySelector('input[name="part"]:checked');
     el("select-btn").disabled = !anyChecked;
     activate("select");

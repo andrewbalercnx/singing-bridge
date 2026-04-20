@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>PDF &rarr; Piano Audio (spike)</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+  <script src="https://www.verovio.org/javascript/latest/verovio-toolkit-wasm.js" defer></script>
 </head>
 <body>
   <main>
@@ -36,6 +37,9 @@
         <div id="parts-list"></div>
         <button type="button" id="select-btn" disabled>Use selected parts</button>
         <p class="status" id="select-status"></p>
+        <div id="notation" hidden>
+          <p class="notation-loading">Rendering notation…</p>
+        </div>
       </li>
 
       <li id="step-render" class="step">

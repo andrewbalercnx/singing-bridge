@@ -6,7 +6,7 @@ Last updated: 2026-04-19 -- initial spike
 """
 
 from .audiveris import pdf_to_musicxml, AudiverisMissing
-from .selector import list_parts, extract_parts_midi, PartInfo
+from .selector import list_parts, extract_parts_midi, extract_parts_musicxml, PartInfo
 from .synth import midi_to_wav, FluidSynthMissing
 
 __all__ = [
@@ -14,6 +14,7 @@ __all__ = [
     "AudiverisMissing",
     "list_parts",
     "extract_parts_midi",
+    "extract_parts_musicxml",
     "PartInfo",
     "midi_to_wav",
     "FluidSynthMissing",

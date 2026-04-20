@@ -44,6 +44,7 @@ from .pipeline import (
     AudiverisMissing,
     FluidSynthMissing,
     extract_parts_midi,
+    extract_parts_musicxml,
     list_parts,
     midi_to_wav,
     pdf_to_musicxml,
@@ -159,13 +160,16 @@ def select(session_id: str):
         abort(400, "part_indices must be a non-empty list")
 
     midi_path = scratch / "piano.mid"
+    xml_path = scratch / "score.xml"
     try:
         extract_parts_midi(score_path, part_indices, midi_path)
+        extract_parts_musicxml(score_path, part_indices, xml_path)
     except (IndexError, ValueError) as exc:
         return jsonify({"error": "bad_index", "detail": str(exc)}), 400
 
     return jsonify({
         "midi_url": url_for("serve_file", session_id=session_id, name="piano.mid"),
+        "score_url": url_for("serve_file", session_id=session_id, name="score.xml"),
         "part_indices": part_indices,
     })
 

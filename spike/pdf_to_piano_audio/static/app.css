@@ -79,6 +79,16 @@ input[type=file] { color: var(--ink-dim); margin-right: .5rem; }
 #parts-list .instr { color: var(--ink-dim); font-size: .85rem; }
 #parts-list .empty { color: var(--err); font-size: .8rem; }
 
+#notation {
+  margin-top: 1.2rem;
+  background: #fff;
+  border-radius: 8px;
+  overflow-x: auto;
+  padding: .5rem;
+}
+#notation svg { display: block; max-width: 100%; height: auto; }
+.notation-loading { color: var(--ink-dim); font-size: .9rem; margin: .5rem 0; }
+
 .tempo-row {
   display: flex; align-items: center; gap: .6rem;
   margin-bottom: .8rem; flex-wrap: wrap;

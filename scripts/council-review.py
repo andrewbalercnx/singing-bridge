@@ -625,6 +625,8 @@ def read_file_safe(path: Path, max_lines: int = 500) -> str:
 
 def get_changed_files(sprint: str | None = None, repo_root: Path | None = None) -> list[str]:
     """Get list of changed files for code review."""
+    cwd = str(repo_root) if repo_root else None
+
     # Strategy 1: Sprint-aware diff from recorded base commit
     if sprint and repo_root:
         base_file = repo_root / f".sprint-base-commit-{sprint}"
@@ -632,7 +634,7 @@ def get_changed_files(sprint: str | None = None, repo_root: Path | None = None) 
             base_sha = base_file.read_text().strip()
             result = subprocess.run(
                 ["git", "diff", "--name-only", f"{base_sha}..HEAD"],
-                capture_output=True, text=True,
+                capture_output=True, text=True, cwd=cwd,
             )
             if result.returncode == 0 and result.stdout.strip():
                 files = [f for f in result.stdout.strip().split("\n") if f]
@@ -642,7 +644,7 @@ def get_changed_files(sprint: str | None = None, repo_root: Path | None = None) 
     # Strategy 2: Uncommitted changes
     result = subprocess.run(
         ["git", "diff", "--name-only", "HEAD"],
-        capture_output=True, text=True,
+        capture_output=True, text=True, cwd=cwd,
     )
     if result.stdout.strip():
         files = [f for f in result.stdout.strip().split("\n") if f]
@@ -652,7 +654,7 @@ def get_changed_files(sprint: str | None = None, repo_root: Path | None = None) 
     # Strategy 3: Recent commits
     result = subprocess.run(
         ["git", "diff", "--name-only", "HEAD~10..HEAD"],
-        capture_output=True, text=True,
+        capture_output=True, text=True, cwd=cwd,
     )
     if result.stdout.strip():
         files = [f for f in result.stdout.strip().split("\n") if f]

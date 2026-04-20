@@ -23,6 +23,7 @@ use std::sync::Arc;
 use axum::{
     extract::DefaultBodyLimit,
     middleware,
+    response::Html,
     routing::{delete, get, post},
     Router,
 };
@@ -59,8 +60,23 @@ pub fn router(state: Arc<AppState>) -> Router {
         r = r.route("/api/dev-blob/:key", get(recordings::get_dev_blob));
     }
 
-    r.layer(middleware::from_fn(move |req, next| {
+    r.fallback(not_found)
+     .layer(middleware::from_fn(move |req, next| {
         security_headers::apply_headers(dev, req, next)
     }))
     .with_state(state)
+}
+
+async fn not_found() -> (axum::http::StatusCode, Html<&'static str>) {
+    (
+        axum::http::StatusCode::NOT_FOUND,
+        Html(r#"<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Page not found — singing-bridge</title>
+<link rel="stylesheet" href="/assets/styles.css"></head>
+<body><main>
+<h1>Page not found</h1>
+<p>If your teacher sent you a link, it should look like <code>singing.rcnx.io/teach/roomname</code>.</p>
+<p><a href="/">Go to singing-bridge</a></p>
+</main></body></html>"#),
+    )
 }

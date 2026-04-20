@@ -13,10 +13,9 @@ use std::{net::SocketAddr, sync::Arc};
 
 use dashmap::DashMap;
 use tokio_util::sync::CancellationToken;
-use url::Url;
 
 use singing_bridge_server::{
-    auth::mailer::{CloudflareWorkerMailer, DevMailer, Mailer},
+    auth::mailer::{AcsMailer, DevMailer, Mailer},
     blob::{BlobStore, DevBlobStore},
     cleanup::cleanup_loop,
     config::{Config, MailerKind},
@@ -42,17 +41,15 @@ async fn main() -> anyhow::Result<()> {
             tokio::fs::create_dir_all(&config.dev_mail_dir).await.ok();
             Arc::new(DevMailer::new(&config.dev_mail_dir).await?)
         }
-        MailerKind::CloudflareWorker => {
-            let url = config
-                .cf_worker_url
-                .as_deref()
-                .and_then(|u| Url::parse(u).ok())
-                .ok_or_else(|| anyhow::anyhow!("invalid SB_CF_WORKER_URL"))?;
-            let secret = config
-                .cf_worker_secret
-                .clone()
-                .ok_or_else(|| anyhow::anyhow!("missing SB_CF_WORKER_SECRET"))?;
-            Arc::new(CloudflareWorkerMailer::new(url, secret))
+        MailerKind::Acs => {
+            let conn = config
+                .acs_connection_string
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("missing SB_ACS_CONNECTION_STRING"))?;
+            Arc::new(
+                AcsMailer::from_connection_string(conn.expose())
+                    .map_err(|e| anyhow::anyhow!("ACS mailer init: {e}"))?,
+            )
         }
     };
 

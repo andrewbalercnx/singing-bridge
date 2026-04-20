@@ -24,8 +24,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # ---- Audiveris -----------------------------------------------------------
-# The release ships a Ubuntu 24.04 .deb. We resolve its URL from the GitHub
-# API so the version can be bumped without touching the download logic.
+# We extract the .deb with dpkg-deb --extract (no postinst scripts) to avoid
+# xdg-desktop-menu failing in a headless container. Then install just the two
+# runtime libs the package needs (libxtst6, xdg-utils).
 ARG AUDIVERIS_VERSION=5.10.2
 RUN set -eux; \
     url=$(curl -fsSL "https://api.github.com/repos/Audiveris/audiveris/releases/tags/${AUDIVERIS_VERSION}" \
@@ -36,12 +37,12 @@ assert cand, 'no ubuntu24 .deb in release'; \
 print(cand[0]['browser_download_url'])"); \
     echo "Downloading $url"; \
     curl -fsSLo /tmp/audiveris.deb "$url"; \
+    dpkg-deb --extract /tmp/audiveris.deb /; \
     apt-get update; \
-    apt-get install -y --no-install-recommends /tmp/audiveris.deb; \
+    apt-get install -y --no-install-recommends libxtst6 xdg-utils; \
     rm -rf /tmp/audiveris.deb /var/lib/apt/lists/*; \
-    launcher=$(find /opt /usr/local -maxdepth 6 -type f -name 'Audiveris' 2>/dev/null | head -1); \
-    if [ -n "$launcher" ]; then ln -sf "$launcher" /usr/local/bin/audiveris; \
-    else echo 'WARN: Audiveris launcher not found -- set AUDIVERIS_CMD at runtime'; fi
+    chmod +x /opt/audiveris/bin/Audiveris; \
+    ln -sf /opt/audiveris/bin/Audiveris /usr/local/bin/audiveris
 
 # ---- App -----------------------------------------------------------------
 WORKDIR /app

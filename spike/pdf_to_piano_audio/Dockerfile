@@ -2,7 +2,7 @@
 # Purpose: Containerise the spike so it can be trialled on any host with Docker.
 # Role: Bundles Python + Flask + music21 with Audiveris (Java OMR), FluidSynth,
 #       and a GM SoundFont -- the three external tools the pipeline needs.
-# Last updated: 2026-04-20 -- switch Audiveris install to zip bundle (deb had unmet deps)
+# Last updated: 2026-04-20 -- install Java 17 before Audiveris .deb to satisfy deps
 
 FROM ubuntu:24.04
 
@@ -13,42 +13,35 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PIP_BREAK_SYSTEM_PACKAGES=1 \
     PIANO_SF2=/usr/share/sounds/sf2/FluidR3_GM.sf2
 
+# Java 17 must be present before the Audiveris .deb is installed.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates curl unzip \
+        ca-certificates curl \
         python3 python3-pip \
-        openjdk-21-jre-headless \
+        openjdk-17-jre-headless \
         fluidsynth fluid-soundfont-gm \
         tesseract-ocr tesseract-ocr-eng \
         libfreetype6 \
     && rm -rf /var/lib/apt/lists/*
 
 # ---- Audiveris -----------------------------------------------------------
-# Audiveris ships as a cross-platform zip bundle (no Debian package).
-# We download the zip from the GitHub release, extract it under /opt/audiveris,
-# and symlink the launcher onto PATH. Bump AUDIVERIS_VERSION to upgrade.
+# The release ships a Ubuntu 24.04 .deb. We resolve its URL from the GitHub
+# API so the version can be bumped without touching the download logic.
 ARG AUDIVERIS_VERSION=5.10.2
 RUN set -eux; \
     url=$(curl -fsSL "https://api.github.com/repos/Audiveris/audiveris/releases/tags/${AUDIVERIS_VERSION}" \
         | python3 -c "import json,sys; \
 assets=json.load(sys.stdin)['assets']; \
-cand=[a for a in assets if a['name'].endswith('.zip')]; \
-assert cand, 'no .zip asset in release ${AUDIVERIS_VERSION}'; \
+cand=[a for a in assets if a['name'].endswith('.deb') and 'ubuntu24' in a['name'].lower()]; \
+assert cand, 'no ubuntu24 .deb in release'; \
 print(cand[0]['browser_download_url'])"); \
     echo "Downloading $url"; \
-    curl -fsSLo /tmp/audiveris.zip "$url"; \
-    unzip -q /tmp/audiveris.zip -d /opt/audiveris-unpack; \
-    rm -f /tmp/audiveris.zip; \
-    # The zip typically unpacks as Audiveris-X.Y.Z/bin/Audiveris (shell script).
-    launcher=$(find /opt/audiveris-unpack -maxdepth 5 -type f \
-                   \( -name 'Audiveris' -o -name 'audiveris' \) \
-                   ! -name '*.bat' ! -name '*.cmd' 2>/dev/null | head -1); \
-    if [ -n "$launcher" ]; then \
-        chmod +x "$launcher"; \
-        ln -sf "$launcher" /usr/local/bin/audiveris; \
-        echo "Linked $launcher -> /usr/local/bin/audiveris"; \
-    else \
-        echo 'WARN: Audiveris launcher not found in zip -- set AUDIVERIS_CMD at runtime'; \
-    fi
+    curl -fsSLo /tmp/audiveris.deb "$url"; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends /tmp/audiveris.deb; \
+    rm -rf /tmp/audiveris.deb /var/lib/apt/lists/*; \
+    launcher=$(find /opt /usr/local -maxdepth 6 -type f -name 'Audiveris' 2>/dev/null | head -1); \
+    if [ -n "$launcher" ]; then ln -sf "$launcher" /usr/local/bin/audiveris; \
+    else echo 'WARN: Audiveris launcher not found -- set AUDIVERIS_CMD at runtime'; fi
 
 # ---- App -----------------------------------------------------------------
 WORKDIR /app

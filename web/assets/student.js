@@ -132,7 +132,7 @@
       onRemoteStream(stream) {
         if (sessionUiHandle) sessionUiHandle.setRemoteStream(stream);
       },
-      onPeerConnected({ dataChannel, audioTrack, videoTrack, localStream }) {
+      onPeerConnected({ dataChannel, audioTrack, videoTrack, localStream, remoteStream }) {
         sessionSection.hidden = false;
         if (qualityBadge) qualityBadge.hidden = false;
         const sessionRoot = document.getElementById('session-root');
@@ -141,7 +141,7 @@
           remoteName: 'Teacher',
           remoteRoleLabel: 'Your teacher',
           localStream: localStream || null,
-          remoteStream: null,
+          remoteStream: remoteStream && remoteStream.getTracks().length > 0 ? remoteStream : null,
           headphonesConfirmed: false,
           micEnabled: true,
           videoEnabled: true,

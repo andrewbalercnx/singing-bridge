@@ -207,7 +207,7 @@
     onRemoteStream(stream) {
       if (sessionUiHandle) sessionUiHandle.setRemoteStream(stream);
     },
-    onPeerConnected({ dataChannel, audioTrack, videoTrack, localStream }) {
+    onPeerConnected({ dataChannel, audioTrack, videoTrack, localStream, remoteStream }) {
       statusEl.textContent = 'Connected.';
       localAudioTrack = audioTrack;
       if (qualityBadge) qualityBadge.hidden = false;
@@ -218,7 +218,7 @@
         remoteName: lastStudentEmail,
         remoteRoleLabel: 'Student',
         localStream: localStream || null,
-        remoteStream: null,
+        remoteStream: remoteStream && remoteStream.getTracks().length > 0 ? remoteStream : null,
         headphonesConfirmed: lastStudentHeadphones,
         micEnabled: true,
         videoEnabled: true,

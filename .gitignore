@@ -103,3 +103,10 @@ Thumbs.db
 # Current sprint marker (per-machine, transient)
 .current-sprint
 .wrangler/
+
+# E2E test runtime artifacts
+.e2e-auth-state.json
+.e2e-slug.txt
+.playwright-mcp/
+data/dev-mail/
+test-results/

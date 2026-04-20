@@ -21,7 +21,7 @@
 //             is the sole sender.setParameters mutation site AFTER
 //             session subsystems start; priority hints at transceiver
 //             creation are the only pre-session setParameters calls.
-// Last updated: Sprint 9 (2026-04-19) -- sendHeadphonesConfirmed on student handle
+// Last updated: Sprint 9 (2026-04-20) -- teacher uses addTrack after setRemoteDescription (answerer pattern) to fix one-way video
 
 (function (root, factory) {
   'use strict';
@@ -216,16 +216,38 @@
     var refs = { pc: null, media: null, overlay: null, dataChannel: null, session: null };
     var teardownSession = makeTeardown(refs);
     var detect = detectTier();
+    // Acquired media held here between peer_connected and the first signal(offer).
+    var pendingAcq = null;
+    var remoteStream = new MediaStream();
 
     sig.on('peer_connected', async function () {
       refs.pc = await makePeerConnection();
-      refs.media = await wireBidirectionalMedia(refs.pc, detect);
-      refs.overlay = window.sbDebug.startDebugOverlay(refs.pc, { localTrack: refs.media.audio.track });
+      // Acquire media now but do NOT call addTransceiver — teacher is the answerer.
+      // Transceivers come from the student's offer via setRemoteDescription; we wire
+      // local tracks afterwards with addTrack so Chrome matches them to the existing
+      // sendrecv transceivers rather than creating duplicate recvonly ones.
+      pendingAcq = await mod.acquireMedia(window.sbAudio, window.sbVideo);
+      refs.media = {
+        audio: pendingAcq.audio,
+        video: pendingAcq.video,
+        audioTransceiver: null,
+        videoTransceiver: null,
+        audioSender: null,
+        videoSender: null,
+        teardown: function () {
+          mod.teardownMedia(
+            { audio: pendingAcq.audio, video: pendingAcq.video },
+            window.sbAudio, window.sbVideo
+          );
+        },
+      };
+      refs.overlay = window.sbDebug.startDebugOverlay(refs.pc, { localTrack: pendingAcq.audio.track });
       // Accumulate remote tracks and surface them via onRemoteStream callback.
-      var remoteStream = new MediaStream();
-      var origOntrack = refs.pc.ontrack;
       refs.pc.ontrack = function (ev) {
-        if (origOntrack) origOntrack.call(refs.pc, ev);
+        mod.dispatchRemoteTrack(ev, {
+          onAudio: window.sbAudio.attachRemoteAudio,
+          onVideo: window.sbVideo.attachRemoteVideo,
+        });
         remoteStream.addTrack(ev.track);
         if (onRemoteStream) onRemoteStream(remoteStream);
       };
@@ -249,6 +271,7 @@
             audioTrack: refs.media.audio.track,
             videoTrack: refs.media.video.track,
             localStream: new MediaStream([refs.media.audio.track, refs.media.video.track]),
+            remoteStream: remoteStream,
           });
         };
       };
@@ -258,7 +281,41 @@
       var p = m.payload;
       if (p.sdp) {
         await refs.pc.setRemoteDescription(new RTCSessionDescription(p.sdp));
-        if (p.sdp.type === 'offer') {
+        if (p.sdp.type === 'offer' && pendingAcq) {
+          // Wire local tracks AFTER setRemoteDescription so addTrack finds the
+          // existing transceivers from the offer (recvonly → sendrecv) rather than
+          // creating new unmatched ones. This is the correct answerer pattern.
+          var audioSender = refs.pc.addTrack(pendingAcq.audio.track, pendingAcq.audio.stream);
+          var videoSender = refs.pc.addTrack(pendingAcq.video.track, pendingAcq.video.stream);
+          refs.media.audioSender = audioSender;
+          refs.media.videoSender = videoSender;
+          var trans = refs.pc.getTransceivers();
+          var audioTrans = trans.find(function (t) { return t.sender === audioSender; });
+          var videoTrans = trans.find(function (t) { return t.sender === videoSender; });
+          refs.media.audioTransceiver = audioTrans || null;
+          refs.media.videoTransceiver = videoTrans || null;
+          if (videoTrans) {
+            var preferH264 = detect && detect.device !== 'desktop';
+            window.sbVideo.applyCodecPreferences(videoTrans, preferH264 ? 'h264' : 'vp8');
+          }
+          try {
+            if (audioTrans) {
+              var aParams = audioTrans.sender.getParameters();
+              if (!aParams.encodings || aParams.encodings.length === 0) aParams.encodings = [{}];
+              aParams.encodings[0].priority = 'high';
+              aParams.encodings[0].networkPriority = 'high';
+              await audioTrans.sender.setParameters(aParams);
+            }
+          } catch (_) {}
+          try {
+            if (videoTrans) {
+              var vParams = videoTrans.sender.getParameters();
+              if (!vParams.encodings || vParams.encodings.length === 0) vParams.encodings = [{}];
+              vParams.encodings[0].priority = 'low';
+              vParams.encodings[0].networkPriority = 'low';
+              await videoTrans.sender.setParameters(vParams);
+            }
+          } catch (_) {}
           var answer = await refs.pc.createAnswer();
           await setMungedLocalDescription(refs.pc, answer);
           sig.send({ type: 'signal', to: 'student', payload: { sdp: refs.pc.localDescription } });
@@ -382,6 +439,7 @@
           audioTrack: refs.media.audio.track,
           videoTrack: refs.media.video.track,
           localStream: new MediaStream([refs.media.audio.track, refs.media.video.track]),
+          remoteStream: remoteStream,
         });
       };
       var offer = await refs.pc.createOffer();

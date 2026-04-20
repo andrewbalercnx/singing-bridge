@@ -204,6 +204,9 @@
     onChat({ from, text }) {
       if (sessionUiHandle) sessionUiHandle.appendChatMsg(from, text);
     },
+    onRemoteStream(stream) {
+      if (sessionUiHandle) sessionUiHandle.setRemoteStream(stream);
+    },
     onPeerConnected({ dataChannel, audioTrack, videoTrack, localStream }) {
       statusEl.textContent = 'Connected.';
       localAudioTrack = audioTrack;

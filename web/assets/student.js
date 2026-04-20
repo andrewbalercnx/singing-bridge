@@ -129,6 +129,9 @@
       onLobbyMessage({ text }) {
         if (window.sbLobbyToast) window.sbLobbyToast.show(text, 8000);
       },
+      onRemoteStream(stream) {
+        if (sessionUiHandle) sessionUiHandle.setRemoteStream(stream);
+      },
       onPeerConnected({ dataChannel, audioTrack, videoTrack, localStream }) {
         sessionSection.hidden = false;
         if (qualityBadge) qualityBadge.hidden = false;

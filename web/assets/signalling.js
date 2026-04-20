@@ -202,6 +202,7 @@
     var onRecordingStopped = args.onRecordingStopped;
     var onChat = args.onChat;
     var onWsClose = args.onWsClose;
+    var onRemoteStream = args.onRemoteStream;
 
     var sig = new Signalling(openWs());
     sig.send({ type: 'lobby_watch', slug: slug });
@@ -220,6 +221,14 @@
       refs.pc = await makePeerConnection();
       refs.media = await wireBidirectionalMedia(refs.pc, detect);
       refs.overlay = window.sbDebug.startDebugOverlay(refs.pc, { localTrack: refs.media.audio.track });
+      // Accumulate remote tracks and surface them via onRemoteStream callback.
+      var remoteStream = new MediaStream();
+      var origOntrack = refs.pc.ontrack;
+      refs.pc.ontrack = function (ev) {
+        if (origOntrack) origOntrack.call(refs.pc, ev);
+        remoteStream.addTrack(ev.track);
+        if (onRemoteStream) onRemoteStream(remoteStream);
+      };
       refs.pc.onicecandidate = function (ev) {
         if (ev.candidate) sig.send({ type: 'signal', to: 'student', payload: { candidate: ev.candidate } });
       };
@@ -239,6 +248,7 @@
             dataChannel: refs.dataChannel,
             audioTrack: refs.media.audio.track,
             videoTrack: refs.media.video.track,
+            localStream: new MediaStream([refs.media.audio.track, refs.media.video.track]),
           });
         };
       };
@@ -307,6 +317,7 @@
     var onRecordingStopped = args.onRecordingStopped;
     var onChat = args.onChat;
     var onLobbyMessage = args.onLobbyMessage;
+    var onRemoteStream = args.onRemoteStream;
 
     var detect = detectTier();
     var sig = new Signalling(openWs());
@@ -344,6 +355,14 @@
       refs.pc = await makePeerConnection(admittedIceServers);
       refs.media = await wireBidirectionalMedia(refs.pc, detect);
       refs.overlay = window.sbDebug.startDebugOverlay(refs.pc, { localTrack: refs.media.audio.track });
+      // Accumulate remote tracks and surface them via onRemoteStream callback.
+      var remoteStream = new MediaStream();
+      var origOntrack = refs.pc.ontrack;
+      refs.pc.ontrack = function (ev) {
+        if (origOntrack) origOntrack.call(refs.pc, ev);
+        remoteStream.addTrack(ev.track);
+        if (onRemoteStream) onRemoteStream(remoteStream);
+      };
       refs.pc.onicecandidate = function (ev) {
         if (ev.candidate) sig.send({ type: 'signal', to: 'teacher', payload: { candidate: ev.candidate } });
       };
@@ -362,6 +381,7 @@
           dataChannel: refs.dataChannel,
           audioTrack: refs.media.audio.track,
           videoTrack: refs.media.video.track,
+          localStream: new MediaStream([refs.media.audio.track, refs.media.video.track]),
         });
       };
       var offer = await refs.pc.createOffer();

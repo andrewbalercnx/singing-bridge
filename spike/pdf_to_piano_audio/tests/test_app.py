@@ -62,22 +62,44 @@ class TestFixture:
         sid = client.post("/fixture").get_json()["session_id"]
         parts = client.post(f"/{sid}/omr").get_json()["parts"]
         piano_idx = next(p["index"] for p in parts if p["name"] == "Piano" and p["has_notes"])
-        res = client.post(f"/{sid}/select/{piano_idx}")
+        res = client.post(f"/{sid}/select",
+                          json={"part_indices": [piano_idx]},
+                          content_type="application/json")
         assert res.status_code == 200
-        data = res.get_json()
-        assert "midi_url" in data
+        assert "midi_url" in res.get_json()
+
+    def test_fixture_select_multiple_parts(self, client):
+        sid = client.post("/fixture").get_json()["session_id"]
+        parts = client.post(f"/{sid}/omr").get_json()["parts"]
+        indices = [p["index"] for p in parts if p["has_notes"]]
+        res = client.post(f"/{sid}/select",
+                          json={"part_indices": indices},
+                          content_type="application/json")
+        assert res.status_code == 200
 
     def test_fixture_select_bad_index(self, client):
         sid = client.post("/fixture").get_json()["session_id"]
         client.post(f"/{sid}/omr")
-        res = client.post(f"/{sid}/select/99")
+        res = client.post(f"/{sid}/select",
+                          json={"part_indices": [99]},
+                          content_type="application/json")
+        assert res.status_code == 400
+
+    def test_fixture_select_empty_list(self, client):
+        sid = client.post("/fixture").get_json()["session_id"]
+        client.post(f"/{sid}/omr")
+        res = client.post(f"/{sid}/select",
+                          json={"part_indices": []},
+                          content_type="application/json")
         assert res.status_code == 400
 
     def test_fixture_midi_download(self, client):
         sid = client.post("/fixture").get_json()["session_id"]
         parts = client.post(f"/{sid}/omr").get_json()["parts"]
         piano_idx = next(p["index"] for p in parts if p["name"] == "Piano" and p["has_notes"])
-        client.post(f"/{sid}/select/{piano_idx}")
+        client.post(f"/{sid}/select",
+                    json={"part_indices": [piano_idx]},
+                    content_type="application/json")
         res = client.get(f"/{sid}/files/piano.mid")
         assert res.status_code == 200
         assert res.data[:4] == b"MThd"
@@ -116,7 +138,9 @@ class TestSessionGuards:
         # Fixture copies the MusicXML into the session, so /select works
         # without /omr — the score file is already present.
         sid = client.post("/fixture").get_json()["session_id"]
-        res = client.post(f"/{sid}/select/0")
+        res = client.post(f"/{sid}/select",
+                          json={"part_indices": [0]},
+                          content_type="application/json")
         assert res.status_code == 200
 
     def test_render_before_select(self, client):

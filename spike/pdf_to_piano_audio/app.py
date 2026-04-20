@@ -43,7 +43,7 @@ from flask import Flask, abort, jsonify, render_template, request, send_from_dir
 from .pipeline import (
     AudiverisMissing,
     FluidSynthMissing,
-    extract_part_midi,
+    extract_parts_midi,
     list_parts,
     midi_to_wav,
     pdf_to_musicxml,
@@ -146,22 +146,27 @@ def run_omr(session_id: str):
     return jsonify({"parts": parts})
 
 
-@app.post("/<session_id>/select/<int:part_index>")
-def select(session_id: str, part_index: int):
+@app.post("/<session_id>/select")
+def select(session_id: str):
     scratch = _session_dir(session_id)
     score_path = _score_path(scratch)
     if score_path is None:
         abort(400, "run /omr first")
 
+    body = request.get_json(silent=True) or {}
+    part_indices = body.get("part_indices")
+    if not part_indices or not isinstance(part_indices, list):
+        abort(400, "part_indices must be a non-empty list")
+
     midi_path = scratch / "piano.mid"
     try:
-        extract_part_midi(score_path, part_index, midi_path)
-    except IndexError as exc:
+        extract_parts_midi(score_path, part_indices, midi_path)
+    except (IndexError, ValueError) as exc:
         return jsonify({"error": "bad_index", "detail": str(exc)}), 400
 
     return jsonify({
         "midi_url": url_for("serve_file", session_id=session_id, name="piano.mid"),
-        "part_index": part_index,
+        "part_indices": part_indices,
     })
 
 
@@ -172,11 +177,20 @@ def render(session_id: str):
     if not midi_path.is_file():
         abort(400, "select a part first")
 
+    body = request.get_json(silent=True) or {}
+    raw_tempo = body.get("tempo", 100)
+    try:
+        tempo = int(raw_tempo)
+        if not (20 <= tempo <= 300):
+            raise ValueError
+    except (TypeError, ValueError):
+        abort(400, "tempo must be an integer between 20 and 300")
+
     sf2 = Path(os.environ.get("PIANO_SF2", "/usr/share/sounds/sf2/FluidR3_GM.sf2"))
     wav_path = scratch / "piano.wav"
 
     try:
-        midi_to_wav(midi_path, wav_path, sf2)
+        midi_to_wav(midi_path, wav_path, sf2, tempo=tempo)
     except FluidSynthMissing as exc:
         return jsonify({"error": "fluidsynth_missing", "detail": str(exc)}), 503
     except Exception as exc:

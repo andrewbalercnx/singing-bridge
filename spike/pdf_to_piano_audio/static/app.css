@@ -79,6 +79,14 @@ input[type=file] { color: var(--ink-dim); margin-right: .5rem; }
 #parts-list .instr { color: var(--ink-dim); font-size: .85rem; }
 #parts-list .empty { color: var(--err); font-size: .8rem; }
 
+.tempo-row {
+  display: flex; align-items: center; gap: .6rem;
+  margin-bottom: .8rem; flex-wrap: wrap;
+}
+.tempo-row label { font-size: .9rem; white-space: nowrap; min-width: 7rem; }
+.tempo-row input[type=range] { flex: 1; min-width: 120px; max-width: 220px; accent-color: var(--accent); }
+.tempo-hint { font-size: .8rem; color: var(--ink-dim); white-space: nowrap; }
+.render-actions { display: flex; gap: .6rem; flex-wrap: wrap; margin-bottom: .4rem; }
 #audio-player { width: 100%; margin-top: .8rem; }
 .downloads { font-size: .85rem; }
 .downloads a { color: var(--accent); }

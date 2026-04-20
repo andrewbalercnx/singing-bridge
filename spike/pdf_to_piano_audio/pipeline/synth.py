@@ -10,7 +10,7 @@ Role:
   acceptable acoustic-piano voice.
 
 Exports:
-  - midi_to_wav(midi_path, out_path, soundfont_path) -> Path
+  - midi_to_wav(midi_path, out_path, soundfont_path, tempo=100) -> Path
   - FluidSynthMissing exception
 
 Depends on:
@@ -18,11 +18,12 @@ Depends on:
   - external: a .sf2 SoundFont file at `soundfont_path`
 
 Invariants & gotchas:
-  - We fix sample rate at 44.1 kHz and gain at 0.8 to match the rest
-    of the app's audio assumptions. Change these later once the
-    spike graduates into a sprint and latency/quality budgets matter.
+  - Sample rate is fixed at 44.1 kHz, gain at 0.8.
+  - `tempo` is a BPM percentage (100 = original speed, 50 = half speed,
+    200 = double speed). FluidSynth's -T flag accepts a ratio; we
+    convert: ratio = tempo / 100.
 
-Last updated: 2026-04-19 -- initial spike
+Last updated: 2026-04-20 -- add tempo parameter
 """
 from __future__ import annotations
 
@@ -49,7 +50,12 @@ def _find_fluidsynth() -> str:
     return found
 
 
-def midi_to_wav(midi_path: Path, out_path: Path, soundfont_path: Path) -> Path:
+def midi_to_wav(
+    midi_path: Path,
+    out_path: Path,
+    soundfont_path: Path,
+    tempo: int = 100,
+) -> Path:
     midi_path = Path(midi_path)
     out_path = Path(out_path)
     soundfont_path = Path(soundfont_path)
@@ -62,9 +68,12 @@ def midi_to_wav(midi_path: Path, out_path: Path, soundfont_path: Path) -> Path:
 
     cmd = _find_fluidsynth()
     out_path.parent.mkdir(parents=True, exist_ok=True)
+    # -T: MIDI tempo multiplier as a ratio (100 bpm% → 1.0 = original speed)
+    tempo_ratio = f"{tempo / 100:.3f}"
     subprocess.run(
         [
             cmd, "-ni", "-g", "0.8", "-r", "44100",
+            "-T", tempo_ratio,
             "-F", str(out_path),
             str(soundfont_path), str(midi_path),
         ],

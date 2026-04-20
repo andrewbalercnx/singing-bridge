@@ -32,16 +32,24 @@
 
       <li id="step-select" class="step">
         <h2><span class="num">3</span> Select the piano accompaniment</h2>
-        <p class="help">Pick which part to render. It will be voiced as piano regardless of the source instrument.</p>
+        <p class="help">Tick one or more parts to include. All will be voiced as piano.</p>
         <div id="parts-list"></div>
-        <button type="button" id="select-btn" disabled>Use this part</button>
+        <button type="button" id="select-btn" disabled>Use selected parts</button>
         <p class="status" id="select-status"></p>
       </li>
 
       <li id="step-render" class="step">
         <h2><span class="num">4</span> Render &amp; play</h2>
         <p class="help">Renders MIDI to WAV via FluidSynth + a piano SoundFont.</p>
-        <button type="button" id="render-btn" disabled>Render audio</button>
+        <div class="tempo-row">
+          <label for="tempo-input">Tempo: <span id="tempo-display">100</span>%</label>
+          <input type="range" id="tempo-input" min="20" max="200" value="100" step="5">
+          <span class="tempo-hint">of original speed</span>
+        </div>
+        <div class="render-actions">
+          <button type="button" id="render-btn" disabled>Render audio</button>
+          <button type="button" id="reselect-btn" class="secondary">Change selection</button>
+        </div>
         <p class="status" id="render-status"></p>
         <audio id="audio-player" controls hidden></audio>
         <p class="downloads" id="downloads"></p>

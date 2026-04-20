@@ -201,11 +201,15 @@
     var onRecordConsentResult = args.onRecordConsentResult;
     var onRecordingStopped = args.onRecordingStopped;
     var onChat = args.onChat;
+    var onWsClose = args.onWsClose;
 
     var sig = new Signalling(openWs());
     sig.send({ type: 'lobby_watch', slug: slug });
     sig.on('lobby_state', function (m) {
       if (onLobbyUpdate) onLobbyUpdate(m.entries);
+    });
+    sig.on('_ws_closed', function () {
+      if (onWsClose) onWsClose();
     });
 
     var refs = { pc: null, media: null, overlay: null, dataChannel: null, session: null };
@@ -292,6 +296,7 @@
     var onAdmitted = args.onAdmitted;
     var onRejected = args.onRejected;
     var onBlocked = args.onBlocked;
+    var onWsClose = args.onWsClose;
     var onPeerDisconnected = args.onPeerDisconnected;
     var onPeerConnected = args.onPeerConnected;
     var onQuality = args.onQuality;
@@ -331,6 +336,9 @@
     });
     sig.on('error', function (m) {
       if (m.code === 'blocked' && onBlocked) onBlocked(m.message);
+    });
+    sig.on('_ws_closed', function () {
+      if (onWsClose) onWsClose();
     });
     sig.on('peer_connected', async function () {
       refs.pc = await makePeerConnection(admittedIceServers);
@@ -473,6 +481,8 @@
       self.queue = [];
     });
     sock.addEventListener('message', function (e) { self._onMessage(e); });
+    sock.addEventListener('close', function () { self._onMessage({ data: JSON.stringify({ type: '_ws_closed' }) }); });
+    sock.addEventListener('error', function () { self._onMessage({ data: JSON.stringify({ type: '_ws_closed' }) }); });
   }
   Signalling.prototype._onMessage = function (e) {
     var msg;

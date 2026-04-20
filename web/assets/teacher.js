@@ -276,6 +276,12 @@
       if (recorderHandle) stopRecorder();
       else setRecordState('idle');
     },
+    onWsClose() {
+      if (reconnectBanner) {
+        reconnectBanner.hidden = false;
+        reconnectBanner.textContent = 'Connection lost — please refresh the page.';
+      }
+    },
   }).then((h) => {
     sessionHandle = h;
   });

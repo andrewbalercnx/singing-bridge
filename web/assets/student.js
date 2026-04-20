@@ -115,6 +115,10 @@
         lobbyStatus.hidden = true;
         errEl.textContent = `Rejected: ${reason}`;
       },
+      onWsClose() {
+        lobbyStatus.hidden = true;
+        errEl.textContent = 'Connection lost — please refresh the page and try again.';
+      },
       onBlocked(_reason) {
         lobbyStatus.hidden = true;
         if (blockedNotice) blockedNotice.hidden = false;

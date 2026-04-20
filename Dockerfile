@@ -15,7 +15,8 @@ COPY server/Cargo.toml server/Cargo.toml
 RUN mkdir -p server/src && echo 'fn main(){}' > server/src/main.rs \
  && cargo build --release -p singing-bridge-server 2>/dev/null || true
 COPY server ./server
-RUN cargo build --release -p singing-bridge-server
+ARG GIT_SHA=unknown
+RUN GIT_SHA=${GIT_SHA} cargo build --release -p singing-bridge-server
 
 # stage 2: minimal runtime (glibc via cc variant)
 FROM gcr.io/distroless/cc-debian12

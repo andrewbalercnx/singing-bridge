@@ -39,6 +39,7 @@ jobs:
             --registry sbprodacr \
             --image singing-bridge:$TAG \
             --image singing-bridge:latest \
+            --build-arg GIT_SHA=$TAG \
             .
           echo "IMAGE_TAG=$TAG" >> "$GITHUB_ENV"
 

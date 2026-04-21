@@ -157,11 +157,9 @@ async fn history_response_has_cache_control_no_store() {
 }
 
 #[tokio::test]
-async fn history_401_paths_have_cache_control_no_store() {
+async fn history_no_cookie_401_has_cache_control_no_store() {
     let app = spawn_app().await;
     app.signup_teacher("alice@example.test", "alice").await;
-
-    // No cookie → 401
     let resp = app
         .client
         .get(app.url("/teach/alice/history"))
@@ -174,26 +172,30 @@ async fn history_401_paths_have_cache_control_no_store() {
             .get("cache-control")
             .and_then(|v| v.to_str().ok()),
         Some("no-store"),
-        "unauthenticated 401 must also carry Cache-Control: no-store"
+        "unauthenticated 401 must carry Cache-Control: no-store"
     );
+    app.shutdown().await;
+}
 
-    // Wrong teacher cookie → 401
+#[tokio::test]
+async fn history_wrong_teacher_401_has_cache_control_no_store() {
+    let app = spawn_app().await;
+    app.signup_teacher("alice@example.test", "alice").await;
     let bob_cookie = app.signup_teacher("bob@example.test", "bob").await;
-    let resp2 = app
+    let resp = app
         .client
         .get(app.url("/teach/alice/history"))
         .header("cookie", format!("sb_session={bob_cookie}"))
         .send()
         .await
         .unwrap();
-    assert_eq!(resp2.status(), 401);
+    assert_eq!(resp.status(), 401);
     assert_eq!(
-        resp2
-            .headers()
+        resp.headers()
             .get("cache-control")
             .and_then(|v| v.to_str().ok()),
         Some("no-store"),
-        "wrong-teacher 401 must also carry Cache-Control: no-store"
+        "wrong-teacher 401 must carry Cache-Control: no-store"
     );
     app.shutdown().await;
 }

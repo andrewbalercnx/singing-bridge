@@ -4,7 +4,7 @@
 //          inside the guard except collecting data.
 // Role: The admission workflow described in §4.7.
 // Exports: join_lobby, watch_lobby, admit, reject, confirm_headphones
-// Depends: tokio, state, protocol, session_log
+// Depends: tokio, state, protocol, session_log, session_history, auth::magic_link
 // Invariants: ≤ 1 teacher_conn, ≤ 1 active_session, LobbyEntry placement is
 //             XOR between lobby and active_session.
 //             Blocked IP → close 1008 "blocked". Plain reject → close 1000.
@@ -297,13 +297,18 @@ enum AdmitOutcome {
 
 /// Open session-history rows (student upsert + event open) after a successful
 /// session_log write. Best-effort: any DB failure logs a warning and returns
-/// without touching the in-progress session. The orphan path fires when the
-/// active session disappears between the DB write and the room re-lock
-/// (e.g. student disconnects before we re-acquire the write guard).
-async fn open_history_row(
+/// without touching the in-progress session.
+///
+/// `log_id` acts as a session-identity token: the re-lock checks
+/// `active_session.log_id == Some(log_id)` so that IDs are only stored on
+/// the session that initiated this admit call. If the session disappears or a
+/// different session is active (rapid sequential sessions), the newly opened
+/// event is closed immediately as an orphan.
+pub(crate) async fn open_history_row(
     state: &Arc<AppState>,
     ctx: &ConnContext,
     teacher_id: TeacherId,
+    log_id: &SessionLogId,
     email: &str,
     started_at: i64,
 ) {
@@ -326,9 +331,11 @@ async fn open_history_row(
         if let Some(room) = state.room(slug) {
             let mut rs = room.write().await;
             if let Some(ref mut session) = rs.active_session {
-                session.session_event_id = Some(event_id);
-                session.session_student_id = Some(sid);
-                orphan = false;
+                if session.log_id.as_ref() == Some(log_id) {
+                    session.session_event_id = Some(event_id);
+                    session.session_student_id = Some(sid);
+                    orphan = false;
+                }
             }
         }
     }
@@ -469,9 +476,7 @@ pub async fn admit(state: &Arc<AppState>, ctx: &ConnContext, entry_id: EntryId) 
                         }
 
                         // Open session history (best-effort; session proceeds on failure).
-                        if let Some(tid) = teacher_id {
-                            open_history_row(state, ctx, tid, &email, started_at).await;
-                        }
+                        open_history_row(state, ctx, tid, &log_id, &email, started_at).await;
                     }
                     Err(e) => {
                         tracing::warn!(error = %e, "session_log open_row failed; session continues without logging");

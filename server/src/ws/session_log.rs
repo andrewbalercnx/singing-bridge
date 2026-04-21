@@ -24,7 +24,7 @@ pub const DEV_PEPPER: &[u8] = b"dev-session-log-pepper-INSECURE-CONSTANT";
 
 /// Opaque session log row identifier. Inner UUID is private to prevent
 /// callers from constructing arbitrary IDs.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct SessionLogId(Uuid);
 
 impl SessionLogId {

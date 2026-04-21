@@ -142,7 +142,35 @@ fn unauthorized_no_store() -> Response {
 
 #[cfg(test)]
 mod tests {
-    use super::html_escape;
+    use super::{format_duration, html_escape};
+
+    #[test]
+    fn format_duration_none_returns_dash() {
+        assert_eq!(format_duration(None), "-");
+    }
+
+    #[test]
+    fn format_duration_zero() {
+        assert_eq!(format_duration(Some(0)), "00:00");
+    }
+
+    #[test]
+    fn format_duration_seconds_only() {
+        assert_eq!(format_duration(Some(45)), "00:45");
+    }
+
+    #[test]
+    fn format_duration_minutes_and_seconds() {
+        assert_eq!(format_duration(Some(125)), "02:05");
+    }
+
+    #[test]
+    fn format_duration_negative_clamps_to_zero_display() {
+        // Negative values should not produce a leading '-'; duration_secs is
+        // clamped to 0 by MAX(0, …) in SQL so this is a safety check only.
+        let s = format_duration(Some(-5));
+        assert!(!s.starts_with('-'), "negative duration must not display as negative: {s}");
+    }
 
     #[test]
     fn html_escape_script_tag() {

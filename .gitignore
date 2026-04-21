@@ -84,6 +84,8 @@ codex/context/
 
 # Council review working files (transient)
 council/
+# ...except metrics JSONL — these are the primary audit trail for council efficiency
+!council/metrics_Sprint*.jsonl
 
 # Logs
 *_debug.log

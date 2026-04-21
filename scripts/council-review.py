@@ -2326,6 +2326,15 @@ def _safe_emit_metrics(
 ) -> None:
     """Wrapper around _emit_metrics that never raises into main()."""
     try:
+        estimates = dict(prompt_token_estimates or {})
+        # Round wall time = slowest member + consolidator (elapsed_s is consolidator only)
+        member_stats = estimates.get("member_stats", {})
+        member_elapsed = [
+            v["elapsed_s"] for v in member_stats.values()
+            if isinstance(v, dict) and v.get("elapsed_s") is not None
+        ]
+        if member_elapsed:
+            estimates["round_wall_time_s"] = round(max(member_elapsed) + elapsed_s, 2)
         _emit_metrics(
             repo_root, sprint, review_type, round_num,
             members_active=len(active_members),
@@ -2336,8 +2345,10 @@ def _safe_emit_metrics(
             verdict=verdict,
             tracker_file=tracker_file,
             security_bypassed=security_bypassed,
-            prompt_token_estimates=prompt_token_estimates or {},
+            prompt_token_estimates=estimates,
         )
+        metrics_path = repo_root / "council" / f"metrics_Sprint{sprint}.jsonl"
+        print(f"  metrics: R{round_num} → {metrics_path.name}", file=sys.stderr)
     except Exception as exc:  # noqa: BLE001
         print(f"  [warn] metrics emit failed: {exc}", file=sys.stderr)
 
@@ -2497,6 +2508,11 @@ def main():
         prompt_token_estimates["new_findings_high"] = sum(1 for f in new_this_round if f.get("severity", "").lower() == "high")
         prompt_token_estimates["new_findings_medium"] = sum(1 for f in new_this_round if f.get("severity", "").lower() == "medium")
         prompt_token_estimates["new_findings_low"] = sum(1 for f in new_this_round if f.get("severity", "").lower() == "low")
+        by_lens: dict[str, int] = {}
+        for f in new_this_round:
+            lens = f.get("lens", "unknown")
+            by_lens[lens] = by_lens.get(lens, 0) + 1
+        prompt_token_estimates["new_findings_by_lens"] = by_lens
     except Exception:  # noqa: BLE001
         pass
 

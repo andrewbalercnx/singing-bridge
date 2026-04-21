@@ -302,7 +302,7 @@ _Protocol_
 - 10 bad attempts from the same IP triggers a 429 / lockout response
 - Existing integration tests pass; new tests cover register, login, logout, lockout, and session expiry
 
-**Status:** PENDING
+**Status:** COMPLETE
 
 ---
 

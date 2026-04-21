@@ -11,6 +11,26 @@
 > **Commit:** `<sha>`
 > ```
 
+## Sprint 10: Password auth (replace magic link) — 2026-04-21
+
+**Files changed:**
+- `server/migrations/0004_password_auth.sql` — adds password_hash column + login_attempts table
+- `server/src/auth/password.rs` — Argon2id hashing, verify, DUMMY_PHC, record_and_check_limits
+- `server/src/auth/mod.rs` — registers password module, exposes extract_cookie_value
+- `server/src/http/login.rs` — POST /auth/register, GET+POST /auth/login, POST /auth/logout
+- `server/src/http/signup.rs` — magic-link routes gated behind password_reset_enabled
+- `server/src/http/mod.rs` — updated router with new auth routes
+- `server/src/config.rs` — login rate-limit fields + password_reset_enabled
+- `server/src/cleanup.rs` — prune login_attempts > 24h
+- `server/Cargo.toml` — add argon2 = "0.5"
+- `server/tests/common/mod.rs` — register_teacher, insert_teacher_no_password fixtures
+- `server/tests/http_signup.rs` — rewritten for password auth; 27 tests
+- `server/tests/ws_lobby.rs` — fix test that re-registered an already-inserted teacher
+- `web/assets/login.js` — email+password login form handler
+- `web/assets/signup.js` — updated for /auth/register with password fields
+
+**Commit:** `6290487`
+
 ## Sprint 9: Lobby completion + Warm Room chat — 2026-04-19
 
 **Files changed:**

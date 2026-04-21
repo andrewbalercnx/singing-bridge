@@ -42,7 +42,9 @@ gets a browser client for parity. Rust lives exclusively on the server.
 
 ### Identity and addressing
 
-- **Teacher**: magic-link email authentication, persistent account,
+- **Teacher**: email + password authentication (Argon2id, Sprint 10).
+  Magic-link flow retained as a password-reset escape hatch behind
+  `config.password_reset_enabled` (default `false`). Persistent account,
   stable room URL at `/teach/<slug>`. Slug is teacher-chosen at signup,
   validated against a reserved-word list, with an auto-generated
   fallback suggested on conflict. One room per teacher.

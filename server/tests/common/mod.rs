@@ -21,7 +21,8 @@ use singing_bridge_server::{
     blob::{BlobStore, DevBlobStore},
     config::Config,
     db::init_pool,
-    http::router,
+    http::{media_token::MediaTokenStore, router},
+    sidecar::SidecarClient,
     state::AppState,
 };
 use tempfile::TempDir;
@@ -57,6 +58,8 @@ pub struct TestOpts {
     /// Login rate-limit settings (default: very high to avoid interfering).
     pub login_ip_max_attempts: u32,
     pub login_account_max_failures: u32,
+    /// Override sidecar base URL (defaults to config dev_default: 127.0.0.1:5050).
+    pub sidecar_url: Option<url::Url>,
 }
 
 impl Default for TestOpts {
@@ -72,6 +75,7 @@ impl Default for TestOpts {
             password_reset_enabled: false,
             login_ip_max_attempts: 999_999,
             login_account_max_failures: 999_999,
+            sidecar_url: None,
         }
     }
 }
@@ -116,6 +120,9 @@ pub async fn spawn_app_with(opts: TestOpts) -> TestApp {
     config.password_reset_enabled = opts.password_reset_enabled;
     config.login_ip_max_attempts = opts.login_ip_max_attempts;
     config.login_account_max_failures = opts.login_account_max_failures;
+    if let Some(url) = opts.sidecar_url {
+        config.sidecar_url = url;
+    }
 
     let pool = init_pool(&config.db_url).await.unwrap();
     let mailer: Arc<dyn Mailer> = Arc::new(DevMailer::new(&config.dev_mail_dir).await.unwrap());
@@ -133,11 +140,19 @@ pub async fn spawn_app_with(opts: TestOpts) -> TestApp {
         sweeper_shutdown.cancelled().await;
         drop(sweeper_map);
     });
+    let sidecar = Arc::new(SidecarClient::new(
+        config.sidecar_url.clone(),
+        config.sidecar_secret.clone(),
+    ));
+    let media_tokens = Arc::new(MediaTokenStore::new());
+
     let state = Arc::new(AppState {
         db: pool,
         config: config.clone(),
         mailer,
         blob,
+        sidecar,
+        media_tokens,
         rooms: DashMap::new(),
         active_rooms: std::sync::atomic::AtomicUsize::new(0),
         shutdown: shutdown.clone(),

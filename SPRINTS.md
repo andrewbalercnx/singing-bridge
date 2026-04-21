@@ -351,54 +351,131 @@ _Protocol_
 
 ---
 
-## Sprint 12: Accompaniment library
+## Sprint 12: Accompaniment pipeline + library backend
 
-**Goal:** Teacher builds a persistent library of backing tracks (with optional sheet music), selects one during a lesson, and both parties hear the audio and see a synchronised bar-by-bar score walkthrough.
+**Goal:** Promote the PDF-to-audio pipeline from spike to a production sidecar, build the DB schema and all REST API routes for the accompaniment library, and establish authenticated media delivery — giving the teacher a fully functional JSON API for managing backing tracks.
 
 **Deliverables:**
 
-_Library model_
-- Each accompaniment asset holds: an optional PDF (sheet music), an optional MIDI, and zero or more WAV variants
-- A WAV variant is generated from a MIDI with three parameters: tempo (% of original BPM), pitch transpose (semitones), respect repeats (bool/no)
-- Multiple WAV variants per asset; teacher can name and manage them
+_Python sidecar (`sidecar/`)_
+- Promoted and hardened from `spike/pdf_to_piano_audio/pipeline/`; stateless Flask service
+- Bearer-auth (`SIDECAR_SECRET`, min 32 bytes) on every request; sidecar rejects without valid token
+- Endpoints: `/omr`, `/list-parts`, `/extract-midi`, `/bar-timings`, `/bar-coords`, `/rasterise`, `/synthesise`, `/healthz`
+- Bounded inputs: max 50 MB upload, 40 pages, DPI ≤ 300, `tempo_pct` 25–300, `transpose_semitones` −12–12
+- Defined error-code enum (`INVALID_PARAMS`, `OMR_FAILED`, `AUDIVERIS_MISSING`, `FLUIDSYNTH_MISSING`, etc.)
+- `sidecar/Dockerfile`: Python 3.12 + FluidSynth + FluidR3_GM SoundFont + Java 17 JRE for Audiveris
+- `docker-compose.yml` dev: sidecar alongside server, shared `SIDECAR_SECRET` via `.env`
 
-_Authoring flow (offline, `/teach/<slug>/library`)_
-- Upload a PDF → optional OMR (Audiveris via Python sidecar) to extract a MIDI of the accompaniment lines; teacher selects which parts to include
-- Upload a MIDI directly
-- Upload an audio file directly (stored as a WAV variant)
-- Synthesise a WAV from a MIDI: teacher sets tempo, transpose, repeats; rendered via FluidSynth (Python sidecar); stored in Azure Blob Storage
-- Rich library management UI: list assets, see variants per asset, delete variants, re-synthesise
+_DB migrations_
+- `0006_accompaniments.sql`: `accompaniments` and `accompaniment_variants` tables with `CHECK` constraints enforcing `tempo_pct` (25–300) and `transpose_semitones` (−12–12)
 
-_Pipeline architecture_
-- Python sidecar (promoted from `spike/pdf_to_piano_audio/pipeline/`): internal HTTP service, never internet-facing; Rust server proxies all pipeline calls
-- Sidecar provides: OMR, part listing, MIDI extraction, WAV synthesis, bar timing computation, PDF rasterisation
-- Bar timings stored once per MIDI at tempo=100%; scaled by the variant's tempo factor at playback
-- Bar coords (PDF bounding boxes) stored once per PDF in the DB
+_Rust sidecar client (`server/src/sidecar.rs`)_
+- SSRF-validated `SIDECAR_URL` (loopback or explicit `SIDECAR_HOST_ALLOWLIST`; private IPs blocked unless allowlisted)
+- `Authorization: Bearer` sent on every request; error-code enum mapped to `AppError` variants
 
-_In-lesson playback (minimal drawer in session UI)_
-- Teacher picks an accompaniment and a WAV variant from a compact in-session drawer
-- Audio plays independently at each client (served from Azure Blob, not over WebRTC)
-- Server broadcasts playback state (is_playing, position_ms) over the existing WebSocket connection; both ends stay in sync
-- Teacher controls: play, pause, stop, scrub to position — all mirrored to student in real time
-- Student view is read-only (no controls)
-- Score view (if available):
-  - PDF + WAV → bar-by-bar walkthrough on the rasterised PDF pages, driven by playback position
-  - MIDI + WAV (no PDF) → Music21-rendered sheet music with same walkthrough
-  - WAV only → audio only, no score view
-- Teacher can clear the active accompaniment; score panel hidden when none loaded
+_Rust library routes (`server/src/http/library.rs`)_
+- All routes require teacher session cookie; ownership join (`teacher_id`) on all asset/variant lookups
+- Upload (PDF/MIDI/WAV) with magic-byte-first detection; POST parts/MIDI/rasterise/synthesise/delete
+- Bounded JSON persistence: `bar_coords_json` ≤ 500 KB, `bar_timings_json` ≤ 100 KB, `page_blob_keys_json` ≤ 10 KB
+- `Cache-Control: no-store` on the library HTML page
 
-_New DB migrations_
-- `accompaniments` (id, teacher_id, title, pdf_blob_key, midi_blob_key, bar_coords_json, bar_timings_json, created_at)
-- `accompaniment_variants` (id, accompaniment_id, label, wav_blob_key, tempo_pct, transpose_semitones, respect_repeats, duration_s, created_at)
+_Media token delivery_
+- In-memory `MediaTokenStore` (cap 1000, expiry sweep on insert and access, teardown cleanup)
+- `GET /api/media/<token>`: 404 for both unknown and expired tokens (no oracle); WAV tokens multi-use
+- Prod: Azure SAS URL with 5-min TTL, read-only (`sp=r`)
 
 **Exit criteria:**
-- Teacher uploads a two-page PDF; OMR runs; teacher selects parts; MIDI is saved to the asset
-- Teacher synthesises two WAV variants at different tempos; both appear in the library under the same asset
-- Teacher starts a session, opens the accompaniment drawer, picks an asset + variant; both parties hear the audio begin at the same moment
+- `POST /teach/<slug>/library/assets` with a PDF → asset row created; OMR returns parts list; part selection extracts MIDI; synthesis creates a WAV variant — all verifiable via JSON API
+- Two WAV variants at different `tempo_pct` values appear under the same asset
+- Sidecar unavailable → library endpoints return 503; existing session and WS flows unaffected
+- Teacher A cannot access or mutate Teacher B's assets via any route or WS message
+- `SIDECAR_URL` pointing at a non-loopback, non-allowlisted host → server fails to start
+- `SIDECAR_SECRET` shorter than 32 bytes in prod → server fails to start
+- All new Rust and Python tests pass; no real Audiveris/FluidSynth calls in CI
+
+**Status:** PENDING
+
+---
+
+## Sprint 12A: Accompaniment backend — gap closure
+
+**Goal:** Close the eleven gaps between the approved Sprint 12 plan and what was delivered — WAV upload, 413 enforcement, sidecar AppError variants, structured upload error codes, missing integration tests, docker-compose, and E2E test foundation.
+
+**Deliverables:**
+- WAV direct upload → auto-creates `accompaniment_variants` row (`tempo_pct=100`)
+- `Content-Length` > 50 MB → 413 before body read
+- `AppError::SidecarUnavailable` (→ 503) and `AppError::SidecarBadInput` (→ 422) added to `error.rs`; `sidecar.rs` updated
+- Structured upload error codes: `CONTENT_TYPE_MISMATCH` (422), `UNSUPPORTED_FILE_TYPE` (422)
+- Missing integration tests #2–5, #8–10, #12 from Sprint 12 test strategy
+- `docker-compose.yml` + `.env.example` at repo root
+- `tests/e2e/sidecar_stub/app.py` — minimal stub returning fixture responses
+- `tests/e2e/library.spec.ts` — E2E: library page loads with correct title
+- Plan correction documented: `bar_coords` takes `pdf` only (no `musicxml`); plan had an error
+
+**Exit criteria:**
+- WAV upload → `GET /assets/:id` shows `variants` array with one entry at `tempo_pct=100`
+- `Content-Length: 52428801` → 413 before any pipeline work
+- `Content-Type: application/pdf` + MIDI bytes → 422 with `code: CONTENT_TYPE_MISMATCH`
+- `POST /parts` when sidecar is down → 503; `GET /healthz` still 200
+- All 17 existing + 8 new Rust library tests pass
+- E2E `library.spec.ts` passes against sidecar stub
+- `docker-compose up` starts both server and sidecar
+
+**Status:** PENDING
+
+---
+
+## Sprint 13: Library management UI
+
+**Goal:** Give the teacher a browser-based interface for building and managing their accompaniment library, wired entirely to the Sprint 12 JSON API.
+
+**Deliverables:**
+- `web/templates/library.html` + `web/assets/library.js` — full library management page
+- Asset list: title, variant count, upload date, delete button
+- Upload panel: drag-and-drop or file picker; auto-detects PDF / MIDI / WAV
+- Per-asset OMR flow: "Run OMR" → part picker → "Extract MIDI" → "Rasterise pages" with progress indication
+- Per-asset synthesise form: label, tempo % (25–300), transpose (−12–12), respect repeats toggle
+- Per-variant: re-synthesise and delete actions
+- Sidecar 503 → "Sheet music tools unavailable" banner; other operations unaffected
+- `web/assets/tests/library.test.js`: upload flow, OMR multi-step, synthesise form validation, delete confirmation, 503 banner
+
+**Exit criteria:**
+- Teacher can upload a two-page PDF, run OMR, select parts, extract MIDI, synthesise two variants at different tempos — all via the browser UI
+- Deleting an asset removes it from the list
+- Sidecar 503 shows the banner without breaking upload or delete
+- All JS tests pass; no regression in existing test suite
+
+**Status:** PENDING
+
+---
+
+## Sprint 14: In-session accompaniment playback + score view
+
+**Goal:** Teacher selects a backing track during a lesson; both parties hear it and see a synchronised bar-by-bar score walkthrough.
+
+**Deliverables:**
+
+_WebSocket protocol additions_
+- `ClientMsg::AccompanimentPlay { asset_id, variant_id, position_ms }` (teacher only)
+- `ClientMsg::AccompanimentPause { position_ms }` (teacher only)
+- `ClientMsg::AccompanimentStop` (teacher only; also sent by client on audio `ended` event)
+- `ServerMsg::AccompanimentState { asset_id?, variant_id?, is_playing, position_ms, tempo_pct?, wav_url?, page_urls?, bar_coords?, bar_timings?, server_time_ms }`
+- Student sending any accompaniment message → `ErrorCode::Forbidden`
+
+_In-session frontend_
+- `web/assets/accompaniment-drawer.js`: `mount(container, opts)` → `{ teardown, updateState }`; teacher controls (play/pause/stop/scrub); student read-only view; local clock with `tempo_pct / 100` bar-lookup formula; `ended` event → `AccompanimentStop`
+- `web/assets/score-view.js`: `mount(container, opts)` → `{ teardown, seekToBar }`; rasterised page display with bar-highlight overlay; degrades gracefully to audio-only if no coords/pages
+- `teacher.html` / `student.html` — `#accompaniment-drawer-root` + `#score-view-root` containers wired up
+
+**Exit criteria:**
+- Teacher opens the in-session drawer, picks an asset and variant; both parties hear the audio begin at the same moment
 - Teacher pauses; student's audio pauses. Teacher scrubs to bar 4 and resumes; student resumes from bar 4
 - Score walkthrough highlights the correct bar on both sides throughout playback
-- Audiveris/FluidSynth unavailable → 503 with clear message; no crash; existing session flows unaffected
-- All existing A/V, chat, and recording flows unaffected; new tests cover upload, OMR, synthesis, playback-state relay, and bar-sync
+- Audio ends naturally → both sides stop; playback state cleared
+- Student cannot send play/pause/stop (no controls rendered; WS rejects if sent directly)
+- WAV-only asset → audio plays with no score panel; no error
+- All existing A/V, chat, and recording flows unaffected
+- All new JS and Rust WS tests pass
 
 **Status:** PENDING
 
@@ -409,4 +486,3 @@ _New DB migrations_
 - Persistent "my students" list for the teacher — deliberately out of MVP; addressed partially by Sprint 11 history
 - Multi-participant sessions — MVP is strictly 2 peers
 - Low-latency "try to match duet" mode — explicitly not a goal; this tool is coaching-focused
-- Piano accompaniment audio playback (spike explored in `spike/pdf_to_piano_audio/`) — future sprint after Sprint 12

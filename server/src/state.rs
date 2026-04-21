@@ -5,12 +5,12 @@
 // Role: Single source of truth for live connections and lobby membership.
 // Exports: AppState, RoomState, LobbyEntry, ActiveSession, ClientHandle,
 //          ConnectionId, SlugKey, BlockEntry, BLOCK_LIST_CAP
-// Depends: tokio, dashmap, sqlx, tokio_util, async trait mailer, blob
+// Depends: tokio, dashmap, sqlx, tokio_util, async trait mailer, blob, sidecar, media_token
 // Invariants: RoomState is `tokio::sync::RwLock`; callers MUST use
 //             AppState::room / ::room_or_insert (no direct DashMap access
 //             from async fns). BLOCK_LIST_CAP enforced on every block insert;
 //             oldest entry evicted when cap is reached (FIFO).
-// Last updated: Sprint 111 (2026-04-21) -- session_event fields on ActiveSession
+// Last updated: Sprint 12 (2026-04-21) -- sidecar + media_tokens on AppState
 
 use std::net::IpAddr;
 use std::sync::atomic::{AtomicU16, AtomicUsize, Ordering};
@@ -28,6 +28,8 @@ use crate::auth::mailer::Mailer;
 use crate::blob::BlobStore;
 use crate::auth::secret::SecretString;
 use crate::config::Config;
+use crate::http::media_token::MediaTokenStore;
+use crate::sidecar::SidecarClient;
 use crate::error::{AppError, Result};
 use crate::ws::protocol::{EntryId, LobbyEntryView, PumpDirective, Tier};
 use crate::ws::rate_limit::WsJoinBucket;
@@ -198,6 +200,8 @@ pub struct AppState {
     pub config: Config,
     pub mailer: Arc<dyn Mailer>,
     pub blob: Arc<dyn BlobStore>,
+    pub sidecar: Arc<SidecarClient>,
+    pub media_tokens: Arc<MediaTokenStore>,
     pub rooms: DashMap<SlugKey, Arc<RwLock<RoomState>>>,
     /// Authoritative counter for the room cap. Incremented inside the
     /// single-winner `Entry::Vacant` branch of `room_or_insert`; we compare-

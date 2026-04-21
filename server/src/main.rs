@@ -7,7 +7,7 @@
 //             Selects mailer based on MailerKind. Spawns WS join rate sweeper
 //             and aborts it on shutdown. AppState.ws_join_rate_sweeper is
 //             always a valid JoinHandle for the life of the process.
-// Last updated: Sprint 6 (2026-04-18) -- blob store, cleanup_loop
+// Last updated: Sprint 12 (2026-04-21) -- SidecarClient + MediaTokenStore in AppState
 
 use std::{net::SocketAddr, sync::Arc};
 
@@ -20,7 +20,8 @@ use singing_bridge_server::{
     cleanup::cleanup_loop,
     config::{Config, MailerKind},
     db::init_pool,
-    http::router,
+    http::{media_token::MediaTokenStore, router},
+    sidecar::SidecarClient,
     state::AppState,
     ws::rate_limit::sweep_stale,
 };
@@ -92,11 +93,19 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
+    let sidecar = Arc::new(SidecarClient::new(
+        config.sidecar_url.clone(),
+        config.sidecar_secret.clone(),
+    ));
+    let media_tokens = Arc::new(MediaTokenStore::new());
+
     let state = Arc::new(AppState {
         db: pool,
         config: config.clone(),
         mailer,
         blob,
+        sidecar,
+        media_tokens,
         rooms: DashMap::new(),
         active_rooms: std::sync::atomic::AtomicUsize::new(0),
         shutdown: shutdown.clone(),

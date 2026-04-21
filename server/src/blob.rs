@@ -2,16 +2,18 @@
 // Purpose: BlobStore trait + DevBlobStore (flat temp-dir files).
 // Role: Decouples recording upload/download from any particular storage backend.
 // Exports: BlobStore, DevBlobStore, BlobError
-// Depends: async-trait, tokio, tokio-util, futures, url
-// Invariants: DevBlobStore keys are flat "{uuid}.webm" — no slashes, no dots-dot.
+// Depends: async-trait, tokio, tokio-util, futures, url, bytes
+// Invariants: DevBlobStore keys are flat "{uuid}.ext" — no slashes, no dots-dot.
 //             get_url returns a /api/dev-blob/{key} path (dev only).
+//             get_bytes reads the full blob into memory (use only for sidecar payloads).
 //             AzureBlobStore (prod) is a future Sprint 5+ addition outside this file.
-// Last updated: Sprint 6 (2026-04-18) -- initial implementation
+// Last updated: Sprint 12 (2026-04-21) -- get_bytes for sidecar delivery
 
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 
 use async_trait::async_trait;
+use bytes::Bytes;
 use tokio::io::AsyncRead;
 use url::Url;
 
@@ -31,6 +33,9 @@ pub type Result<T> = std::result::Result<T, BlobError>;
 pub trait BlobStore: Send + Sync + 'static {
     /// Store `data` under `key`; returns bytes written.
     async fn put(&self, key: &str, data: Pin<Box<dyn AsyncRead + Send>>) -> Result<u64>;
+    /// Read the full blob into memory. Use only for sidecar payloads where
+    /// the entire content must be in memory anyway.
+    async fn get_bytes(&self, key: &str) -> Result<Bytes>;
     /// Return a URL from which the blob can be read.
     async fn get_url(&self, key: &str, base_url: &Url) -> Result<Url>;
     /// Delete the blob. Not-found is silently ignored.
@@ -75,6 +80,16 @@ impl BlobStore for DevBlobStore {
         let mut file = tokio::fs::File::create(&path).await?;
         let bytes_written = tokio::io::copy(&mut data, &mut file).await?;
         Ok(bytes_written)
+    }
+
+    async fn get_bytes(&self, key: &str) -> Result<Bytes> {
+        Self::validate_key(key)?;
+        let path = self.path_for(key);
+        match tokio::fs::read(&path).await {
+            Ok(data) => Ok(Bytes::from(data)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(BlobError::NotFound),
+            Err(e) => Err(BlobError::Io(e)),
+        }
     }
 
     async fn get_url(&self, key: &str, base_url: &Url) -> Result<Url> {

@@ -1,0 +1,23 @@
+# docker-compose.yml
+# Purpose: Local full-stack development and integration testing environment.
+# Last updated: Sprint 12A (2026-04-21) -- initial accompaniment sidecar setup
+
+services:
+  server:
+    build: ./server
+    ports:
+      - "8080:8080"
+    env_file: .env
+    environment:
+      - SIDECAR_URL=http://sidecar:5050
+      # Exact hostname match against the sidecar service name (no wildcards).
+      # Parsed via url::Url::parse; host extracted and compared with string equality.
+      - SIDECAR_HOST_ALLOWLIST=sidecar
+    depends_on:
+      - sidecar
+
+  sidecar:
+    build: ./spike/pdf_to_piano_audio
+    ports:
+      - "5050:5050"
+    env_file: .env

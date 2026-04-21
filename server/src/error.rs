@@ -6,7 +6,7 @@
 // Depends: axum, serde, thiserror, sqlx
 // Invariants: every variant maps to a stable (status, code) pair; JSON body
 //             always carries {code, message}.
-// Last updated: Sprint 1 (2026-04-17) -- initial implementation
+// Last updated: Sprint 12a (2026-04-21) -- sidecar + upload error variants
 
 use std::borrow::Cow;
 
@@ -41,6 +41,16 @@ pub enum AppError {
     SessionInProgress,
     #[error("service unavailable")]
     ServiceUnavailable,
+    #[error("payload too large")]
+    PayloadTooLarge,
+    #[error("sidecar unavailable")]
+    SidecarUnavailable,
+    #[error("sidecar bad input: {0}")]
+    SidecarBadInput(Cow<'static, str>),
+    #[error("content type mismatch")]
+    ContentTypeMismatch,
+    #[error("unsupported file type")]
+    UnsupportedFileType,
     #[error(transparent)]
     Sqlx(#[from] sqlx::Error),
     #[error(transparent)]
@@ -68,6 +78,11 @@ impl AppError {
             AppError::TooManyRequests => (StatusCode::TOO_MANY_REQUESTS, "rate_limited"),
             AppError::SessionInProgress => (StatusCode::CONFLICT, "session_in_progress"),
             AppError::ServiceUnavailable => (StatusCode::SERVICE_UNAVAILABLE, "unavailable"),
+            AppError::PayloadTooLarge => (StatusCode::PAYLOAD_TOO_LARGE, "payload_too_large"),
+            AppError::SidecarUnavailable => (StatusCode::SERVICE_UNAVAILABLE, "sidecar_unavailable"),
+            AppError::SidecarBadInput(_) => (StatusCode::UNPROCESSABLE_ENTITY, "sidecar_bad_input"),
+            AppError::ContentTypeMismatch => (StatusCode::UNPROCESSABLE_ENTITY, "content_type_mismatch"),
+            AppError::UnsupportedFileType => (StatusCode::UNPROCESSABLE_ENTITY, "unsupported_file_type"),
             AppError::Sqlx(_) | AppError::Io(_) | AppError::Internal(_) => {
                 (StatusCode::INTERNAL_SERVER_ERROR, "internal")
             }
@@ -84,6 +99,11 @@ impl IntoResponse for AppError {
         let (message, log_internal) = match &self {
             AppError::Sqlx(_) | AppError::Io(_) | AppError::Internal(_) => {
                 (String::from("internal error"), true)
+            }
+            // Keep raw sidecar diagnostics out of HTTP responses; log server-side only.
+            AppError::SidecarBadInput(msg) => {
+                tracing::warn!(sidecar_error = %msg, "sidecar rejected input");
+                (String::from("sidecar rejected the input"), false)
             }
             other => (other.to_string(), false),
         };

@@ -78,6 +78,15 @@ pub struct Config {
     pub login_account_max_failures: u32,
     pub login_ip_window_secs: i64,
     pub login_ip_max_attempts: u32,
+    // Sidecar
+    pub sidecar_url: Url,
+    pub sidecar_secret: SecretString,
+    /// Comma-separated list of exact host/IP strings allowed as sidecar hosts
+    /// beyond loopback. Private IPs are blocked unless listed here.
+    pub sidecar_host_allowlist: Vec<String>,
+    // Accompaniment
+    pub accomp_upload_max_bytes: u64,
+    pub media_token_ttl_secs: u64,
 }
 
 impl Config {
@@ -119,6 +128,11 @@ impl Config {
             login_account_max_failures: 10,
             login_ip_window_secs: 300,
             login_ip_max_attempts: 20,
+            sidecar_url: Url::parse("http://127.0.0.1:5050").expect("static sidecar url"),
+            sidecar_secret: SecretString::new("dev-sidecar-secret"),
+            sidecar_host_allowlist: vec![],
+            accomp_upload_max_bytes: 50 * 1024 * 1024,
+            media_token_ttl_secs: 300,
         }
     }
 
@@ -174,6 +188,22 @@ impl Config {
             .ok()
             .map(SecretString::new);
 
+        let sidecar_url_str = std::env::var("SIDECAR_URL")
+            .unwrap_or_else(|_| "http://127.0.0.1:5050".into());
+        let sidecar_url = Url::parse(&sidecar_url_str)
+            .map_err(|e| ConfigError::Invalid("SIDECAR_URL", format!("{e}")))?;
+
+        let sidecar_secret = SecretString::new(
+            std::env::var("SIDECAR_SECRET").unwrap_or_else(|_| "dev-sidecar-secret".into()),
+        );
+
+        let sidecar_host_allowlist: Vec<String> = std::env::var("SIDECAR_HOST_ALLOWLIST")
+            .unwrap_or_default()
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+
         let ws_join_rate_limit_per_ip: usize = std::env::var("SB_WS_JOIN_RATE_LIMIT_PER_IP")
             .unwrap_or_else(|_| "20".into())
             .parse()
@@ -224,6 +254,11 @@ impl Config {
             login_account_max_failures: 10,
             login_ip_window_secs: 300,
             login_ip_max_attempts: 20,
+            sidecar_url,
+            sidecar_secret,
+            sidecar_host_allowlist,
+            accomp_upload_max_bytes: 50 * 1024 * 1024,
+            media_token_ttl_secs: 300,
         })
     }
 
@@ -253,7 +288,73 @@ fn validate_prod_config(c: &Config) -> Result<(), ConfigError> {
     if pepper.len() < 32 {
         return Err(ConfigError::TooShort("SB_SESSION_LOG_PEPPER", 32));
     }
+    // Sidecar secret must be at least 32 bytes in prod.
+    if c.sidecar_secret.len() < 32 {
+        return Err(ConfigError::TooShort("SIDECAR_SECRET", 32));
+    }
+    // Sidecar URL must point at loopback or an explicitly allowlisted host.
+    validate_sidecar_url(&c.sidecar_url, &c.sidecar_host_allowlist)?;
     Ok(())
+}
+
+/// Validates that `url` points at a loopback address or is explicitly
+/// allowlisted. Blocks private/link-local IPs unless allowlisted.
+pub fn validate_sidecar_url(url: &Url, allowlist: &[String]) -> Result<(), ConfigError> {
+    let host = url
+        .host_str()
+        .ok_or_else(|| ConfigError::Invalid("SIDECAR_URL", "missing host".into()))?;
+
+    // Loopback is always allowed.
+    if host == "localhost" || host == "127.0.0.1" || host == "::1" {
+        return Ok(());
+    }
+
+    // Check against exact allowlist entries.
+    for entry in allowlist {
+        let entry = entry.trim();
+        if entry.is_empty() {
+            continue;
+        }
+        // Parse as a URL to extract the host_str for comparison.
+        if let Ok(probe) = Url::parse(&format!("http://{entry}/")) {
+            if probe.host_str() == Some(host) {
+                return Ok(());
+            }
+        }
+        // Also accept bare IP/hostname match.
+        if entry == host {
+            return Ok(());
+        }
+    }
+
+    // Block private/link-local IPs not in the allowlist.
+    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        if is_private_or_link_local(ip) {
+            return Err(ConfigError::Invalid(
+                "SIDECAR_URL",
+                format!("private/link-local IP {ip} not in SIDECAR_HOST_ALLOWLIST"),
+            ));
+        }
+    }
+
+    // Non-loopback, non-allowlisted host.
+    Err(ConfigError::Invalid(
+        "SIDECAR_URL",
+        format!("host '{host}' not in SIDECAR_HOST_ALLOWLIST; set the allowlist or use loopback"),
+    ))
+}
+
+fn is_private_or_link_local(ip: std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(v4) => {
+            v4.is_private() || v4.is_link_local() || v4.is_loopback()
+        }
+        std::net::IpAddr::V6(v6) => {
+            v6.is_loopback()
+                || (v6.segments()[0] & 0xfe00) == 0xfc00 // ULA
+                || (v6.segments()[0] & 0xffc0) == 0xfe80 // link-local
+        }
+    }
 }
 
 #[cfg(test)]
@@ -286,6 +387,7 @@ mod tests {
         c.base_url = Url::parse("https://singing.rcnx.io").unwrap();
         c.turn_shared_secret = Some(SecretString::new("a".repeat(32)));
         c.session_log_pepper = Some(SecretString::new("y".repeat(32)));
+        c.sidecar_secret = SecretString::new("s".repeat(32));
         if acs {
             c.acs_connection_string = Some(SecretString::new(
                 "endpoint=https://sb.uk.communication.azure.com/;accesskey=dGVzdA==",

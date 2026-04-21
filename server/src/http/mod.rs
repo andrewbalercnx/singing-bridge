@@ -6,12 +6,15 @@
 // Invariants: every HTML route carries the strict CSP; /auth/* carries
 //             Cache-Control: no-store. /healthz body is fixed JSON.
 //             /api/dev-blob/* is only compiled and mounted in debug builds + dev mode.
-// Last updated: Sprint 111 (2026-04-21) -- history route
+//             /api/media/:token is public — the token itself is the auth.
+// Last updated: Sprint 12 (2026-04-21) -- accompaniment library + media routes
 
 pub mod health;
 pub mod history;
+pub mod library;
 pub mod login;
 pub mod loopback;
+pub mod media_token;
 pub mod recording_gate;
 pub mod recordings;
 pub mod security_headers;
@@ -44,6 +47,21 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/teach/:slug", get(teach::get_teach))
         .route("/teach/:slug/history", get(history::get_history))
         .route("/teach/:slug/recordings", get(recordings::get_recordings_page))
+        // Accompaniment library
+        .route("/teach/:slug/library", get(library::get_library_page))
+        .route("/teach/:slug/library/assets",
+            get(library::list_assets)
+            .post(library::post_asset).layer(DefaultBodyLimit::disable()))
+        .route("/teach/:slug/library/assets/:id",
+            get(library::get_asset).delete(library::delete_asset))
+        .route("/teach/:slug/library/assets/:id/parts", post(library::post_parts))
+        .route("/teach/:slug/library/assets/:id/midi", post(library::post_midi))
+        .route("/teach/:slug/library/assets/:id/rasterise", post(library::post_rasterise))
+        .route("/teach/:slug/library/assets/:id/variants", post(library::post_variant))
+        .route("/teach/:slug/library/assets/:id/variants/:vid",
+            delete(library::delete_variant))
+        // Media token delivery (public — token is the auth)
+        .route("/api/media/:token", get(library::get_media))
         .route("/loopback", get(loopback::get_loopback))
         .route("/ws", get(crate::ws::ws_upgrade))
         .route("/healthz", get(health::get_healthz))

@@ -1938,17 +1938,18 @@ def compute_convergence_score(tracker_file: Path) -> tuple[float, str]:
 # ---------------------------------------------------------------------------
 
 
-_SPRINT_RE = re.compile(r"^\d+$")
+_SPRINT_RE = re.compile(r"^\d+[A-Za-z]?$")
 
 
 def _numeric_sprint(raw: str) -> str:
     """Validate the sprint CLI argument. Sprint 6 R1 #15: the sprint
     is interpolated into repo-relative paths (tracker, base-commit,
     metrics JSONL); a crafted non-numeric value such as ``../../etc``
-    would escape the repo root. We accept digits only."""
+    would escape the repo root. We accept digits with an optional
+    single letter suffix (e.g. 11A) for remediation sprints."""
     if not _SPRINT_RE.match(raw):
         raise argparse.ArgumentTypeError(
-            f"sprint must be numeric (got {raw!r})"
+            f"sprint must be a number or number+letter (e.g. 12 or 11A); got {raw!r}"
         )
     return raw
 
@@ -1964,7 +1965,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     )
     parser.add_argument(
         "sprint", type=_numeric_sprint,
-        help="Sprint number (digits only, e.g. 2).",
+        help="Sprint number, optionally with a letter suffix (e.g. 12 or 11A).",
     )
     parser.add_argument(
         "title", nargs="+",

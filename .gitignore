@@ -82,8 +82,10 @@ FINDINGS_Sprint*.md
 # Generated context packs (transient)
 codex/context/
 
-# Council review working files (transient)
-council/
+# Council review working files (transient) — ignore contents but not the dir
+# so the metrics negation below can take effect (git can't un-ignore inside
+# a directory-level ignore rule)
+council/*
 # ...except metrics JSONL — these are the primary audit trail for council efficiency
 !council/metrics_Sprint*.jsonl
 

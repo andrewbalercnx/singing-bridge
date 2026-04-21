@@ -2006,6 +2006,11 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         help="Show per-member timing and the full header block. "
              "Default console output is terse.",
     )
+    parser.add_argument(
+        "--max-rounds", type=int, default=None, dest="max_rounds",
+        help="Override the max-rounds guardrail from council-config.json "
+             "for this run only (e.g. --max-rounds 8 for a large sprint).",
+    )
     return parser.parse_args(argv)
 
 
@@ -2512,6 +2517,9 @@ def main():
 
     max_rounds_key = "max_plan_rounds" if review_type == "plan" else "max_code_rounds"
     max_rounds = config["council"].get(max_rounds_key, 8)
+    if getattr(ns, "max_rounds", None) is not None:
+        max_rounds = ns.max_rounds
+        print(f"  max-rounds override: {max_rounds}", file=sys.stderr)
     warning_at = config["council"].get("convergence_warning_at", 3)
 
     escalation_note = None

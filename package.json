@@ -1,4 +1,7 @@
 {
   "private": true,
-  "type": "commonjs"
+  "type": "commonjs",
+  "devDependencies": {
+    "@playwright/test": "^1.59.1"
+  }
 }

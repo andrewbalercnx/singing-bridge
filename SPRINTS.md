@@ -328,24 +328,54 @@ _Protocol_
 
 ---
 
-## Sprint 12: Sheet music sharing
+## Sprint 12: Accompaniment library
 
-**Goal:** Teacher can upload a PDF or MusicXML score; both teacher and student see the rendered score in their browsers during a session, with the teacher controlling the current page.
+**Goal:** Teacher builds a persistent library of backing tracks (with optional sheet music), selects one during a lesson, and both parties hear the audio and see a synchronised bar-by-bar score walkthrough.
 
 **Deliverables:**
-- Promote the `spike/pdf_to_piano_audio/pipeline/` package to production: axum routes `POST /api/scores` (upload + OMR), `GET /api/scores/:id`, `GET /api/scores/:id/pages/:n`
-- OMR via Audiveris (subprocess, graceful 503 if unavailable); MusicXML stored in DB (new `scores` migration); rendered pages served as SVG via OpenSheetMusicDisplay server-side render or stored pre-rendered PNGs
-- In-session score panel: teacher clicks a button in session-ui to open a score drawer; both parties see the same page; teacher can advance/retreat pages; student view is read-only (no page controls)
-- Page-turn events travel over the existing data channel (new `score_page` message type)
-- Score upload is only available to the authenticated teacher; scores are scoped to the teacher's room
-- Score panel is hidden if no score is loaded; teacher can clear the active score
+
+_Library model_
+- Each accompaniment asset holds: an optional PDF (sheet music), an optional MIDI, and zero or more WAV variants
+- A WAV variant is generated from a MIDI with three parameters: tempo (% of original BPM), pitch transpose (semitones), respect repeats (bool/no)
+- Multiple WAV variants per asset; teacher can name and manage them
+
+_Authoring flow (offline, `/teach/<slug>/library`)_
+- Upload a PDF → optional OMR (Audiveris via Python sidecar) to extract a MIDI of the accompaniment lines; teacher selects which parts to include
+- Upload a MIDI directly
+- Upload an audio file directly (stored as a WAV variant)
+- Synthesise a WAV from a MIDI: teacher sets tempo, transpose, repeats; rendered via FluidSynth (Python sidecar); stored in Azure Blob Storage
+- Rich library management UI: list assets, see variants per asset, delete variants, re-synthesise
+
+_Pipeline architecture_
+- Python sidecar (promoted from `spike/pdf_to_piano_audio/pipeline/`): internal HTTP service, never internet-facing; Rust server proxies all pipeline calls
+- Sidecar provides: OMR, part listing, MIDI extraction, WAV synthesis, bar timing computation, PDF rasterisation
+- Bar timings stored once per MIDI at tempo=100%; scaled by the variant's tempo factor at playback
+- Bar coords (PDF bounding boxes) stored once per PDF in the DB
+
+_In-lesson playback (minimal drawer in session UI)_
+- Teacher picks an accompaniment and a WAV variant from a compact in-session drawer
+- Audio plays independently at each client (served from Azure Blob, not over WebRTC)
+- Server broadcasts playback state (is_playing, position_ms) over the existing WebSocket connection; both ends stay in sync
+- Teacher controls: play, pause, stop, scrub to position — all mirrored to student in real time
+- Student view is read-only (no controls)
+- Score view (if available):
+  - PDF + WAV → bar-by-bar walkthrough on the rasterised PDF pages, driven by playback position
+  - MIDI + WAV (no PDF) → Music21-rendered sheet music with same walkthrough
+  - WAV only → audio only, no score view
+- Teacher can clear the active accompaniment; score panel hidden when none loaded
+
+_New DB migrations_
+- `accompaniments` (id, teacher_id, title, pdf_blob_key, midi_blob_key, bar_coords_json, bar_timings_json, created_at)
+- `accompaniment_variants` (id, accompaniment_id, label, wav_blob_key, tempo_pct, transpose_semitones, respect_repeats, duration_s, created_at)
 
 **Exit criteria:**
-- Teacher uploads a two-page PDF; score appears rendered in the session panel for both parties
-- Teacher advances to page 2; student's view updates in sync within one data-channel round trip
-- Student cannot change the page
-- Upload endpoint returns 503 with a clear message when Audiveris is unavailable; no crash
-- All existing A/V and chat flows unaffected; new tests cover upload, page-turn relay, and the 503 degraded path
+- Teacher uploads a two-page PDF; OMR runs; teacher selects parts; MIDI is saved to the asset
+- Teacher synthesises two WAV variants at different tempos; both appear in the library under the same asset
+- Teacher starts a session, opens the accompaniment drawer, picks an asset + variant; both parties hear the audio begin at the same moment
+- Teacher pauses; student's audio pauses. Teacher scrubs to bar 4 and resumes; student resumes from bar 4
+- Score walkthrough highlights the correct bar on both sides throughout playback
+- Audiveris/FluidSynth unavailable → 503 with clear message; no crash; existing session flows unaffected
+- All existing A/V, chat, and recording flows unaffected; new tests cover upload, OMR, synthesis, playback-state relay, and bar-sync
 
 **Status:** PENDING
 

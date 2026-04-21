@@ -12,7 +12,7 @@
 //             Resend always issues a fresh random token (old link becomes invalid).
 //             RecordingView excludes token_hash, blob_key, teacher_id, deleted_at.
 //             Blob compensation: if DB insert fails after successful put, delete blob.
-// Last updated: Sprint 6 (2026-04-18) -- R2 fixes: streaming upload, token_hex removed
+// Last updated: Sprint 11 (2026-04-21) -- recording slot linkage
 
 use std::sync::Arc;
 

@@ -10,7 +10,7 @@
 //             AppState::room / ::room_or_insert (no direct DashMap access
 //             from async fns). BLOCK_LIST_CAP enforced on every block insert;
 //             oldest entry evicted when cap is reached (FIFO).
-// Last updated: Sprint 9 (2026-04-19) -- headphones_confirmed in LobbyEntry
+// Last updated: Sprint 11 (2026-04-21) -- session_event fields on ActiveSession
 
 use std::net::IpAddr;
 use std::sync::atomic::{AtomicU16, AtomicUsize, Ordering};

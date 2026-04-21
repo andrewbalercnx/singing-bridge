@@ -8,7 +8,7 @@
 //             blob_key set to NULL only after successful BlobStore::delete.
 //             Gate attempts pruned per gate_attempt_ttl_secs passed at call time.
 //             cleanup_loop exits cleanly on CancellationToken cancellation.
-// Last updated: Sprint 11 (2026-04-21) -- archive session_events
+// Last updated: Sprint 111 (2026-04-21) -- archive session_events
 
 use std::sync::Arc;
 

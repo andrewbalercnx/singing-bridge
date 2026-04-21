@@ -1,6 +1,6 @@
 // File: server/tests/http_history.rs
 // Purpose: Integration tests for GET /teach/<slug>/history.
-// Last updated: Sprint 11 (2026-04-21) -- initial implementation
+// Last updated: Sprint 111 (2026-04-21) -- initial implementation
 
 mod common;
 use common::spawn_app;

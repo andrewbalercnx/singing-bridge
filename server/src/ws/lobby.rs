@@ -9,7 +9,7 @@
 //             XOR between lobby and active_session.
 //             Blocked IP → close 1008 "blocked". Plain reject → close 1000.
 //             Block-with-ttl → close 1008 "blocked".
-// Last updated: Sprint 11 (2026-04-21) -- session_history wiring in admit
+// Last updated: Sprint 111 (2026-04-21) -- session_history wiring in admit
 
 use std::net::IpAddr;
 use std::sync::Arc;

@@ -8,7 +8,7 @@
 //             raw email or IP is persisted. close_row is first-writer-wins
 //             (WHERE ended_at IS NULL), so concurrent calls are safe.
 //             record_peak is a no-op if the row is missing or already closed.
-// Last updated: Sprint 11 (2026-04-21) -- make as_str pub
+// Last updated: Sprint 111 (2026-04-21) -- make as_str pub
 
 use sha2::{Digest, Sha256};
 use sqlx::SqlitePool;

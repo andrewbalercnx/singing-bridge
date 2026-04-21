@@ -7,7 +7,7 @@
 //             All user-derived values in HTML output are HTML-escaped.
 //             Results capped at HISTORY_PAGE_LIMIT rows.
 //             archived_at IS NULL filter excludes soft-deleted events.
-// Last updated: Sprint 11 (2026-04-21) -- initial implementation
+// Last updated: Sprint 111 (2026-04-21) -- initial implementation
 
 use std::sync::Arc;
 

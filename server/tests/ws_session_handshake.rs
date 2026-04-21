@@ -2,7 +2,7 @@
 // Purpose: Full signalling handshake — lobby_join → admit → signal relay
 //          → disconnect cleanup. Covers the SPRINTS.md exit criterion at
 //          the signalling layer.
-// Last updated: Sprint 11 (2026-04-21) -- email validation + session_event persistence
+// Last updated: Sprint 111 (2026-04-21) -- email validation + session_event persistence
 
 mod common;
 

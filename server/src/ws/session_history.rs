@@ -12,7 +12,7 @@
 //             (WHERE ended_at IS NULL). close_event and link_recording enforce
 //             teacher_id ownership in SQL. upsert_student uses INSERT OR IGNORE
 //             + SELECT to return correct id regardless of conflict.
-// Last updated: Sprint 11 (2026-04-21) -- initial implementation
+// Last updated: Sprint 111 (2026-04-21) -- initial implementation
 
 use sqlx::SqlitePool;
 

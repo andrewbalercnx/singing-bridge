@@ -92,6 +92,14 @@ coverage**, **Regression guards** (one per prior-round finding),
 
 ### "Complete"
 
+**Step 0 is mandatory and must not be skipped.**
+
+0. **Verify every plan deliverable is implemented.**
+   Run `python3 scripts/check-sprint-completion.py <N>` — it prints
+   each deliverable from `PLAN_Sprint<N>.md`. For every item, confirm
+   it exists in the codebase (use codegraph queries or file reads).
+   Any unimplemented item must be explicitly descoped with a written
+   reason before proceeding. Do NOT move to step 1 until this is done.
 1. Update `SPRINTS.md`.
 2. Update `knowledge/` for anything that shifted.
 3. `./scripts/check-headers.py --sprint <N>` and fix warnings.

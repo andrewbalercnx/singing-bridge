@@ -393,7 +393,7 @@ _Media token delivery_
 - `SIDECAR_SECRET` shorter than 32 bytes in prod → server fails to start
 - All new Rust and Python tests pass; no real Audiveris/FluidSynth calls in CI
 
-**Status:** PENDING
+**Status:** COMPLETE — 2026-04-21, commit `e362ed5` (Sprint 12A closed all remaining gaps)
 
 ---
 
@@ -421,7 +421,7 @@ _Media token delivery_
 - E2E `library.spec.ts` passes against sidecar stub
 - `docker-compose up` starts both server and sidecar
 
-**Status:** PENDING
+**Status:** COMPLETE — 2026-04-21, commit `e362ed5` (plan approved R6, all deliverables verified)
 
 ---
 

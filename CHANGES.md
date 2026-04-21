@@ -11,6 +11,34 @@
 > **Commit:** `<sha>`
 > ```
 
+## Sprint 12A: Accompaniment backend gap closure — 2026-04-21
+
+**Files changed:**
+- `server/src/error.rs` — PayloadTooLarge (413), SidecarUnavailable (503), SidecarBadInput (422), ContentTypeMismatch (422), UnsupportedFileType (422) variants; SidecarBadInput message redacted from HTTP responses
+- `server/src/sidecar.rs` — map_code updated to SidecarUnavailable / SidecarBadInput; file header invariants corrected
+- `server/src/http/library.rs` — WAV 12-byte detection + transaction-backed dual-table insert; detect_file_type / store_asset_blob / db_insert_accompaniment helpers; Content-Length 413 guard; title / label length caps; uniform {id,title,kind} upload response
+- `server/src/http/mod.rs` — DefaultBodyLimit::disable() on upload route
+- `server/src/http/media_token.rs` — initial (Sprint 12 foundation; committed here)
+- `server/src/sidecar.rs` — initial (Sprint 12 foundation; committed here)
+- `server/src/blob.rs` — get_bytes added (Sprint 12 foundation)
+- `server/src/config.rs` — SIDECAR_HOST_ALLOWLIST exact-hostname validation, prod sidecar secret check (Sprint 12 foundation)
+- `server/src/state.rs` — sidecar + media_tokens fields (Sprint 12 foundation)
+- `server/src/lib.rs` — pub mod sidecar (Sprint 12 foundation)
+- `server/src/main.rs` — SidecarClient + MediaTokenStore wiring (Sprint 12 foundation)
+- `server/migrations/0006_accompaniments.sql` — initial schema (Sprint 12 foundation)
+- `server/tests/http_library.rs` — 39 integration tests (17 existing + 22 new)
+- `server/tests/common/mod.rs` — sidecar_url TestOpts override (Sprint 12 foundation)
+- `sidecar/` — production sidecar package (Sprint 12 foundation)
+- `docker-compose.yml` — server + sidecar services with SIDECAR_HOST_ALLOWLIST
+- `.env.example` — sidecar secret + allowlist documentation
+- `tests/e2e/sidecar_stub/app.py` — minimal Flask stub for E2E tests
+- `tests/e2e/sidecar_stub/requirements.txt` — Flask ≥ 3.0
+- `tests/e2e/library.spec.ts` — E2E smoke test: authenticated library page loads
+
+**Commit:** `e362ed5`
+
+---
+
 ## Sprint 11A: Sprint 11 findings remediation — 2026-04-21
 
 **Files changed:**

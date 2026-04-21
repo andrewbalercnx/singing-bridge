@@ -1,7 +1,7 @@
 // File: server/tests/ws_lobby.rs
 // Purpose: Lobby join + admit + signal relay end-to-end at the signalling layer.
 // Covers exit-criteria from SPRINTS.md Sprint 1.
-// Last updated: Sprint 3 (2026-04-17) -- assert tier + tier_reason round-trip
+// Last updated: Sprint 10 (2026-04-21) -- fix bob re-registration conflict
 
 mod common;
 

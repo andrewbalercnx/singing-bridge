@@ -20,8 +20,17 @@ use crate::auth::magic_link::TeacherId;
 use crate::error::Result;
 use crate::ws::session_log::EndedReason;
 
-pub type StudentId = i64;
-pub type SessionEventId = i64;
+/// Opaque identifier for a student row. The `#[sqlx(transparent)]` derive
+/// encodes/decodes as the inner i64; the newtype prevents accidental
+/// cross-use with `SessionEventId` at compile time.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, sqlx::Type)]
+#[sqlx(transparent)]
+pub struct StudentId(pub i64);
+
+/// Opaque identifier for a session_event row.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, sqlx::Type)]
+#[sqlx(transparent)]
+pub struct SessionEventId(pub i64);
 
 pub const SESSION_ARCHIVE_DAYS: i64 = 90;
 pub const HISTORY_PAGE_LIMIT: i64 = 100;

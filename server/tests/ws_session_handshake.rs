@@ -186,21 +186,29 @@ async fn session_event_row_has_ended_at_after_disconnect() {
     drop(student);
     let _ = recv_json(&mut teacher).await; // peer_disconnected
 
-    // Give async cleanup a moment to flush DB writes.
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    // Poll until ended_at is set or 500 ms elapses. Avoids a fixed sleep.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
+    let row = loop {
+        let r: Option<(Option<i64>,)> = sqlx::query_as(
+            "SELECT ended_at FROM session_events WHERE teacher_id = ? ORDER BY id DESC LIMIT 1",
+        )
+        .bind(teacher_id)
+        .fetch_optional(&app.state.db)
+        .await
+        .unwrap();
+        if matches!(r, Some((Some(_),))) || std::time::Instant::now() >= deadline {
+            break r;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    };
 
-    let row: Option<(Option<i64>,)> = sqlx::query_as(
-        "SELECT ended_at FROM session_events WHERE teacher_id = ? ORDER BY id DESC LIMIT 1",
-    )
-    .bind(teacher_id)
-    .fetch_optional(&app.state.db)
-    .await
-    .unwrap();
-
-    assert!(row.is_some(), "session_event row must exist");
+    assert!(
+        row.is_some(),
+        "session_event row must exist after disconnect"
+    );
     assert!(
         row.unwrap().0.is_some(),
-        "ended_at must be set after student disconnect"
+        "ended_at must be non-NULL after student disconnect (row was present but ended_at is NULL — close_event did not fire)"
     );
 
     app.shutdown().await;

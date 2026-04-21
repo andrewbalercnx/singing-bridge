@@ -117,7 +117,7 @@ pub struct ActiveSession {
     pub log_id: Option<SessionLogId>,
     /// Transiently None until open_event succeeds (best-effort history).
     pub session_event_id: Option<SessionEventId>,
-    pub student_id: Option<StudentId>,
+    pub session_student_id: Option<StudentId>,
     /// Teacher who owns this session — set at admit time, stable thereafter.
     pub session_teacher_id: Option<TeacherId>,
     pub peak_loss_bp: AtomicU16,

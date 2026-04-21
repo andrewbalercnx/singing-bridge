@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use axum::{
     extract::{Path, State},
-    http::{HeaderMap, StatusCode},
+    http::{header, HeaderMap, StatusCode},
     response::{Html, IntoResponse, Response},
 };
 
@@ -51,7 +51,7 @@ pub(crate) async fn get_history(
 ) -> Response {
     let teacher_id = match resolve_teacher_from_cookie(&state.db, &headers).await {
         Some(id) => id,
-        None => return (StatusCode::UNAUTHORIZED, "Unauthorized").into_response(),
+        None => return unauthorized_no_store(),
     };
 
     // Verify the teacher owns the slug.
@@ -62,7 +62,7 @@ pub(crate) async fn get_history(
             .fetch_one(&state.db)
             .await;
     if row.is_err() {
-        return (StatusCode::UNAUTHORIZED, "Unauthorized").into_response();
+        return unauthorized_no_store();
     }
 
     let rows: Vec<(i64, i64, Option<i64>, Option<i64>, Option<String>, String, Option<i64>)> =
@@ -93,7 +93,7 @@ pub(crate) async fn get_history(
     for (id, started_at, _ended_at, duration_secs, ended_reason, email, recording_id) in &rows {
         let email_e = html_escape(email);
         let reason_e = html_escape(ended_reason.as_deref().unwrap_or("-"));
-        let duration_s = format_duration(*duration_secs);
+        let duration_display = format_duration(*duration_secs);
         let recording_cell = match recording_id {
             Some(rid) => format!(
                 "<a href=\"/teach/{}/recordings\">#{}</a>",
@@ -103,7 +103,7 @@ pub(crate) async fn get_history(
             None => "-".to_string(),
         };
         rows_html.push_str(&format!(
-            "<tr><td>{id}</td><td>{}</td><td>{email_e}</td><td>{duration_s}</td>\
+            "<tr><td>{id}</td><td>{}</td><td>{email_e}</td><td>{duration_display}</td>\
              <td>{reason_e}</td><td>{recording_cell}</td></tr>\n",
             started_at
         ));
@@ -127,7 +127,17 @@ pub(crate) async fn get_history(
         rows_html = rows_html,
     );
 
-    Html(html).into_response()
+    let mut resp = Html(html).into_response();
+    resp.headers_mut()
+        .insert(header::CACHE_CONTROL, header::HeaderValue::from_static("no-store"));
+    resp
+}
+
+fn unauthorized_no_store() -> Response {
+    let mut resp = (StatusCode::UNAUTHORIZED, "Unauthorized").into_response();
+    resp.headers_mut()
+        .insert(header::CACHE_CONTROL, header::HeaderValue::from_static("no-store"));
+    resp
 }
 
 #[cfg(test)]

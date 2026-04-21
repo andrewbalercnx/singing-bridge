@@ -135,6 +135,70 @@ async fn history_escapes_xss_in_email() {
 }
 
 #[tokio::test]
+async fn history_response_has_cache_control_no_store() {
+    let app = spawn_app().await;
+    let cookie = app.signup_teacher("alice@example.test", "alice").await;
+    let resp = app
+        .client
+        .get(app.url("/teach/alice/history"))
+        .header("cookie", format!("sb_session={cookie}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    assert_eq!(
+        resp.headers()
+            .get("cache-control")
+            .and_then(|v| v.to_str().ok()),
+        Some("no-store"),
+        "history page must carry Cache-Control: no-store to prevent PII caching"
+    );
+    app.shutdown().await;
+}
+
+#[tokio::test]
+async fn history_401_paths_have_cache_control_no_store() {
+    let app = spawn_app().await;
+    app.signup_teacher("alice@example.test", "alice").await;
+
+    // No cookie → 401
+    let resp = app
+        .client
+        .get(app.url("/teach/alice/history"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 401);
+    assert_eq!(
+        resp.headers()
+            .get("cache-control")
+            .and_then(|v| v.to_str().ok()),
+        Some("no-store"),
+        "unauthenticated 401 must also carry Cache-Control: no-store"
+    );
+
+    // Wrong teacher cookie → 401
+    let bob_cookie = app.signup_teacher("bob@example.test", "bob").await;
+    let resp2 = app
+        .client
+        .get(app.url("/teach/alice/history"))
+        .header("cookie", format!("sb_session={bob_cookie}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp2.status(), 401);
+    assert_eq!(
+        resp2
+            .headers()
+            .get("cache-control")
+            .and_then(|v| v.to_str().ok()),
+        Some("no-store"),
+        "wrong-teacher 401 must also carry Cache-Control: no-store"
+    );
+    app.shutdown().await;
+}
+
+#[tokio::test]
 async fn history_excludes_archived_events() {
     let app = spawn_app().await;
     let cookie = app.signup_teacher("alice@example.test", "alice").await;

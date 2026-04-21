@@ -281,9 +281,79 @@ _Protocol_
 
 ---
 
+## Sprint 10: Password auth — replace magic link
+
+**Goal:** Replace the one-shot magic-link flow with a conventional email + password account, giving teachers a stable, always-accessible login without depending on email delivery at session time.
+
+**Deliverables:**
+- New DB migration: add `password_hash` (Argon2id) column to `teachers`; magic-link tables remain but are no longer the primary auth path
+- `/auth/register` route: accepts email + password + slug; validates; stores hashed password; issues session cookie
+- `/auth/login` POST route: verifies password with constant-time compare; issues session cookie on success
+- `/auth/logout` route: invalidates session cookie
+- Session cookie: `HttpOnly; Secure; SameSite=Strict`; backed by a `sessions` table (id, teacher_id, expires_at)
+- Update `/signup` and `/teach/<slug>` pages to use the new login form instead of the magic-link form
+- Rate-limit login attempts per IP (reuse `auth::rate_limit`); lock account for 15 min after 10 consecutive failures
+- Remove magic-link email dispatch from the hot path (retain `magic_link.rs` as a password-reset fallback, disabled by default)
+- All existing session/recording/WS flows unchanged; only the auth layer is replaced
+
+**Exit criteria:**
+- Teacher registers with email + password; lands on `/teach/<slug>` without any email step
+- Teacher logs out and back in with correct password; rejected with wrong password
+- 10 bad attempts from the same IP triggers a 429 / lockout response
+- Existing integration tests pass; new tests cover register, login, logout, lockout, and session expiry
+
+**Status:** PENDING
+
+---
+
+## Sprint 11: Persistent student records + session history
+
+**Goal:** Persist enough session data to give the teacher a useful history view — who they taught, when, and how long — without requiring a database migration off SQLite.
+
+**Deliverables:**
+- New migration: `students` table (id, email, first_seen_at, teacher_id); `sessions` table extended or new `session_events` table (teacher_id, student_email, started_at, ended_at, duration_s, recording_id nullable)
+- Student record upserted on `LobbyJoin` admission; session event written on clean hangup and on peer-disconnected cleanup
+- `/teach/<slug>/history` page: lists past sessions in reverse-chronological order (date, student email, duration, recording link if present)
+- Recordings list page (`/teach/<slug>/recordings`) updated to link back to the session event
+- Background cleanup job extended to archive sessions older than 90 days rather than delete them (soft-delete via `archived_at`)
+- No new external dependencies; SQLite + sqlx only
+
+**Exit criteria:**
+- After a session ends, teacher can visit `/teach/<slug>/history` and see the completed session with student email, start time, and duration
+- Sessions with a recording show a link to the recording
+- Cleanup job does not hard-delete sessions; sets `archived_at` instead
+- All existing tests pass; new tests cover the upsert path, session-event write, and history endpoint
+
+**Status:** PENDING
+
+---
+
+## Sprint 12: Sheet music sharing
+
+**Goal:** Teacher can upload a PDF or MusicXML score; both teacher and student see the rendered score in their browsers during a session, with the teacher controlling the current page.
+
+**Deliverables:**
+- Promote the `spike/pdf_to_piano_audio/pipeline/` package to production: axum routes `POST /api/scores` (upload + OMR), `GET /api/scores/:id`, `GET /api/scores/:id/pages/:n`
+- OMR via Audiveris (subprocess, graceful 503 if unavailable); MusicXML stored in DB (new `scores` migration); rendered pages served as SVG via OpenSheetMusicDisplay server-side render or stored pre-rendered PNGs
+- In-session score panel: teacher clicks a button in session-ui to open a score drawer; both parties see the same page; teacher can advance/retreat pages; student view is read-only (no page controls)
+- Page-turn events travel over the existing data channel (new `score_page` message type)
+- Score upload is only available to the authenticated teacher; scores are scoped to the teacher's room
+- Score panel is hidden if no score is loaded; teacher can clear the active score
+
+**Exit criteria:**
+- Teacher uploads a two-page PDF; score appears rendered in the session panel for both parties
+- Teacher advances to page 2; student's view updates in sync within one data-channel round trip
+- Student cannot change the page
+- Upload endpoint returns 503 with a clear message when Audiveris is unavailable; no crash
+- All existing A/V and chat flows unaffected; new tests cover upload, page-turn relay, and the 503 degraded path
+
+**Status:** PENDING
+
+---
+
 ## Open items (noted, not blocking MVP)
 
-- Persistent "my students" list for the teacher — deliberately out of MVP
-- Teacher accompaniment / backing-track sharing — future sprint
+- Persistent "my students" list for the teacher — deliberately out of MVP; addressed partially by Sprint 11 history
 - Multi-participant sessions — MVP is strictly 2 peers
 - Low-latency "try to match duet" mode — explicitly not a goal; this tool is coaching-focused
+- Piano accompaniment audio playback (spike explored in `spike/pdf_to_piano_audio/`) — future sprint after Sprint 12

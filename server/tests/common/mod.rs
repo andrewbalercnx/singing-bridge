@@ -1,7 +1,7 @@
 // File: server/tests/common/mod.rs
 // Purpose: Shared test harness — spawn_app, dev-mail reader, WS client.
 // Role: Keep integration-test bodies short and behaviour-focused.
-// Last updated: Sprint 6 (2026-04-18) -- add blob to TestOpts + AppState; make_two_teachers helper
+// Last updated: Sprint 10 (2026-04-21) -- register_teacher / insert_teacher_no_password fixtures
 
 #![allow(dead_code)]
 
@@ -12,8 +12,12 @@ use std::time::Duration;
 use dashmap::DashMap;
 use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
+use argon2::Params;
 use singing_bridge_server::{
-    auth::mailer::{DevMailer, Mailer},
+    auth::{
+        mailer::{DevMailer, Mailer},
+        password::hash_password_with_params,
+    },
     blob::{BlobStore, DevBlobStore},
     config::Config,
     db::init_pool,
@@ -48,6 +52,11 @@ pub struct TestOpts {
     pub static_dir: Option<std::path::PathBuf>,
     /// Override blob store (defaults to a temp-dir DevBlobStore).
     pub blob: Option<Arc<dyn BlobStore>>,
+    /// Enable the magic-link password-reset escape hatch (default: false).
+    pub password_reset_enabled: bool,
+    /// Login rate-limit settings (default: very high to avoid interfering).
+    pub login_ip_max_attempts: u32,
+    pub login_account_max_failures: u32,
 }
 
 impl Default for TestOpts {
@@ -60,6 +69,9 @@ impl Default for TestOpts {
             dev: true,
             static_dir: None,
             blob: None,
+            password_reset_enabled: false,
+            login_ip_max_attempts: 999_999,
+            login_account_max_failures: 999_999,
         }
     }
 }
@@ -101,6 +113,9 @@ pub async fn spawn_app_with(opts: TestOpts) -> TestApp {
     config.signup_rate_limit_per_email = opts.signup_rate_limit_per_email;
     config.signup_rate_limit_per_ip = opts.signup_rate_limit_per_ip;
     config.dev = opts.dev;
+    config.password_reset_enabled = opts.password_reset_enabled;
+    config.login_ip_max_attempts = opts.login_ip_max_attempts;
+    config.login_account_max_failures = opts.login_account_max_failures;
 
     let pool = init_pool(&config.db_url).await.unwrap();
     let mailer: Arc<dyn Mailer> = Arc::new(DevMailer::new(&config.dev_mail_dir).await.unwrap());
@@ -193,51 +208,73 @@ impl TestApp {
         (status, headers, body)
     }
 
-    pub async fn signup(&self, email: &str, slug: &str) -> reqwest::Response {
-        self.client
-            .post(self.url("/signup"))
-            .json(&serde_json::json!({"email": email, "slug": slug}))
-            .send()
-            .await
-            .unwrap()
+    /// Cheap Argon2 params used by all test fixtures — never in production.
+    pub fn cheap_params() -> Params {
+        Params::new(8, 1, 1, None).expect("valid cheap params")
     }
 
-    /// End-to-end teacher signup: POST /signup, read the magic link from the
-    /// dev mail sink, POST /auth/consume, return the session cookie value.
+    /// Register a teacher via POST /auth/register using cheap Argon2 params
+    /// injected directly into the DB, bypassing production hash cost.
+    /// Returns the session cookie value.
+    pub async fn register_teacher(&self, email: &str, slug: &str, password: &str) -> String {
+        let hash = hash_password_with_params(password, Self::cheap_params())
+            .expect("cheap hash");
+        let created = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        let (tid,): (i64,) = sqlx::query_as(
+            "INSERT INTO teachers (email, slug, created_at, password_hash) VALUES (?, ?, ?, ?) RETURNING id",
+        )
+        .bind(email)
+        .bind(slug)
+        .bind(created)
+        .bind(&hash)
+        .fetch_one(&self.state.db)
+        .await
+        .expect("insert teacher");
+        let cookie = singing_bridge_server::auth::issue_session_cookie(
+            &self.state.db,
+            tid,
+            self.state.config.session_ttl_secs,
+        )
+        .await
+        .expect("issue session");
+        cookie
+    }
+
+    /// Insert a teacher row with no password_hash (NULL). Used to test the
+    /// NULL-hash login branch. Returns the teacher id.
+    pub async fn insert_teacher_no_password(&self, email: &str, slug: &str) -> i64 {
+        let created = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        let (tid,): (i64,) = sqlx::query_as(
+            "INSERT INTO teachers (email, slug, created_at) VALUES (?, ?, ?) RETURNING id",
+        )
+        .bind(email)
+        .bind(slug)
+        .bind(created)
+        .fetch_one(&self.state.db)
+        .await
+        .expect("insert teacher no password");
+        tid
+    }
+
+    /// Legacy helper — delegates to register_teacher with a fixed password.
+    /// All existing tests continue working; new tests should call register_teacher directly.
     pub async fn signup_teacher(&self, email: &str, slug: &str) -> String {
-        let r = self.signup(email, slug).await;
-        assert!(
-            r.status().is_success(),
-            "signup failed: {} {}",
-            r.status(),
-            r.text().await.unwrap_or_default()
-        );
-        let url = self.latest_magic_link(email).await;
-        let token = url.fragment().unwrap().strip_prefix("token=").unwrap().to_string();
-        let r = self
-            .client
-            .post(self.url("/auth/consume"))
-            .json(&serde_json::json!({"token": token}))
+        self.register_teacher(email, slug, "test-passphrase-12").await
+    }
+
+    pub async fn signup(&self, email: &str, slug: &str) -> reqwest::Response {
+        self.client
+            .post(self.url("/auth/register"))
+            .json(&serde_json::json!({"email": email, "slug": slug, "password": "test-passphrase-12"}))
             .send()
             .await
-            .unwrap();
-        assert!(r.status().is_success(), "consume failed: {}", r.status());
-        let set_cookie = r
-            .headers()
-            .get(reqwest::header::SET_COOKIE)
-            .expect("Set-Cookie")
-            .to_str()
             .unwrap()
-            .to_string();
-        let cookie_value = set_cookie
-            .split(';')
-            .next()
-            .unwrap()
-            .trim()
-            .strip_prefix("sb_session=")
-            .unwrap()
-            .to_string();
-        cookie_value
     }
 
     pub async fn latest_magic_link(&self, email: &str) -> Url {

@@ -3,14 +3,15 @@
 //          a `TeacherId`, plus re-exports of the auth submodules.
 // Role: One module gate for auth-adjacent helpers.
 // Exports: SessionCookie, resolve_teacher_from_cookie, issue_session_cookie,
-//          SESSION_COOKIE_NAME, magic_link, slug, mailer, rate_limit, secret
+//          SESSION_COOKIE_NAME, magic_link, slug, mailer, rate_limit, secret, password
 // Depends: sqlx, axum, cookie, sha2
 // Invariants: raw cookie never stored; sessions.expires_at > now is always
 //             checked before trusting the cookie.
-// Last updated: Sprint 5 (2026-04-18) -- expose secret module
+// Last updated: Sprint 10 (2026-04-21) -- password module
 
 pub mod magic_link;
 pub mod mailer;
+pub mod password;
 pub mod rate_limit;
 pub mod secret;
 pub mod slug;
@@ -67,7 +68,7 @@ pub async fn resolve_teacher_from_cookie(
     pool: &SqlitePool,
     headers: &HeaderMap,
 ) -> Option<magic_link::TeacherId> {
-    let raw = extract_cookie(headers, SESSION_COOKIE_NAME)?;
+    let raw = extract_cookie_value(headers, SESSION_COOKIE_NAME)?;
     let hash = cookie_hash(&raw);
     let now = time::OffsetDateTime::now_utc().unix_timestamp();
     match sqlx::query_as::<_, (magic_link::TeacherId,)>(
@@ -88,7 +89,7 @@ pub async fn resolve_teacher_from_cookie(
     }
 }
 
-fn extract_cookie(headers: &HeaderMap, name: &str) -> Option<String> {
+pub fn extract_cookie_value(headers: &HeaderMap, name: &str) -> Option<String> {
     for h in headers.get_all(axum::http::header::COOKIE) {
         let Ok(s) = h.to_str() else { continue };
         for part in s.split(';') {

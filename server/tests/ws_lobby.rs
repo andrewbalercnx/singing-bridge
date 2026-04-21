@@ -78,13 +78,7 @@ async fn teacher_cookie_for_slug_a_watching_slug_b_rejected() {
 async fn teacher_cookie_for_slug_a_joining_slug_b_as_student_succeeds() {
     let app = spawn_app().await;
     let cookie = app.signup_teacher("alice@example.test", "alice").await;
-    sqlx::query("INSERT INTO teachers (email, slug, created_at) VALUES (?, ?, ?)")
-        .bind("bob@example.test")
-        .bind("bob")
-        .bind(0_i64)
-        .execute(&app.state.db)
-        .await
-        .unwrap();
+    let bob_cookie = app.signup_teacher("bob@example.test", "bob").await;
 
     let mut ws = app.open_ws(Some(&cookie), None).await;
     send_ws(
@@ -97,7 +91,6 @@ async fn teacher_cookie_for_slug_a_joining_slug_b_as_student_succeeds() {
     .await;
     // Should NOT get an error; teacher cookie doesn't block student action
     // in a different room.
-    let bob_cookie = app.signup_teacher("bob@example.test", "bob").await;
     let mut teacher = app.open_ws(Some(&bob_cookie), None).await;
     send_ws(
         &mut teacher,

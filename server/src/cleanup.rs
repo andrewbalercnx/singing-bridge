@@ -77,6 +77,16 @@ pub async fn run_one_cleanup_cycle(
         tracing::warn!(error = %e, "cleanup: failed to prune recording_gate_attempts");
     }
 
+    // Prune login attempts older than 24 h.
+    let login_cutoff = now - 86400;
+    if let Err(e) = sqlx::query("DELETE FROM login_attempts WHERE attempted_at < ?")
+        .bind(login_cutoff)
+        .execute(db)
+        .await
+    {
+        tracing::warn!(error = %e, "cleanup: failed to prune login_attempts");
+    }
+
     Ok(purged)
 }
 

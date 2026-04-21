@@ -6,7 +6,7 @@
 // Invariants: from_env() calls parse_env() then validate_prod_config() for SB_ENV=prod.
 //             In prod: HTTPS required, secrets present, pepper ≥ 32 bytes.
 //             Secure cookie flag only omitted when dev=true.
-// Last updated: Sprint 6 (2026-04-18) -- recording config fields (dev_blob_dir, recording_max_bytes, gate rate-limit)
+// Last updated: Sprint 10 (2026-04-21) -- password auth config fields
 
 use std::net::SocketAddr;
 
@@ -72,6 +72,12 @@ pub struct Config {
     pub recording_link_ttl_secs: i64,
     pub gate_rate_limit_per_ip: usize,
     pub gate_rate_limit_window_secs: i64,
+    // Password auth
+    pub password_reset_enabled: bool,
+    pub login_account_window_secs: i64,
+    pub login_account_max_failures: u32,
+    pub login_ip_window_secs: i64,
+    pub login_ip_max_attempts: u32,
 }
 
 impl Config {
@@ -108,6 +114,11 @@ impl Config {
             recording_link_ttl_secs: 900,
             gate_rate_limit_per_ip: 10,
             gate_rate_limit_window_secs: 300,
+            password_reset_enabled: false,
+            login_account_window_secs: 900,
+            login_account_max_failures: 10,
+            login_ip_window_secs: 300,
+            login_ip_max_attempts: 20,
         }
     }
 
@@ -208,6 +219,11 @@ impl Config {
             recording_link_ttl_secs: 900,
             gate_rate_limit_per_ip: 10,
             gate_rate_limit_window_secs: 300,
+            password_reset_enabled: false,
+            login_account_window_secs: 900,
+            login_account_max_failures: 10,
+            login_ip_window_secs: 300,
+            login_ip_max_attempts: 20,
         })
     }
 

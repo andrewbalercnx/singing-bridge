@@ -11,6 +11,19 @@
 > **Commit:** `<sha>`
 > ```
 
+## Sprint 11A: Sprint 11 findings remediation — 2026-04-21
+
+**Files changed:**
+- `server/src/http/history.rs` — Cache-Control: no-store on all 3 response paths; format_duration unit tests; rename duration_s → duration_display
+- `server/src/ws/session_history.rs` — StudentId / SessionEventId opaque newtypes with private inner fields
+- `server/src/ws/session_log.rs` — PartialEq on SessionLogId (prerequisite for identity guard)
+- `server/src/ws/lobby.rs` — extract open_history_row helper with log_id identity guard; remove redundant inner teacher_id unwrap; update Depends header
+- `server/src/state.rs` — rename student_id → session_student_id; add doc comment
+- `server/tests/http_history.rs` — cache-control tests for 200 + both 401 paths
+- `server/tests/ws_session_handshake.rs` — replace sleep with polling loop; two-branch assertion
+
+**Commit:** `4071574`
+
 ## Sprint 11: Persistent student records + session history — 2026-04-21
 
 **Files changed:**

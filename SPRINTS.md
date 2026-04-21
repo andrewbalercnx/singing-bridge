@@ -328,6 +328,29 @@ _Protocol_
 
 ---
 
+## Sprint 11A: Sprint 11 findings remediation
+
+**Goal:** Close all remaining open findings from Sprint 11 — one security fix, two WONTFIX disposals, and targeted code-quality and test improvements with no new features or migrations.
+
+**Deliverables:**
+- Add `Cache-Control: no-store` to the `/teach/<slug>/history` response (#3, #26)
+- Make `StudentId` and `SessionEventId` opaque newtypes (`#[sqlx(transparent)]`) so the compiler rejects cross-type misuse (#9, #15, #25)
+- Extract the session-history block in `admit()` to a private helper; remove the redundant inner `teacher_id` unwrap (#22, #27, #28)
+- Rename `duration_s` → `duration_display` in `history.rs`; rename `ActiveSession::student_id` → `session_student_id` (#11, #29, #30)
+- Replace the 100 ms real sleep in `session_event_row_has_ended_at_after_disconnect` with a polling loop (#24)
+- Mark #12 (student erasure path) and #14 (slot overwrite) as WONTFIX in the findings tracker with rationale
+
+**Exit criteria:**
+- `GET /teach/<slug>/history` response carries `Cache-Control: no-store`
+- The Rust compiler rejects any attempt to bind a `StudentId` where a `SessionEventId` is expected and vice versa
+- `admit()` body is ≤ 4 levels of nesting for the session-history path
+- `cargo test` passes; `session_event_row_has_ended_at_after_disconnect` contains no `tokio::time::sleep`
+- All Sprint 11 findings are in a non-OPEN state
+
+**Status:** COMPLETE
+
+---
+
 ## Sprint 12: Accompaniment library
 
 **Goal:** Teacher builds a persistent library of backing tracks (with optional sheet music), selects one during a lesson, and both parties hear the audio and see a synchronised bar-by-bar score walkthrough.

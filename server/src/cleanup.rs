@@ -16,6 +16,7 @@ use sqlx::SqlitePool;
 use tokio_util::sync::CancellationToken;
 
 use crate::blob::BlobStore;
+use crate::ws::session_history;
 
 /// Grace period in seconds before a soft-deleted recording's blob is purged.
 const BLOB_GRACE_SECS: i64 = 86_400;
@@ -85,6 +86,11 @@ pub async fn run_one_cleanup_cycle(
         .await
     {
         tracing::warn!(error = %e, "cleanup: failed to prune login_attempts");
+    }
+
+    // Soft-archive old session events.
+    if let Err(e) = session_history::archive_old_events(db).await {
+        tracing::warn!(error = %e, "cleanup: failed to archive session_events");
     }
 
     Ok(purged)

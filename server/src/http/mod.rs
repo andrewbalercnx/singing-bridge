@@ -9,6 +9,7 @@
 // Last updated: Sprint 10 (2026-04-21) -- password auth routes
 
 pub mod health;
+pub mod history;
 pub mod login;
 pub mod loopback;
 pub mod recording_gate;
@@ -41,6 +42,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/auth/verify", get(signup::get_verify))
         .route("/auth/consume", post(signup::post_consume))
         .route("/teach/:slug", get(teach::get_teach))
+        .route("/teach/:slug/history", get(history::get_history))
         .route("/teach/:slug/recordings", get(recordings::get_recordings_page))
         .route("/loopback", get(loopback::get_loopback))
         .route("/ws", get(crate::ws::ws_upgrade))

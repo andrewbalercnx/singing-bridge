@@ -20,6 +20,7 @@ use tokio::sync::mpsc;
 use crate::state::{ActiveSession, AppState, ClientHandle, LobbyEntry, SlugKey};
 use crate::ws::connection::ConnContext;
 use crate::ws::protocol::{EntryId, ErrorCode, PumpDirective, Role, ServerMsg, Tier, MAX_TIER_REASON_CHARS};
+use crate::ws::session_history;
 use crate::ws::session_log::{self, SessionLogId};
 
 /// Truncate to at most `max_chars` *characters*. Plain
@@ -317,7 +318,9 @@ pub async fn admit(state: &Arc<AppState>, ctx: &ConnContext, entry_id: EntryId) 
             rs.active_session = Some(ActiveSession {
                 student: entry,
                 started_at: Instant::now(),
-                log_id: None, // set after open_row completes outside the guard
+                log_id: None,
+                session_event_id: None,
+                student_id: None,
                 peak_loss_bp: std::sync::atomic::AtomicU16::new(0),
                 peak_rtt_ms: std::sync::atomic::AtomicU16::new(0),
             });
@@ -395,23 +398,61 @@ pub async fn admit(state: &Arc<AppState>, ctx: &ConnContext, entry_id: EntryId) 
                         // Re-acquire write to store the log_id. If the session
                         // ended (disconnect race) before we got back in, close
                         // the orphaned row immediately.
-                        let mut orphan = true;
+                        let mut log_orphan = true;
                         if let Some(slug) = ctx.slug.as_ref() {
                             if let Some(room) = state.room(slug) {
                                 let mut rs = room.write().await;
                                 if let Some(ref mut session) = rs.active_session {
                                     session.log_id = Some(log_id.clone());
-                                    orphan = false;
+                                    log_orphan = false;
                                 }
                             }
                         }
-                        if orphan {
+                        if log_orphan {
                             let ended_at = time::OffsetDateTime::now_utc().unix_timestamp();
                             if let Err(e) = session_log::close_row(
                                 &state.db, &log_id, ended_at,
                                 session_log::EndedReason::Disconnect,
                             ).await {
                                 tracing::warn!(error = %e, "session_log orphan close failed");
+                            }
+                        }
+
+                        // Open session history (best-effort; session proceeds on failure).
+                        if let Some(tid) = teacher_id {
+                            match session_history::upsert_student(&state.db, tid, &email).await {
+                                Ok(sid) => {
+                                    match session_history::open_event(&state.db, tid, sid, started_at).await {
+                                        Ok(event_id) => {
+                                            let mut orphan = true;
+                                            if let Some(slug) = ctx.slug.as_ref() {
+                                                if let Some(room) = state.room(slug) {
+                                                    let mut rs = room.write().await;
+                                                    if let Some(ref mut session) = rs.active_session {
+                                                        session.session_event_id = Some(event_id);
+                                                        session.student_id = Some(sid);
+                                                        orphan = false;
+                                                    }
+                                                }
+                                            }
+                                            if orphan {
+                                                let ended_at = time::OffsetDateTime::now_utc().unix_timestamp();
+                                                if let Err(e) = session_history::close_event(
+                                                    &state.db, event_id, tid, ended_at,
+                                                    session_log::EndedReason::Disconnect,
+                                                ).await {
+                                                    tracing::warn!(error = %e, "session_history orphan close failed");
+                                                }
+                                            }
+                                        }
+                                        Err(e) => {
+                                            tracing::warn!(error = %e, "session_history open_event failed; session continues");
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    tracing::warn!(error = %e, "session_history upsert_student failed; session continues");
+                                }
                             }
                         }
                     }

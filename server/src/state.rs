@@ -31,6 +31,7 @@ use crate::config::Config;
 use crate::error::{AppError, Result};
 use crate::ws::protocol::{EntryId, LobbyEntryView, PumpDirective, Tier};
 use crate::ws::rate_limit::WsJoinBucket;
+use crate::ws::session_history::{SessionEventId, StudentId};
 use crate::ws::session_log::SessionLogId;
 
 /// Random per-connection identifier. Used to distinguish connections when
@@ -113,6 +114,9 @@ pub struct ActiveSession {
     /// short-circuit when None so the session proceeds without logging on
     /// DB failure.
     pub log_id: Option<SessionLogId>,
+    /// Transiently None until open_event succeeds (best-effort history).
+    pub session_event_id: Option<SessionEventId>,
+    pub student_id: Option<StudentId>,
     pub peak_loss_bp: AtomicU16,
     pub peak_rtt_ms: AtomicU16,
 }

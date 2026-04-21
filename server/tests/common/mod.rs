@@ -262,6 +262,50 @@ impl TestApp {
         tid
     }
 
+    /// Insert a student + session_event row directly via SQL (no WS calls).
+    pub async fn make_session_event(
+        &self,
+        teacher_id: i64,
+        email: &str,
+        started_at: i64,
+        ended_at: Option<i64>,
+    ) -> i64 {
+        // Upsert student.
+        sqlx::query(
+            "INSERT OR IGNORE INTO students (teacher_id, email, first_seen_at) VALUES (?, lower(?), ?)",
+        )
+        .bind(teacher_id)
+        .bind(email)
+        .bind(started_at)
+        .execute(&self.state.db)
+        .await
+        .expect("upsert student");
+        let (student_id,): (i64,) =
+            sqlx::query_as("SELECT id FROM students WHERE teacher_id = ? AND email = lower(?)")
+                .bind(teacher_id)
+                .bind(email)
+                .fetch_one(&self.state.db)
+                .await
+                .expect("select student");
+
+        let duration = ended_at.map(|e| (e - started_at).max(0));
+        let ended_reason = ended_at.map(|_| "hangup");
+        let (event_id,): (i64,) = sqlx::query_as(
+            "INSERT INTO session_events (teacher_id, student_id, started_at, ended_at, duration_secs, ended_reason) \
+             VALUES (?, ?, ?, ?, ?, ?) RETURNING id",
+        )
+        .bind(teacher_id)
+        .bind(student_id)
+        .bind(started_at)
+        .bind(ended_at)
+        .bind(duration)
+        .bind(ended_reason)
+        .fetch_one(&self.state.db)
+        .await
+        .expect("insert session event");
+        event_id
+    }
+
     /// Legacy helper — delegates to register_teacher with a fixed password.
     /// All existing tests continue working; new tests should call register_teacher directly.
     pub async fn signup_teacher(&self, email: &str, slug: &str) -> String {

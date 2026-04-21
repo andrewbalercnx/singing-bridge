@@ -32,6 +32,7 @@ use tokio_util::io::{ReaderStream, StreamReader};
 use crate::auth::resolve_teacher_from_cookie;
 use crate::error::{AppError, Result};
 use crate::state::AppState;
+use crate::ws::session_history;
 
 const WEBM_MAGIC: [u8; 4] = [0x1A, 0x45, 0xDF, 0xA3];
 
@@ -161,6 +162,17 @@ pub(crate) async fn post_upload(
             return Err(AppError::Internal(e.to_string().into()));
         }
     };
+
+    // Best-effort: link the recording to its session event via durable slot.
+    match session_history::consume_recording_slot(&state.db, teacher_id).await {
+        Ok(Some(event_id)) => {
+            if let Err(e) = session_history::link_recording(&state.db, event_id, teacher_id, id).await {
+                tracing::warn!(error = %e, "link_recording failed");
+            }
+        }
+        Ok(None) => {}
+        Err(e) => tracing::warn!(error = %e, "consume_recording_slot failed"),
+    }
 
     Ok(Json(serde_json::json!({ "id": id, "token": token_hex })).into_response())
 }

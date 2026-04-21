@@ -53,7 +53,7 @@ pub enum EndedReason {
 }
 
 impl EndedReason {
-    fn as_str(self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         match self {
             EndedReason::Hangup => "hangup",
             EndedReason::FloorViolation => "floor_violation",

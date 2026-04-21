@@ -18,6 +18,7 @@ pub mod lobby;
 pub mod protocol;
 pub mod rate_limit;
 pub mod session;
+pub mod session_history;
 pub mod session_log;
 
 use std::net::{IpAddr, SocketAddr};
@@ -298,6 +299,10 @@ async fn handle_lobby_join(
         send_error(ctx, ErrorCode::FieldTooLong, "field too long").await;
         return true;
     }
+    if !email.contains('@') || email.len() < 3 {
+        close_malformed(ctx, "invalid email").await;
+        return false;
+    }
 
     // Per-IP WS join rate limit — checked before slug DB lookup.
     {
@@ -507,7 +512,7 @@ async fn handle_record_consent(
     let Some(slug) = ctx.slug.as_ref() else { return true };
     let Some(room) = state.room(slug) else { return true };
 
-    let (teacher_tx_opt, student_tx_opt) = {
+    let (teacher_tx_opt, student_tx_opt, recording_slot_info) = {
         let mut rs = room.write().await;
         let has_session = rs.active_session.is_some();
         if !has_session {
@@ -523,12 +528,25 @@ async fn handle_record_consent(
         }
         let teacher_tx = rs.teacher_conn.as_ref().map(|c| c.tx.clone());
         let student_tx = rs.active_session.as_ref().map(|s| s.student.conn.tx.clone());
+        let slot_info = if granted {
+            rs.active_session.as_ref().and_then(|s| {
+                s.session_event_id.zip(ctx.candidate_teacher_id)
+            })
+        } else {
+            None
+        };
         rs.consent_pending = false;
         if granted {
             rs.recording_active = true;
         }
-        (teacher_tx, student_tx)
+        (teacher_tx, student_tx, slot_info)
     };
+
+    if let Some((event_id, teacher_id)) = recording_slot_info {
+        if let Err(e) = session_history::set_recording_slot(&state.db, teacher_id, event_id).await {
+            tracing::warn!(error = %e, "set_recording_slot failed");
+        }
+    }
 
     if let Some(ttx) = teacher_tx_opt {
         let _ = ttx
@@ -743,22 +761,28 @@ async fn cleanup(state: &AppState, mut ctx: ConnContext, result: LoopExit) {
     // Close session log row if this connection held an active session.
     if let Some(slug) = ctx.slug.clone() {
         if let Some(room) = state.room(&slug) {
-            let log_id = {
+            let (log_id, event_info) = {
                 let rs = room.read().await;
                 rs.active_session.as_ref().and_then(|s| {
                     let is_student = s.student.conn.id == ctx.id;
                     let is_teacher = rs.teacher_conn.as_ref().map(|c| c.id) == Some(ctx.id);
                     if is_student || is_teacher {
-                        s.log_id.clone()
+                        Some((s.log_id.clone(), s.session_event_id.zip(ctx.candidate_teacher_id)))
                     } else {
                         None
                     }
-                })
+                }).unwrap_or((None, None))
             };
             if let Some(id) = log_id {
                 let ended_at = time::OffsetDateTime::now_utc().unix_timestamp();
                 if let Err(e) = close_row(&state.db, &id, ended_at, ended_reason).await {
                     tracing::warn!(error = %e, "session_log close_row failed");
+                }
+            }
+            if let Some((event_id, teacher_id)) = event_info {
+                let ended_at = time::OffsetDateTime::now_utc().unix_timestamp();
+                if let Err(e) = session_history::close_event(&state.db, event_id, teacher_id, ended_at, ended_reason).await {
+                    tracing::warn!(error = %e, "session_history close_event failed");
                 }
             }
 

@@ -324,7 +324,7 @@ _Protocol_
 - Cleanup job does not hard-delete sessions; sets `archived_at` instead
 - All existing tests pass; new tests cover the upsert path, session-event write, and history endpoint
 
-**Status:** PENDING
+**Status:** COMPLETE
 
 ---
 

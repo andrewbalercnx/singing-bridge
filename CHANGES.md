@@ -11,6 +11,25 @@
 > **Commit:** `<sha>`
 > ```
 
+## Sprint 11: Persistent student records + session history — 2026-04-21
+
+**Files changed:**
+- `server/migrations/0005_session_history.sql` — students, session_events, recording_sessions tables
+- `server/src/ws/session_history.rs` — upsert_student, open/close event, recording slot, archive
+- `server/src/ws/session_log.rs` — make EndedReason::as_str pub
+- `server/src/ws/lobby.rs` — wire session_history into admit; set session_teacher_id
+- `server/src/ws/mod.rs` — email validation on join; close_event on cleanup; set_recording_slot on consent
+- `server/src/state.rs` — session_event_id, student_id, session_teacher_id on ActiveSession
+- `server/src/http/history.rs` — GET /teach/<slug>/history handler with HTML escaping
+- `server/src/http/mod.rs` — register history route
+- `server/src/http/recordings.rs` — consume_recording_slot + link_recording on upload
+- `server/src/cleanup.rs` — archive_old_events in cleanup cycle
+- `server/tests/common/mod.rs` — make_session_event helper
+- `server/tests/http_history.rs` — 7 history endpoint tests
+- `server/tests/ws_session_handshake.rs` — email validation + session_event persistence tests
+
+**Commit:** `49af15b`
+
 ## Sprint 10: Password auth (replace magic link) — 2026-04-21
 
 **Files changed:**

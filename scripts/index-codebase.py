@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """File: scripts/index-codebase.py
-Purpose: Parse all VVP Python sources into .claude/codebase.db so Claude Code can query symbols, imports, endpoints, models, and tests before reading files.
+Purpose: Parse all project sources into .claude/codebase.db so Claude Code can query symbols, imports, endpoints, models, and tests before reading files.
 
 Role:
   Tier-0 codegraph builder, invoked manually and via Write/Edit
@@ -20,7 +20,7 @@ Depends on:
 
 Last updated: Sprint 4 (2026-04-17) -- tree-sitter skip warning
 
-VVP Codebase Indexer -- builds a SQLite semantic map for Claude Code.
+Codebase Indexer -- builds a SQLite semantic map for Claude Code.
 
 Parses all Python files using the ast module and stores:
   - files: every .py file with metadata
@@ -1557,7 +1557,7 @@ def main():
     quiet = "--quiet" in sys.argv
 
     if not quiet:
-        print("🔍 Indexing VVP codebase..." + (" (incremental)" if incremental else ""))
+        print("🔍 Indexing codebase..." + (" (incremental)" if incremental else ""))
 
     start = time.time()
     idx = CodebaseIndexer(DB_PATH)

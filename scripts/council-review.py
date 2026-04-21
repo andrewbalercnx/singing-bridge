@@ -196,6 +196,9 @@ def _emit_metrics(
         "findings_recurring": by_status["RECURRING"],
         "findings_by_lens": _compute_findings_by_lens(findings),
         "security_bypassed": bool(security_bypassed),
+        "tracker_check_skipped": bool(
+            prompt_token_estimates.get("tracker_check_skipped", False)
+        ),
         "verdict": verdict or "UNKNOWN",
     }
     if prompt_token_estimates:
@@ -1991,6 +1994,13 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
              "Recorded as security_bypassed=true in metrics.",
     )
     parser.add_argument(
+        "--skip-tracker-check", action="store_true",
+        help="(code review only) bypass the tracker-staleness hard block. "
+             "Use only when the prior round genuinely produced no actionable "
+             "findings (e.g. plan-only feedback already incorporated). "
+             "Recorded in metrics.",
+    )
+    parser.add_argument(
         "--verbose", action="store_true",
         help="Show per-member timing and the full header block. "
              "Default console output is terse.",
@@ -2440,26 +2450,45 @@ def main():
     tracker_file = repo_root / f"FINDINGS_Sprint{sprint}.md"
     tracker_content = tracker_file.read_text() if tracker_file.exists() else None
 
-    # Warn when the previous round left every finding OPEN — this usually means
-    # the editor addressed findings in code but forgot to update the tracker.
-    # An all-OPEN tracker defeats deduplication and the compact representation.
-    if tracker_content and round_num > 1:
+    # Block R2+ when the tracker shows zero resolutions from the prior round.
+    # An all-OPEN tracker defeats deduplication and compact representation, and
+    # is a reliable signal that the editor addressed findings in code but never
+    # updated the tracker. Three consecutive sprints (S8, S9, S11) archived
+    # with 0% resolved while reviewers kept re-flagging the same issues.
+    # Use --skip-tracker-check only when no findings were actionable last round.
+    if review_type == "code" and tracker_content and round_num > 1:
         prior_findings = _read_tracker(tracker_file)
         if prior_findings:
             open_count = sum(1 for f in prior_findings if f.get("status", "OPEN") == "OPEN")
-            if open_count == len(prior_findings):
-                print()
-                print("  ⚠️  WARNING: All prior findings are still OPEN in the tracker.")
-                print(f"     ({open_count} findings, 0 resolved)")
-                print("     If you addressed findings in code, update FINDINGS_Sprint"
-                      f"{sprint}.md before this round runs.")
-                print("     Unresolved tracker → consolidator cannot deduplicate → "
-                      "higher finding count, no token saving.")
-                print()
+            resolved_count = len(prior_findings) - open_count
+            if resolved_count == 0 and not ns.skip_tracker_check:
+                print(file=sys.stderr)
+                print("  BLOCKED: tracker has 0 resolved findings from prior rounds.",
+                      file=sys.stderr)
+                print(f"  {open_count} findings are all OPEN in "
+                      f"FINDINGS_Sprint{sprint}.md", file=sys.stderr)
+                print(file=sys.stderr)
+                print("  Before running this round:", file=sys.stderr)
+                print("  1. Open FINDINGS_Sprint" + sprint + ".md", file=sys.stderr)
+                print("  2. Set Status → ADDRESSED and add a Resolution note for each",
+                      file=sys.stderr)
+                print("     finding you fixed in code. Set WONTFIX+reason for any you",
+                      file=sys.stderr)
+                print("     are deliberately not fixing.", file=sys.stderr)
+                print("  3. Re-run this command.", file=sys.stderr)
+                print(file=sys.stderr)
+                print("  If prior findings were genuinely not actionable, re-run with",
+                      file=sys.stderr)
+                print("  --skip-tracker-check to override (recorded in metrics).",
+                      file=sys.stderr)
+                print(file=sys.stderr)
+                sys.exit(5)
 
     prompt_token_estimates = _estimate_prompt_tokens(
         active_members, materials, sprint, round_num, review_type, tracker_content,
     )
+    if getattr(ns, "skip_tracker_check", False):
+        prompt_token_estimates["tracker_check_skipped"] = True
 
     council_dir = _prepare_council_dir(repo_root, config)
     member_labels = {m["role"]: m["label"] for m in active_members}

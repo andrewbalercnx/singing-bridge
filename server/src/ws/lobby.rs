@@ -321,6 +321,7 @@ pub async fn admit(state: &Arc<AppState>, ctx: &ConnContext, entry_id: EntryId) 
                 log_id: None,
                 session_event_id: None,
                 student_id: None,
+                session_teacher_id: teacher_id,
                 peak_loss_bp: std::sync::atomic::AtomicU16::new(0),
                 peak_rtt_ms: std::sync::atomic::AtomicU16::new(0),
             });

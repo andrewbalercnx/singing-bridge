@@ -530,7 +530,7 @@ async fn handle_record_consent(
         let student_tx = rs.active_session.as_ref().map(|s| s.student.conn.tx.clone());
         let slot_info = if granted {
             rs.active_session.as_ref().and_then(|s| {
-                s.session_event_id.zip(ctx.candidate_teacher_id)
+                s.session_event_id.zip(s.session_teacher_id)
             })
         } else {
             None
@@ -767,7 +767,7 @@ async fn cleanup(state: &AppState, mut ctx: ConnContext, result: LoopExit) {
                     let is_student = s.student.conn.id == ctx.id;
                     let is_teacher = rs.teacher_conn.as_ref().map(|c| c.id) == Some(ctx.id);
                     if is_student || is_teacher {
-                        Some((s.log_id.clone(), s.session_event_id.zip(ctx.candidate_teacher_id)))
+                        Some((s.log_id.clone(), s.session_event_id.zip(s.session_teacher_id)))
                     } else {
                         None
                     }

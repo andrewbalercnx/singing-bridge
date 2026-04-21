@@ -126,8 +126,10 @@ pub async fn consume_recording_slot(
     pool: &SqlitePool,
     teacher_id: TeacherId,
 ) -> Result<Option<SessionEventId>> {
+    let now = time::OffsetDateTime::now_utc().unix_timestamp();
+    // Atomic consume: DELETE ... RETURNING eliminates any TOCTOU window.
     let row: Option<(SessionEventId, i64)> = sqlx::query_as(
-        "SELECT session_event_id, created_at FROM recording_sessions WHERE teacher_id = ?",
+        "DELETE FROM recording_sessions WHERE teacher_id = ? RETURNING session_event_id, created_at",
     )
     .bind(teacher_id)
     .fetch_optional(pool)
@@ -136,12 +138,6 @@ pub async fn consume_recording_slot(
     let Some((event_id, created_at)) = row else {
         return Ok(None);
     };
-
-    let now = time::OffsetDateTime::now_utc().unix_timestamp();
-    sqlx::query("DELETE FROM recording_sessions WHERE teacher_id = ?")
-        .bind(teacher_id)
-        .execute(pool)
-        .await?;
 
     if now - created_at > RECORDING_SLOT_TTL_SECS {
         return Ok(None);
@@ -421,6 +417,13 @@ mod tests {
         .unwrap();
         let got = consume_recording_slot(&pool, 1).await.unwrap();
         assert!(got.is_none());
+        // Row must be deleted even on TTL expiry (atomic DELETE RETURNING consumed it).
+        let (count,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM recording_sessions WHERE teacher_id = 1")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(count, 0, "expired slot must be deleted on consume attempt");
     }
 
     #[tokio::test]

@@ -31,6 +31,7 @@ use crate::config::Config;
 use crate::error::{AppError, Result};
 use crate::ws::protocol::{EntryId, LobbyEntryView, PumpDirective, Tier};
 use crate::ws::rate_limit::WsJoinBucket;
+use crate::auth::magic_link::TeacherId;
 use crate::ws::session_history::{SessionEventId, StudentId};
 use crate::ws::session_log::SessionLogId;
 
@@ -117,6 +118,8 @@ pub struct ActiveSession {
     /// Transiently None until open_event succeeds (best-effort history).
     pub session_event_id: Option<SessionEventId>,
     pub student_id: Option<StudentId>,
+    /// Teacher who owns this session — set at admit time, stable thereafter.
+    pub session_teacher_id: Option<TeacherId>,
     pub peak_loss_bp: AtomicU16,
     pub peak_rtt_ms: AtomicU16,
 }

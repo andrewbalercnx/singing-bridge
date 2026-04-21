@@ -350,19 +350,35 @@ def auto_lens_set(changed_paths: list[str], valid_roles: list[str]) -> set[str]:
     - ``security`` is always included.
     - ``code_quality`` is always included (always-on keeps the lens
       honest against duplication / complexity regressions).
-    - ``test_quality`` is included when any path is under ``tests/``.
+    - ``test_quality`` is included when any path contains a test file
+      (paths matching ``tests/``, ``*test*``, or ``*spec*``).
     - ``domain`` is included when any path is under ``knowledge/``.
+
+    Quorum guarantee: if the diff-driven set would fall below
+    QUORUM_THRESHOLD, lenses are promoted from the fallback list
+    [test_quality, domain] in order until quorum is reached or no
+    valid lenses remain. This prevents --auto-lenses from aborting
+    when a narrow diff doesn't trigger the optional seats.
 
     Lenses not present in ``valid_roles`` are dropped silently — the
     council may not have every seat configured.
     """
     lenses = {"security", "code_quality"}
     for path in changed_paths:
-        if path.startswith("tests/"):
+        lower = path.lower()
+        if "tests/" in lower or "/test" in lower or "spec" in lower:
             lenses.add("test_quality")
         if path.startswith("knowledge/"):
             lenses.add("domain")
-    return lenses & set(valid_roles)
+    lenses &= set(valid_roles)
+    # Ensure auto-lenses never produce a set too small to form quorum
+    fallback_promotion = ["test_quality", "domain"]
+    for candidate in fallback_promotion:
+        if len(lenses) >= QUORUM_THRESHOLD:
+            break
+        if candidate in valid_roles and candidate not in lenses:
+            lenses.add(candidate)
+    return lenses
 
 
 def enforce_security_lens(

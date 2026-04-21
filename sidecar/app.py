@@ -9,7 +9,7 @@ Invariants: Every non-/healthz endpoint requires Authorization: Bearer <SIDECAR_
             SIDECAR_SECRET must be set at startup; missing → process exits.
             Upload size is capped at MAX_UPLOAD_BYTES before processing.
             All temp files are cleaned up even on error.
-Last updated: Sprint 12 (2026-04-21) -- initial production sidecar
+Last updated: Sprint 12a (2026-04-21) -- initial production sidecar
 """
 from __future__ import annotations
 

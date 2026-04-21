@@ -3,7 +3,7 @@
 //          going through the binary. Re-exports the module tree.
 // Role: One-line facade for the binary + tests.
 // Exports: auth, blob, cleanup, config, db, error, http, sidecar, state, ws
-// Last updated: Sprint 12 (2026-04-21) -- add sidecar module
+// Last updated: Sprint 12a (2026-04-21) -- add sidecar module
 
 pub mod auth;
 pub mod blob;

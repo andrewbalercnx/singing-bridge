@@ -2,7 +2,7 @@
 Purpose: Integration tests for the production sidecar Flask app.
          All external binaries (Audiveris, FluidSynth, ghostscript) are
          stubbed via env vars so tests run in CI without external dependencies.
-Last updated: Sprint 12 (2026-04-21) -- initial sidecar test suite
+Last updated: Sprint 12a (2026-04-21) -- initial sidecar test suite
 """
 import base64
 import json

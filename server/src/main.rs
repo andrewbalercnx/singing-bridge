@@ -7,7 +7,7 @@
 //             Selects mailer based on MailerKind. Spawns WS join rate sweeper
 //             and aborts it on shutdown. AppState.ws_join_rate_sweeper is
 //             always a valid JoinHandle for the life of the process.
-// Last updated: Sprint 12 (2026-04-21) -- SidecarClient + MediaTokenStore in AppState
+// Last updated: Sprint 12a (2026-04-21) -- SidecarClient + MediaTokenStore in AppState
 
 use std::{net::SocketAddr, sync::Arc};
 

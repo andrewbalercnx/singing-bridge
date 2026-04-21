@@ -22,7 +22,7 @@ Invariants & gotchas:
   - Long-running (tens of seconds per page). Caller should not block
     the request thread on this for production.
 
-Last updated: Sprint 12 (2026-04-21) -- promoted from spike to production sidecar
+Last updated: Sprint 12a (2026-04-21) -- promoted from spike to production sidecar
 """
 from __future__ import annotations
 

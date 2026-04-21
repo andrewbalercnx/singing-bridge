@@ -32,7 +32,7 @@ Invariants & gotchas:
     bar) are corrected per bar and all parts hit every bar line at the
     same tick.
 
-Last updated: Sprint 12 (2026-04-21) -- promoted from spike to production sidecar
+Last updated: Sprint 12a (2026-04-21) -- promoted from spike to production sidecar
 """
 from __future__ import annotations
 

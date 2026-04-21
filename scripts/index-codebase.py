@@ -18,7 +18,7 @@ Depends on:
   - internal: scripts/header_parser.py (parse_header for Sprint 125 index)
   - external: sqlite3, ast (stdlib only)
 
-Last updated: Sprint 4 (2026-04-17) -- tree-sitter skip warning
+Last updated: Sprint 12a (2026-04-21) -- tree-sitter skip warning
 
 Codebase Indexer -- builds a SQLite semantic map for Claude Code.
 

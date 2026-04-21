@@ -6,7 +6,7 @@
 // Invariants: from_env() calls parse_env() then validate_prod_config() for SB_ENV=prod.
 //             In prod: HTTPS required, secrets present, pepper ≥ 32 bytes.
 //             Secure cookie flag only omitted when dev=true.
-// Last updated: Sprint 10 (2026-04-21) -- password auth config fields
+// Last updated: Sprint 12a (2026-04-21) -- sidecar SSRF validation, prod secret check
 
 use std::net::SocketAddr;
 

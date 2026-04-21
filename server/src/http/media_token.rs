@@ -7,7 +7,7 @@
 //             if still at cap, oldest entry is evicted (by expires_at).
 //             expired and unknown tokens both return None from get_blob_key (no oracle).
 //             Tokens are invalidated by blob_key on session teardown / asset deletion.
-// Last updated: Sprint 12 (2026-04-21) -- initial; remove unused TOKEN_HEX_LEN constant
+// Last updated: Sprint 12a (2026-04-21) -- initial implementation
 
 use std::time::{Duration, Instant};
 

@@ -7,7 +7,7 @@
 //             get_url returns a /api/dev-blob/{key} path (dev only).
 //             get_bytes reads the full blob into memory (use only for sidecar payloads).
 //             AzureBlobStore (prod) is a future Sprint 5+ addition outside this file.
-// Last updated: Sprint 12 (2026-04-21) -- get_bytes for sidecar delivery
+// Last updated: Sprint 12a (2026-04-21) -- get_bytes for sidecar delivery
 
 use std::path::{Path, PathBuf};
 use std::pin::Pin;

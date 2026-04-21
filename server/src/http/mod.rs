@@ -7,7 +7,7 @@
 //             Cache-Control: no-store. /healthz body is fixed JSON.
 //             /api/dev-blob/* is only compiled and mounted in debug builds + dev mode.
 //             /api/media/:token is public — the token itself is the auth.
-// Last updated: Sprint 12 (2026-04-21) -- accompaniment library + media routes
+// Last updated: Sprint 12a (2026-04-21) -- DefaultBodyLimit::disable() on upload route
 
 pub mod health;
 pub mod history;

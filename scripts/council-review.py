@@ -19,7 +19,7 @@ Exports:
   - find_untracked_source_files, preflight_code_review,
     PreflightResult -- Sprint 2 pre-flight check surface
 
-Last updated: Sprint 111 (2026-04-21) -- metrics v2 schema + helper extraction; selective routing + tracker v3 + security enforcement; output-discipline clause + terse console
+Last updated: Sprint 12a (2026-04-21) -- metrics v2 schema + helper extraction; selective routing + tracker v3 + security enforcement; output-discipline clause + terse console
 
 Council of Experts review system for pair programming workflow.
 

@@ -24,7 +24,7 @@ Invariants & gotchas:
     events in a temporary copy of the MIDI file (via mido) before
     handing off to FluidSynth — FluidSynth has no CLI tempo flag.
 
-Last updated: Sprint 12 (2026-04-21) -- promoted from spike to production sidecar
+Last updated: Sprint 12a (2026-04-21) -- promoted from spike to production sidecar
 """
 from __future__ import annotations
 

@@ -11,7 +11,7 @@
   "council": {
     "parallel_timeout_seconds": 300,
     "consolidator_timeout_seconds": 300,
-    "max_plan_rounds": 5,
+    "max_plan_rounds": 6,
     "max_code_rounds": 6,
     "convergence_warning_at": 2,
     "auto_lenses_code_default": true,
@@ -33,7 +33,7 @@
         },
         "max_tokens": 2048,
         "temperature": 0.2,
-        "lens": "You are the Security reviewer in a 4-member Council of Experts. Focus EXCLUSIVELY on: authentication / authorisation gaps, cryptographic correctness (algorithm choice, key handling, TLS hostname verification, IP pinning), SSRF and request forgery, input validation, injection (SQL, command, template), secret handling (API keys, session tokens, OAuth state), CORS / CSP / HSTS posture, TLS configuration, timing-side-channel potential, authorization bypasses, and cache-poisoning. You have live MCP access to the project's codegraph via `codegraph_query`, `codegraph_file_header`, `codegraph_search_headers`, `codegraph_stale_exports`, `codegraph_stale_depends`. **Before writing any finding that makes a verifiable claim about the code, run at least one MCP query to verify it.** If you cannot verify a claim, either demote to speculation or omit it. Cite the query you ran in the finding. Ignore documentation, UX, performance, cost, test quality -- those are handled by other reviewers."
+        "lens": "You are the Security reviewer in a 4-member Council of Experts. Focus EXCLUSIVELY on: authentication / authorisation gaps, cryptographic correctness (algorithm choice, key handling, TLS hostname verification, IP pinning), SSRF and request forgery, input validation, injection (SQL, command, template), secret handling (API keys, session tokens, OAuth state), CORS / CSP / HSTS posture, TLS configuration, timing-side-channel potential, authorization bypasses, and cache-poisoning. You have live MCP access to the project's codegraph via `codegraph_query`, `codegraph_file_header`, `codegraph_search_headers`, `codegraph_stale_exports`, `codegraph_stale_depends`. **Before writing any finding that makes a verifiable claim about the code, run at least one MCP query to verify it.** If you cannot verify a claim, either demote to speculation or omit it. Cite the query you ran in the finding. **Test fixture credentials (passwords, tokens in tests/ or specs/) are intentionally hardcoded test values -- do NOT flag them as leaked secrets.** Ignore documentation, UX, performance, cost, test quality -- those are handled by other reviewers."
       },
       {
         "role": "code_quality",

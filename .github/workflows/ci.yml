@@ -1,7 +1,8 @@
 # File: .github/workflows/ci.yml
 # Purpose: CI + deploy pipeline. On push to main: run tests, then deploy if green.
+#   Skips rebuilding server or sidecar image if their source hasn't changed.
 #   On pull requests: run tests only. workflow_dispatch triggers full pipeline.
-# Last updated: Sprint 13 (2026-04-22) -- merge deploy into single pipeline
+# Last updated: Sprint 13 (2026-04-22) -- skip unchanged image builds
 
 name: CI
 
@@ -67,6 +68,34 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.inputs.tag || github.sha }}
+          fetch-depth: 2
+
+      - name: Detect changed components
+        run: |
+          SHA=$(git rev-parse --short HEAD)
+          echo "SHA=$SHA" >> "$GITHUB_ENV"
+
+          # On workflow_dispatch always build both; otherwise diff against parent
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "BUILD_SERVER=true" >> "$GITHUB_ENV"
+            echo "BUILD_SIDECAR=true" >> "$GITHUB_ENV"
+          else
+            CHANGED=$(git diff --name-only HEAD~1 HEAD)
+            echo "Changed files:"
+            echo "$CHANGED"
+
+            if echo "$CHANGED" | grep -qv "^sidecar/"; then
+              echo "BUILD_SERVER=true" >> "$GITHUB_ENV"
+            else
+              echo "BUILD_SERVER=false" >> "$GITHUB_ENV"
+            fi
+
+            if echo "$CHANGED" | grep -q "^sidecar/"; then
+              echo "BUILD_SIDECAR=true" >> "$GITHUB_ENV"
+            else
+              echo "BUILD_SIDECAR=false" >> "$GITHUB_ENV"
+            fi
+          fi
 
       - uses: azure/login@v2
         with:
@@ -74,30 +103,34 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Build and push server image to ACR
+      - name: Build and push server image
+        if: env.BUILD_SERVER == 'true'
         run: |
-          TAG=$(git rev-parse --short HEAD)
           az acr build \
             --registry sbprodacr \
-            --image singing-bridge:$TAG \
+            --image singing-bridge:$SHA \
             --image singing-bridge:latest \
-            --build-arg GIT_SHA=$TAG \
+            --build-arg GIT_SHA=$SHA \
             .
-          echo "IMAGE_TAG=$TAG" >> "$GITHUB_ENV"
 
-      - name: Build and push sidecar image to ACR
+      - name: Build and push sidecar image
+        if: env.BUILD_SIDECAR == 'true'
         run: |
           az acr build \
             --registry sbprodacr \
-            --image singing-bridge-sidecar:$IMAGE_TAG \
+            --image singing-bridge-sidecar:$SHA \
             --image singing-bridge-sidecar:latest \
             sidecar/
 
       - name: Update Container App
         run: |
+          # Use SHA tag for rebuilt images; latest for unchanged ones
+          SERVER_TAG=$( [ "$BUILD_SERVER" = "true" ] && echo "$SHA" || echo "latest" )
+          SIDECAR_TAG=$( [ "$BUILD_SIDECAR" = "true" ] && echo "$SHA" || echo "latest" )
+
           az containerapp show --name sb-server --resource-group sb-prod-rg -o yaml > app.yaml
-          sed -i "s|sbprodacr.azurecr.io/singing-bridge:[a-zA-Z0-9_.-]*|sbprodacr.azurecr.io/singing-bridge:$IMAGE_TAG|g" app.yaml
-          sed -i "s|sbprodacr.azurecr.io/singing-bridge-sidecar:[a-zA-Z0-9_.-]*|sbprodacr.azurecr.io/singing-bridge-sidecar:$IMAGE_TAG|g" app.yaml
+          sed -i "s|sbprodacr.azurecr.io/singing-bridge:[a-zA-Z0-9_.-]*|sbprodacr.azurecr.io/singing-bridge:$SERVER_TAG|g" app.yaml
+          sed -i "s|sbprodacr.azurecr.io/singing-bridge-sidecar:[a-zA-Z0-9_.-]*|sbprodacr.azurecr.io/singing-bridge-sidecar:$SIDECAR_TAG|g" app.yaml
           az containerapp update --name sb-server --resource-group sb-prod-rg --yaml app.yaml
 
       - name: Verify health

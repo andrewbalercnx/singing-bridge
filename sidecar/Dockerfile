@@ -1,14 +1,14 @@
 # File: sidecar/Dockerfile
 # Purpose: Production sidecar image — Python 3.12 + FluidSynth + Audiveris + ghostscript.
-# Last updated: Sprint 12 (2026-04-21) -- initial sidecar image
+# Last updated: Sprint 13 (2026-04-22) -- openjdk-21 (17 dropped from Debian Trixie)
 
 FROM python:3.12-slim
 
-# System dependencies: FluidSynth, ghostscript, Java 17 (for Audiveris), curl
+# System dependencies: FluidSynth, ghostscript, Java 21 (for Audiveris), curl
 RUN apt-get update && apt-get install -y --no-install-recommends \
     fluidsynth \
     ghostscript \
-    openjdk-17-jre-headless \
+    openjdk-21-jre-headless \
     curl \
     unzip \
     && rm -rf /var/lib/apt/lists/*

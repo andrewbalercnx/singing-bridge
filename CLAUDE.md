@@ -30,22 +30,29 @@ Source of truth: `scripts/bootstrap/profiles.json`. Current profile:
 
 ### Tier 0: Codegraph — QUERY FIRST, READ SECOND (mandatory)
 
-Before reading any source file to understand structure, query
-`.claude/codebase.db` via `scripts/index-codebase.py` or the
-`codegraph_*` MCP tools. The codegraph is auto-updated after every
-Write/Edit via a PostToolUse hook.
+Before reading any source file to understand structure, use the
+`codegraph_*` MCP tools. They are the primary interface — no SQL
+schema knowledge required. The codegraph DB is auto-updated after
+every Write/Edit via a PostToolUse hook.
 
+**Primary (MCP tools — prefer these):**
+- `codegraph_context_for` — imports, exports, dependents for a file
+- `codegraph_search_headers` — find files by purpose/role keyword
+- `codegraph_file_header` — structured header for a single file
+- `codegraph_stats` — table row counts and DB overview
+- `codegraph_stale_exports` — exports declared but not in DB
+- `codegraph_stale_depends` — depends headers that are stale
+- `codegraph_query` — raw SQL (only when above tools are insufficient;
+  requires knowing exact column names — check `codegraph_stats` first)
+
+**Bash (re-index only):**
 ```bash
-python3 scripts/index-codebase.py --context-for path/to/file.py
-python3 scripts/index-codebase.py --query "SELECT * FROM endpoints"
-python3 scripts/index-codebase.py --stats
-python3 scripts/index-codebase.py --stale-exports
-python3 scripts/index-codebase.py --incremental
+python3 scripts/index-codebase.py --incremental  # refresh DB after external changes
 ```
 
-Tables: `files`, `symbols`, `imports`, `endpoints`, `models`,
-`model_fields`, `tests`, `file_headers`, `file_header_exports`,
-`file_header_depends`.
+Do not use `scripts/index-codebase.py --query`, `--context-for`,
+`--stats`, or `--stale-exports` — these duplicate MCP tools but require
+exact schema knowledge and are error-prone.
 
 ### Tier 1: Always loaded
 

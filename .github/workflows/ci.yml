@@ -1,11 +1,7 @@
 # File: .github/workflows/ci.yml
-# Purpose: Baseline CI that runs on every pull request and push to main.
-#   Lints file headers, runs the fast (non-slow) pytest suite, then
-#   exercises bootstrap end-to-end via scripts/bootstrap-smoke.py.
-#   Ships to both the dev-container and the template repo via the
-#   template manifest; downstream projects inherit it on bootstrap.
-#
-# Last updated: Sprint 2 (2026-04-17) -- add JS test step.
+# Purpose: CI + deploy pipeline. On push to main: run tests, then deploy if green.
+#   On pull requests: run tests only. workflow_dispatch triggers full pipeline.
+# Last updated: Sprint 13 (2026-04-22) -- merge deploy into single pipeline
 
 name: CI
 
@@ -13,6 +9,16 @@ on:
   pull_request:
   push:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Git ref or tag to deploy (default: HEAD)"
+        required: false
+        default: ""
+
+permissions:
+  id-token: write # required for OIDC token request
+  contents: read
 
 jobs:
   test:
@@ -20,6 +26,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.sha }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -50,3 +58,54 @@ jobs:
       - name: JS tests (SDP munger + audio predicate)
         if: hashFiles('web/assets/tests/*.test.js') != ''
         run: node --test web/assets/tests/*.test.js
+
+  deploy:
+    needs: test
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.sha }}
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Build and push server image to ACR
+        run: |
+          TAG=$(git rev-parse --short HEAD)
+          az acr build \
+            --registry sbprodacr \
+            --image singing-bridge:$TAG \
+            --image singing-bridge:latest \
+            --build-arg GIT_SHA=$TAG \
+            .
+          echo "IMAGE_TAG=$TAG" >> "$GITHUB_ENV"
+
+      - name: Build and push sidecar image to ACR
+        run: |
+          az acr build \
+            --registry sbprodacr \
+            --image singing-bridge-sidecar:$IMAGE_TAG \
+            --image singing-bridge-sidecar:latest \
+            sidecar/
+
+      - name: Update Container App
+        run: |
+          az containerapp show --name sb-server --resource-group sb-prod-rg -o yaml > app.yaml
+          sed -i "s|sbprodacr.azurecr.io/singing-bridge:[a-zA-Z0-9_.-]*|sbprodacr.azurecr.io/singing-bridge:$IMAGE_TAG|g" app.yaml
+          sed -i "s|sbprodacr.azurecr.io/singing-bridge-sidecar:[a-zA-Z0-9_.-]*|sbprodacr.azurecr.io/singing-bridge-sidecar:$IMAGE_TAG|g" app.yaml
+          az containerapp update --name sb-server --resource-group sb-prod-rg --yaml app.yaml
+
+      - name: Verify health
+        run: |
+          sleep 10
+          FQDN=$(az containerapp show \
+            --name sb-server \
+            --resource-group sb-prod-rg \
+            --query "properties.configuration.ingress.fqdn" \
+            --output tsv)
+          curl --fail "https://$FQDN/healthz" | grep '"ok"'

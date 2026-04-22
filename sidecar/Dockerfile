@@ -4,25 +4,18 @@
 
 FROM python:3.12-slim
 
-# System dependencies: FluidSynth, ghostscript, Java 21 (for Audiveris), curl
+# System dependencies: FluidSynth + FluidR3 GM soundfont (from apt), ghostscript,
+# Java 21 (for Audiveris), curl, unzip
 RUN apt-get update && apt-get install -y --no-install-recommends \
     fluidsynth \
+    fluid-soundfont-gm \
     ghostscript \
     openjdk-21-jre-headless \
     curl \
     unzip \
     && rm -rf /var/lib/apt/lists/*
 
-# Download FluidR3_GM SoundFont (MIT-licensed)
-RUN mkdir -p /opt/sf2 && \
-    curl -fsSL "https://member.keymusician.com/Member/FluidR3_GM/FluidR3_GM.sf2" \
-         -o /opt/sf2/piano.sf2 || \
-    # Fallback: smaller GeneralUser soundfont if FluidR3 unavailable
-    curl -fsSL "https://www.schristiancollins.com/generaluser/GeneralUser_GS_1.471.zip" \
-         -o /tmp/gu.zip && unzip /tmp/gu.zip -d /tmp/gu && \
-    cp /tmp/gu/*.sf2 /opt/sf2/piano.sf2 || true
-
-ENV PIANO_SF2=/opt/sf2/piano.sf2
+ENV PIANO_SF2=/usr/share/sounds/sf2/FluidR3_GM.sf2
 
 # Download Audiveris (latest release jar)
 RUN mkdir -p /opt/audiveris && \

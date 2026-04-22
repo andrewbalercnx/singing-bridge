@@ -31,7 +31,7 @@ use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncRead;
 
-use crate::auth::resolve_teacher_from_cookie;
+use crate::auth::{resolve_teacher_from_cookie, slug::validate};
 use crate::blob::BlobStore;
 use crate::error::{AppError, Result};
 use crate::sidecar::SynthesiseRequest;
@@ -93,21 +93,30 @@ pub(crate) struct VariantView {
 
 pub(crate) async fn get_library_page(
     State(state): State<Arc<AppState>>,
+    Path((slug,)): Path<(String,)>,
     headers: HeaderMap,
 ) -> Result<Response> {
-    require_auth(&state, &headers).await?;
+    let teacher_id = require_auth(&state, &headers).await?;
+    let slug = validate(&slug).map_err(|_| AppError::NotFound)?;
+    let (owned,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM teachers WHERE id = ? AND slug = ?",
+    )
+    .bind(teacher_id)
+    .bind(&slug)
+    .fetch_one(&state.db)
+    .await?;
+    if owned == 0 {
+        return Err(AppError::Forbidden);
+    }
+    let html_path = state.config.static_dir.join("library.html");
+    let html = tokio::fs::read_to_string(&html_path).await?;
     Ok((
         StatusCode::OK,
         [
             (header::CACHE_CONTROL, HeaderValue::from_static("no-store")),
             (header::CONTENT_TYPE, HeaderValue::from_static("text/html; charset=utf-8")),
         ],
-        Html(r#"<!doctype html>
-<html lang="en"><head><meta charset="utf-8">
-<title>Accompaniment Library — singing-bridge</title></head>
-<body><h1>Accompaniment Library</h1>
-<p>Library management UI coming in Sprint 13.</p>
-</body></html>"#),
+        Html(html),
     ).into_response())
 }
 

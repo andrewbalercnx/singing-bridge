@@ -1,0 +1,49 @@
+<!doctype html>
+<!--
+  File: web/library.html
+  Purpose: Teacher accompaniment library — upload, OMR flow, synthesise, manage variants.
+  Last updated: Sprint 13 (2026-04-22) -- initial implementation
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Accompaniment Library — singing-bridge</title>
+  <link rel="stylesheet" href="/assets/styles.css">
+</head>
+<body>
+  <div id="sidecar-banner" class="banner-error" hidden>
+    Sheet music tools unavailable. Upload and delete still work.
+    <button id="sidecar-banner-close" type="button">✕</button>
+  </div>
+
+  <main class="library-page">
+    <h1>Accompaniment Library</h1>
+    <nav><a id="back-link" href="#">← Back to room</a></nav>
+
+    <section id="upload-section">
+      <div id="drop-zone" class="drop-zone" tabindex="0"
+           aria-label="Drop PDF, MIDI, or WAV file here">
+        <p>Drop a PDF, MIDI, or WAV file here, or
+           <label for="file-input">browse</label></p>
+        <input type="file" id="file-input" accept=".pdf,.mid,.midi,.wav"
+               aria-label="Choose file">
+      </div>
+      <div id="title-row">
+        <label for="title-input">Title
+          <input type="text" id="title-input" maxlength="255"
+                 placeholder="e.g. Ave Maria (Schubert)" required>
+        </label>
+        <button id="upload-btn" type="button">Upload</button>
+      </div>
+      <p id="upload-error" class="error" hidden></p>
+      <p id="upload-progress" hidden>Uploading…</p>
+    </section>
+
+    <ul id="asset-list" aria-live="polite"></ul>
+    <p id="assets-empty" hidden>No assets yet. Upload a PDF, MIDI, or WAV above.</p>
+    <p id="assets-error" class="error" hidden></p>
+
+    <script src="/assets/library.js"></script>
+  </main>
+</body>
+</html>

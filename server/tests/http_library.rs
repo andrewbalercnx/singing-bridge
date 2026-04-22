@@ -54,6 +54,23 @@ async fn library_page_returns_html() {
         r.headers().get("cache-control").unwrap().to_str().unwrap(),
         "no-store",
     );
+    let body = r.text().await.unwrap();
+    assert!(body.contains("Accompaniment Library"), "body should contain page heading");
+    app.shutdown().await;
+}
+
+#[tokio::test]
+async fn library_page_returns_403_for_wrong_slug() {
+    let app = common::spawn_app().await;
+    // Teacher signed up for room-a tries to access room-b's library.
+    let cookie = app.signup_teacher("t@test.com", "room-a").await;
+    let r = app.client
+        .get(app.url("/teach/room-b/library"))
+        .header("cookie", format!("sb_session={cookie}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 403);
     app.shutdown().await;
 }
 

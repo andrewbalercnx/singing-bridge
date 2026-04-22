@@ -1,3 +1,7 @@
+-- File: server/migrations/0006_accompaniments.sql
+-- Purpose: Create accompaniments and accompaniment_variants tables for Sprint 12 library.
+-- Last updated: Sprint 12 (2026-04-21) -- initial migration
+
 -- Migration 0006: accompaniment library — assets + variants
 -- Stores backing-track assets (PDF/MIDI + rasterised pages + bar data)
 -- and WAV variants (tempo/transpose/repeats variants of a MIDI asset).

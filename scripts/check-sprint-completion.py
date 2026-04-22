@@ -14,7 +14,7 @@ Role:
 
 Exports: None (CLI only)
 Depends: pathlib, re, sys, argparse
-Last updated: Sprint 12A
+Last updated: Sprint 12a (2026-04-21) -- initial implementation
 """
 
 import argparse

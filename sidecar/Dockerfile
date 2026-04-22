@@ -1,6 +1,6 @@
 # File: sidecar/Dockerfile
 # Purpose: Production sidecar image — Python 3.12 + FluidSynth + Audiveris + ghostscript.
-# Last updated: Sprint 12 (2026-04-21)
+# Last updated: Sprint 12 (2026-04-21) -- initial sidecar image
 
 FROM python:3.12-slim
 

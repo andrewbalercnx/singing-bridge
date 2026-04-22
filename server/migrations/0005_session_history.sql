@@ -1,3 +1,7 @@
+-- File: server/migrations/0005_session_history.sql
+-- Purpose: Create students, session_events, and recording_sessions tables for Sprint 11 session history.
+-- Last updated: Sprint 11 (2026-04-20) -- initial migration
+
 -- Migration 0005: session history — students + session_events + recording_sessions
 -- Adds plain-email student records (teacher-visible) and session event history.
 

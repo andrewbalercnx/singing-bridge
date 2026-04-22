@@ -129,10 +129,12 @@ def test_auto_lens_mixed_diff(cr):
 
 
 def test_auto_lens_empty_diff(cr):
+    # Empty diff starts with security + code_quality (2 lenses); quorum
+    # guarantee promotes test_quality to reach QUORUM_THRESHOLD (3).
     result = cr.auto_lens_set(
         [], ["security", "code_quality", "test_quality", "domain"],
     )
-    assert result == {"security", "code_quality"}
+    assert result == {"security", "code_quality", "test_quality"}
 
 
 def test_auto_lens_drops_unconfigured_roles(cr):

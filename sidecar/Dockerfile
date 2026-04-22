@@ -1,6 +1,6 @@
 # File: sidecar/Dockerfile
 # Purpose: Production sidecar image — Python 3.12 + FluidSynth + Audiveris + ghostscript.
-# Last updated: Sprint 13 (2026-04-22) -- openjdk-21 (17 dropped from Debian Trixie)
+# Last updated: Sprint 13 (2026-04-22) -- audiveris via ubuntu deb; soundfont via apt
 
 FROM python:3.12-slim
 
@@ -17,18 +17,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 ENV PIANO_SF2=/usr/share/sounds/sf2/FluidR3_GM.sf2
 
-# Download Audiveris (latest release jar)
-RUN mkdir -p /opt/audiveris && \
-    curl -fsSL "https://github.com/Audiveris/audiveris/releases/download/5.3.1/Audiveris_5.3.1.zip" \
-         -o /tmp/audiveris.zip && \
-    unzip /tmp/audiveris.zip -d /opt/audiveris && \
-    rm /tmp/audiveris.zip && \
-    find /opt/audiveris -name "Audiveris*.jar" | head -1 > /opt/audiveris/jar_path.txt
-
-# Create audiveris wrapper script
-RUN jar_path=$(cat /opt/audiveris/jar_path.txt) && \
-    printf '#!/bin/sh\nexec java -jar "%s" "$@"\n' "$jar_path" > /usr/local/bin/audiveris && \
-    chmod +x /usr/local/bin/audiveris
+# Install Audiveris 5.10.2 via Ubuntu 24.04 deb (compatible with Debian Trixie).
+# Graceful: if install fails the image still builds; OMR endpoints return 503.
+RUN curl -fsSL \
+    "https://github.com/Audiveris/audiveris/releases/download/5.10.2/Audiveris-5.10.2-ubuntu24.04-x86_64.deb" \
+    -o /tmp/audiveris.deb \
+    && dpkg -i /tmp/audiveris.deb \
+    && rm /tmp/audiveris.deb \
+    || { echo "WARNING: Audiveris install failed — OMR will return 503"; rm -f /tmp/audiveris.deb; }
 
 WORKDIR /app
 COPY requirements.txt .

@@ -1,12 +1,13 @@
 // File: infra/bicep/container-app.bicep
-// Purpose: Container Apps environment + Azure Files storage + singing-bridge app + OMR sidecar.
-// Role: Hosts the single-replica server with SQLite on Azure Files Premium.
-// Invariants: min=max=1 replica (SQLite file-locking constraint). CF IP
-//             allow-list codified in ipSecurityRestrictions (not a runbook step).
+// Purpose: Container Apps environment + NFS Azure Files storage + singing-bridge app + OMR sidecar.
+// Role: Hosts the single-replica server with SQLite on NFS Azure Files Premium.
+// Invariants: min=max=1 replica — WAL file locks are node-local; a second replica would
+//             corrupt the database. This constraint is permanent until SQLite is replaced.
+//             CF IP allow-list codified in ipSecurityRestrictions (not a runbook step).
 //             Ingress restricted to Cloudflare published IP ranges only.
-//             SB_DATA_DIR=/tmp: Azure Files SMB deadlocks SQLite; DB is ephemeral until
-//             PostgreSQL migration. The Azure Files volume remains mounted for future use.
-// Last updated: Sprint 13 (2026-04-23) -- add sidecar container, ACS secret, SB_DATA_DIR=/tmp
+//             SB_DATA_DIR=/data: durable NFS volume; DB persists across deploys.
+//             NFS share uses RootSquash; server and backup containers run as UID 65532.
+// Last updated: Sprint 16 (2026-04-23) -- NFS Azure Files + VNet integration; remove SMB
 
 param location string = resourceGroup().location
 param environmentName string = 'sb-env'
@@ -17,7 +18,11 @@ param sidecarImageName string = 'singing-bridge-sidecar:latest'
 param logWorkspaceCustomerId string
 @secure()
 param logWorkspaceKey string
-param storageAccountName string = 'sbprod${uniqueString(resourceGroup().id)}'
+// NFS storage account — separate from old SMB account; supportsHttpsTrafficOnly must be false.
+param nfsStorageAccountName string = 'sbnfs${uniqueString(resourceGroup().id)}'
+// VNet subnet IDs from vnet.bicep outputs.
+param acaSubnetId string
+param storageSubnetId string
 
 // Secrets passed as secure parameters (never logged by ARM).
 @secure()
@@ -33,26 +38,46 @@ param sbSidecarSecret string
 @secure()
 param sbAcsConnectionString string
 
-// ---- Storage Account + File Share ----
-resource storageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' = {
-  name: storageAccountName
+// ---- NFS Storage Account + File Share ----
+// NFS v4.1 requires supportsHttpsTrafficOnly=false; this cannot be changed in-place
+// on an existing account — a new account is required. Network rule denies all except
+// the storage subnet service endpoint.
+resource nfsStorageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' = {
+  name: nfsStorageAccountName
   location: location
   kind: 'FileStorage'
   sku: { name: 'Premium_LRS' }
   properties: {
     minimumTlsVersion: 'TLS1_2'
-    supportsHttpsTrafficOnly: true
+    supportsHttpsTrafficOnly: false  // required for NFS v4.1
     largeFileSharesState: 'Enabled'
+    networkAcls: {
+      defaultAction: 'Deny'
+      virtualNetworkRules: [
+        {
+          id: storageSubnetId
+          action: 'Allow'
+        }
+      ]
+    }
   }
 }
 
-resource fileShare 'Microsoft.Storage/storageAccounts/fileServices/shares@2023-01-01' = {
-  name: '${storageAccount.name}/default/sb-data'
-  properties: { shareQuota: 100 }
+resource nfsFileShare 'Microsoft.Storage/storageAccounts/fileServices/shares@2023-01-01' = {
+  name: '${nfsStorageAccount.name}/default/sb-data'
+  properties: {
+    shareQuota: 32
+    enabledProtocols: 'NFS'
+    // RootSquash: root in container maps to nobody on NFS server.
+    // UID 65532 in the container maps to UID 65532 on the server (owner after init).
+    rootSquash: 'RootSquash'
+  }
 }
 
-// ---- Container Apps Environment ----
-resource caEnv 'Microsoft.App/managedEnvironments@2023-05-01' = {
+// ---- Container Apps Environment (VNet-integrated) ----
+// VNet integration cannot be added to an existing CAE — this is a new resource.
+// See runbook/deploy.md for the cutover sequence.
+resource caEnv 'Microsoft.App/managedEnvironments@2024-03-01' = {
   name: environmentName
   location: location
   properties: {
@@ -63,25 +88,29 @@ resource caEnv 'Microsoft.App/managedEnvironments@2023-05-01' = {
         sharedKey: logWorkspaceKey
       }
     }
+    vnetConfiguration: {
+      infrastructureSubnetId: acaSubnetId
+      // internal=false: environment remains externally reachable via Cloudflare.
+      internal: false
+    }
   }
 }
 
-// Attach Azure Files storage to the environment.
-resource caStorage 'Microsoft.App/managedEnvironments/storages@2023-05-01' = {
-  name: 'sb-data'
+// NFS storage binding — uses nfsAzureFile (no accountKey; access via network rule).
+resource caStorage 'Microsoft.App/managedEnvironments/storages@2024-03-01' = {
+  name: 'sb-nfs-storage'
   parent: caEnv
   properties: {
-    azureFile: {
-      accountName: storageAccount.name
-      accountKey: storageAccount.listKeys().keys[0].value
-      shareName: 'sb-data'
+    nfsAzureFile: {
+      server: '${nfsStorageAccount.name}.file.core.windows.net'
+      shareName: '/sb-data'
       accessMode: 'ReadWrite'
     }
   }
 }
 
 // ---- Container App ----
-resource app 'Microsoft.App/containerApps@2023-05-01' = {
+resource app 'Microsoft.App/containerApps@2024-03-01' = {
   name: appName
   location: location
   identity: { type: 'SystemAssigned' }
@@ -92,6 +121,32 @@ resource app 'Microsoft.App/containerApps@2023-05-01' = {
         external: true
         targetPort: 8080
         transport: 'http'
+        ipSecurityRestrictions: [
+          // Cloudflare IPv4 ranges — allow-list maintained here, not as a runbook step.
+          { name: 'cf-1',  action: 'Allow', ipAddressRange: '173.245.48.0/20'  }
+          { name: 'cf-2',  action: 'Allow', ipAddressRange: '103.21.244.0/22'  }
+          { name: 'cf-3',  action: 'Allow', ipAddressRange: '103.22.200.0/22'  }
+          { name: 'cf-4',  action: 'Allow', ipAddressRange: '103.31.4.0/22'    }
+          { name: 'cf-5',  action: 'Allow', ipAddressRange: '141.101.64.0/18'  }
+          { name: 'cf-6',  action: 'Allow', ipAddressRange: '108.162.192.0/18' }
+          { name: 'cf-7',  action: 'Allow', ipAddressRange: '190.93.240.0/20'  }
+          { name: 'cf-8',  action: 'Allow', ipAddressRange: '188.114.96.0/20'  }
+          { name: 'cf-9',  action: 'Allow', ipAddressRange: '197.234.240.0/22' }
+          { name: 'cf-10', action: 'Allow', ipAddressRange: '198.41.128.0/17'  }
+          { name: 'cf-11', action: 'Allow', ipAddressRange: '162.158.0.0/15'   }
+          { name: 'cf-12', action: 'Allow', ipAddressRange: '104.16.0.0/13'    }
+          { name: 'cf-13', action: 'Allow', ipAddressRange: '104.24.0.0/14'    }
+          { name: 'cf-14', action: 'Allow', ipAddressRange: '172.64.0.0/13'    }
+          { name: 'cf-15', action: 'Allow', ipAddressRange: '131.0.72.0/22'    }
+          // Cloudflare IPv6 ranges
+          { name: 'cf-v6-1', action: 'Allow', ipAddressRange: '2400:cb00::/32' }
+          { name: 'cf-v6-2', action: 'Allow', ipAddressRange: '2606:4700::/32' }
+          { name: 'cf-v6-3', action: 'Allow', ipAddressRange: '2803:f800::/32' }
+          { name: 'cf-v6-4', action: 'Allow', ipAddressRange: '2405:b500::/32' }
+          { name: 'cf-v6-5', action: 'Allow', ipAddressRange: '2405:8100::/32' }
+          { name: 'cf-v6-6', action: 'Allow', ipAddressRange: '2a06:98c0::/29' }
+          { name: 'cf-v6-7', action: 'Allow', ipAddressRange: '2c0f:f248::/32' }
+        ]
       }
       secrets: [
         { name: 'sb-turn-secret', value: sbTurnSharedSecret }
@@ -110,14 +165,31 @@ resource app 'Microsoft.App/containerApps@2023-05-01' = {
     }
     template: {
       scale: {
+        // CRITICAL: must remain 1/1 while SQLite is the DB engine.
+        // WAL file locks are node-local — a second replica corrupts the database.
         minReplicas: 1
         maxReplicas: 1
       }
       volumes: [
         {
           name: 'sb-data'
-          storageType: 'AzureFile'
-          storageName: 'sb-data'
+          storageType: 'NfsAzureFile'
+          storageName: 'sb-nfs-storage'
+        }
+      ]
+      // Init container runs once before the server starts on each pod creation.
+      // Ensures /data is owned by UID 65532 on first mount (NFS share arrives owned by root).
+      // Pin the image by digest at deploy time to avoid supply-chain risk on a root-capable container.
+      // To resolve: docker pull alpine:3.19 --platform linux/amd64 && docker inspect --format='{{index .RepoDigests 0}}'
+      initContainers: [
+        {
+          name: 'init-chown-data'
+          image: 'alpine:3.19'  // TODO: pin by digest before first production deploy
+          command: ['/bin/sh', '-c', 'chown -R 65532:65532 /data']
+          volumeMounts: [
+            { volumeName: 'sb-data', mountPath: '/data' }
+          ]
+          resources: { cpu: json('0.25'), memory: '0.5Gi' }
         }
       ]
       containers: [
@@ -127,7 +199,7 @@ resource app 'Microsoft.App/containerApps@2023-05-01' = {
           env: [
             { name: 'SB_ENV', value: 'prod' }
             { name: 'SB_BASE_URL', value: 'https://singing.rcnx.io' }
-            { name: 'SB_DATA_DIR', value: '/tmp' }
+            { name: 'SB_DATA_DIR', value: '/data' }
             { name: 'SB_STATIC_DIR', value: '/app/web' }
             { name: 'SB_TURN_HOST', value: 'turn.singing.rcnx.io' }
             { name: 'SB_TURN_SHARED_SECRET', secretRef: 'sb-turn-secret' }
@@ -142,6 +214,11 @@ resource app 'Microsoft.App/containerApps@2023-05-01' = {
           volumeMounts: [
             { volumeName: 'sb-data', mountPath: '/data' }
           ]
+          securityContext: {
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+          }
           probes: [
             {
               type: 'Liveness'
@@ -172,3 +249,4 @@ resource app 'Microsoft.App/containerApps@2023-05-01' = {
 
 output appFqdn string = app.properties.configuration.ingress.fqdn
 output appId string = app.id
+output nfsStorageAccountName string = nfsStorageAccount.name

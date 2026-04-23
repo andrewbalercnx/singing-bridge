@@ -506,6 +506,47 @@ _In-session frontend_
 
 ---
 
+## Sprint 16: Persistent database
+
+**Goal:** Replace the ephemeral SQLite-on-`/tmp` workaround with a durable database, so teacher accounts, sessions, recordings, and accompaniment metadata survive deploys and restarts.
+
+**Background:**
+Azure Container Apps mount Azure Files over SMB, which does not support the POSIX advisory locks SQLite WAL mode requires. The current workaround is `SB_DATA_DIR=/tmp`, meaning the database is wiped on every redeploy. All teacher data — accounts, session history, recordings, accompaniment library — is lost.
+
+**Options analysis (first deliverable in the plan):**
+
+Evaluate each option against three axes for a small system (handful of teachers, ~100 sessions/month):
+
+| Option | Operational complexity | Robustness | Est. monthly cost |
+|--------|----------------------|-----------|-----------------|
+| **A. SQLite on Azure Disk (Premium SSD P2, block storage)** | Low — no code changes; WAL re-enabled; single-connection limit lifted | Medium — block storage is durable; no HA; single-replica constraint stays | ~$2–3 (32 GB P2 disk attached to Container App) |
+| **B. Turso (libSQL cloud)** | Low-medium — `libsql` Rust client replaces `sqlx sqlite`; SQL dialect identical; multi-connection pool | Medium-high — managed, replicated, automatic backups; no infra to operate | Free tier (9 GB, 500 DBs) → $29/month Scaler |
+| **C. Neon (serverless PostgreSQL)** | Medium — sqlx dialect change (`sqlite` → `postgres`); SQL rewrites for `RETURNING`, `SERIAL`, JSON ops | High — fully managed, HA, PITR backups, scales to zero | Free tier (0.5 vCPU, 3 GB) → $19/month Launch |
+| **D. Azure Database for PostgreSQL Flexible Server (burstable B1ms)** | Medium — same sqlx dialect change as C | High — managed, HA option, Azure-native (same region, VNet-peerable) | ~$13–17/month always-on |
+
+Recommendation to evaluate during planning: **Option B (Turso)** for lowest migration effort at zero cost for current scale, with **Option C (Neon)** as the upgrade path if PostgreSQL features are needed. Option A is viable if we want to stay on Azure infra only. Option D is over-provisioned at this scale.
+
+**Deliverables:**
+- Options analysis in `PLAN_Sprint16.md` with a final recommendation and rationale
+- Chosen backend provisioned and accessible from Container App (credentials in Azure Key Vault / env)
+- `server/src/db.rs` updated: connection string, pool size, dialect (if switching from SQLite)
+- All SQL migrations ported to the new dialect (if PostgreSQL); SQLite-specific pragmas removed
+- Schema-only data migration script: creates tables in new DB; existing ephemeral data is accepted as lost (no row migration needed — no production data exists)
+- `server/src/config.rs`: `db_url` env var points at new backend; `SB_DATA_DIR` no longer required for DB
+- `knowledge/` updated: deployment target section, runbook updated for new DB provisioning/backup steps
+- All existing Rust integration tests pass against the new backend (test harness updated if dialect changes)
+
+**Exit criteria:**
+- Deploy the server to Azure Container Apps; restart the container; teacher account created before restart is still present after restart
+- `cargo test` passes with the new DB backend
+- No reference to `/tmp` SQLite path in production config
+- Runbook documents how to take a backup and how to restore from backup
+- Connection pool is no longer capped at 1
+
+**Status:** PENDING
+
+---
+
 ## Open items (noted, not blocking MVP)
 
 - Persistent "my students" list for the teacher — deliberately out of MVP; addressed partially by Sprint 11 history

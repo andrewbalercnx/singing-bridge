@@ -116,8 +116,13 @@ Three tiers, evaluated at the landing page:
 
 - **Compute**: Rust signalling + static-asset server on Azure
   Container Apps.
-- **Persistence**: SQLite on attached volume. Defer Azure SQL until
-  actually needed.
+- **Persistence**: SQLite on Azure Files NFS v4.1 (Sprint 16). NFS
+  is mounted over the Azure backbone (region-internal); traffic is
+  not TLS-encrypted at the NFS layer. **Accepted risk:** the DB
+  contains Argon2id hashes and HMAC session tokens, not plaintext
+  credentials. Azure network isolation and short session TTLs
+  (30 days) are the mitigations. Revisit before multi-region expansion
+  or if regulatory requirements change.
 - **TURN**: coturn on an Azure VM with a static public IP. TURN (UDP)
   cannot be proxied through Cloudflare and must be directly routable.
 - **Edge**: Cloudflare for DNS, TLS termination, static-asset CDN, and

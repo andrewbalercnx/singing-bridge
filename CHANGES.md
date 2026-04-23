@@ -29,7 +29,7 @@
 - `server/tests/common/mod.rs` — make_session asserts message types
 - `tests/e2e/accompaniment.spec.ts` — 11 E2E scenarios (Playwright)
 
-**Commit:** `TBD`
+**Commit:** `0367407`
 
 ## Sprint 13: Library Management UI — 2026-04-23
 

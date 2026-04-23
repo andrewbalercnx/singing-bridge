@@ -114,3 +114,4 @@ Thumbs.db
 .playwright-mcp/
 data/dev-mail/
 test-results/
+app.yaml

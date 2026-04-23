@@ -9,7 +9,7 @@
 // Exports: detectBrowser, BROWSER_FLOORS, BROWSER_UA_FIXTURES
 // Depends: none
 // Invariants: no DOM access; no network; pure function of (ua, features).
-// Last updated: Sprint 3 (2026-04-17) -- initial implementation
+// Last updated: Sprint 13 (2026-04-22) -- fix iOS degradation message; covers all browsers not just Safari
 
 (function (root, factory) {
   'use strict';
@@ -97,7 +97,7 @@
       reasons.push('This browser is missing WebRTC support required for the lesson tool.');
     } else if (ios) {
       tier = 'degraded';
-      reasons.push('iOS Safari forces voice processing we cannot disable; audio quality will be reduced.');
+      reasons.push('iOS forces voice processing on all browsers; audio quality will be reduced.');
     } else if (nv.name === 'Firefox' && device === 'phone') {
       tier = 'degraded';
       reasons.push('Android Firefox audio processing differs from the desktop version.');
@@ -133,7 +133,7 @@
       'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
     chrome_android_current:
       'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36',
-    chrome_ios: // CriOS — must resolve to degraded via iOS branch
+    chrome_ios: // CriOS — iOS forces voice processing on all browsers; degraded
       'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/124.0.0.0 Mobile/15E148 Safari/604.1',
     firefox_desktop_current:
       'Mozilla/5.0 (X11; Linux x86_64; rv:124.0) Gecko/20100101 Firefox/124.0',

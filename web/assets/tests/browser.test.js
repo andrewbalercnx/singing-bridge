@@ -35,7 +35,7 @@ test('in-app WebView UAs all map to unworkable', () => {
   }
 });
 
-test('iOS UAs always map to degraded regardless of Safari version', () => {
+test('iOS UAs always map to degraded — iOS forces voice processing on all browsers', () => {
   const r1 = detectBrowser(BROWSER_UA_FIXTURES.safari_ios_17, FEATURES_OK);
   assert.equal(r1.tier, 'degraded');
   assert.equal(r1.isIOS, true);

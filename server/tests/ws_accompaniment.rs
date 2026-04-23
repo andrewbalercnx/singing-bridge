@@ -128,7 +128,7 @@ async fn test_2_pause_student_receives_full_snapshot_with_is_playing_false() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn test_3_resume_from_pause_reuses_wav_url() {
+async fn test_3_resume_from_pause_issues_fresh_token() {
     let app = spawn_app().await;
     let cookie = app.signup_teacher("t@test.example", "room1").await;
     let teacher_id: i64 =

@@ -301,6 +301,13 @@ mod tests {
                 text: "be right with you".into(),
             },
             ClientMsg::HeadphonesConfirmed,
+            ClientMsg::AccompanimentPlay {
+                asset_id: 42,
+                variant_id: 7,
+                position_ms: 1000,
+            },
+            ClientMsg::AccompanimentPause { position_ms: 500 },
+            ClientMsg::AccompanimentStop,
         ];
         for c in cases {
             let s = serde_json::to_string(&c).unwrap();
@@ -354,6 +361,37 @@ mod tests {
             },
             ServerMsg::Chat { from: Role::Teacher, text: "hi".into() },
             ServerMsg::LobbyMessage { text: "starting soon".into() },
+            // New in Sprint 14: Forbidden error variant.
+            ServerMsg::Error {
+                code: ErrorCode::Forbidden,
+                message: "not a teacher".into(),
+            },
+            // New in Sprint 14: populated AccompanimentState.
+            ServerMsg::AccompanimentState {
+                asset_id: Some(1),
+                variant_id: Some(2),
+                is_playing: true,
+                position_ms: 1000,
+                tempo_pct: Some(100),
+                wav_url: Some("http://example.com/a.wav".into()),
+                page_urls: Some(vec!["http://example.com/p1.png".into()]),
+                bar_coords: Some(vec![]),
+                bar_timings: Some(vec![]),
+                server_time_ms: 1_000_000,
+            },
+            // New in Sprint 14: cleared AccompanimentState (asset_id=None).
+            ServerMsg::AccompanimentState {
+                asset_id: None,
+                variant_id: None,
+                is_playing: false,
+                position_ms: 0,
+                tempo_pct: None,
+                wav_url: None,
+                page_urls: None,
+                bar_coords: None,
+                bar_timings: None,
+                server_time_ms: 1_000_000,
+            },
         ];
         for c in cases {
             let s = serde_json::to_string(&c).unwrap();

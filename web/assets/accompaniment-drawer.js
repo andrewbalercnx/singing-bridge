@@ -150,8 +150,6 @@
       if (!barTimings || !seekToBar) return;
       (function tick() {
         var currentMs = serverPositionMs + (Date.now() - clientRefTime) + skewMs;
-        var effectiveTempoPct = currentBarTimings;
-        // Use module-scoped tempo from the last updateState call.
         var tempo = _lastTempoPct;
         if (!tempo || tempo <= 0) {
           console.warn('[accompaniment-drawer] tempo_pct invalid, falling back to 100');
@@ -250,10 +248,8 @@
       if (wavUrl && audio) {
         if (audio.src !== wavUrl) {
           audio.src = wavUrl;
-          audio.currentTime = serverPositionMs / 1000;
-        } else {
-          audio.currentTime = serverPositionMs / 1000;
         }
+        audio.currentTime = serverPositionMs / 1000;
 
         if (isPlaying) {
           audio.play().catch(function (e) {

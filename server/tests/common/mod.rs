@@ -499,7 +499,8 @@ pub async fn make_session(
 ) -> (Ws, Ws) {
     let mut teacher = app.open_ws(Some(cookie), None).await;
     send_ws(&mut teacher, &serde_json::json!({"type":"lobby_watch","slug":slug})).await;
-    let _ = recv_json(&mut teacher).await;
+    let lobby_init = recv_json(&mut teacher).await;
+    assert_eq!(lobby_init["type"], "lobby_state", "expected initial lobby_state");
 
     let mut student = app.open_ws(None, None).await;
     send_ws(&mut student, &serde_json::json!({
@@ -508,13 +509,18 @@ pub async fn make_session(
     })).await;
 
     let update = recv_json(&mut teacher).await;
+    assert_eq!(update["type"], "lobby_state", "expected lobby_state with student");
     let entry_id = update["entries"][0]["id"].as_str().unwrap().to_string();
     send_ws(&mut teacher, &serde_json::json!({"type":"lobby_admit","slug":slug,"entry_id":entry_id})).await;
 
-    let _admitted = recv_json(&mut student).await;
-    let _pc_student = recv_json(&mut student).await;
-    let _pc_teacher = recv_json(&mut teacher).await;
-    let _lobby_update = recv_json(&mut teacher).await;
+    let admitted = recv_json(&mut student).await;
+    assert_eq!(admitted["type"], "admitted", "expected admitted for student");
+    let pc_student = recv_json(&mut student).await;
+    assert_eq!(pc_student["type"], "peer_connected", "expected peer_connected for student");
+    let pc_teacher = recv_json(&mut teacher).await;
+    assert_eq!(pc_teacher["type"], "peer_connected", "expected peer_connected for teacher");
+    let lobby_update = recv_json(&mut teacher).await;
+    assert_eq!(lobby_update["type"], "lobby_state", "expected lobby_state after admit");
 
     (teacher, student)
 }

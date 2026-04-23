@@ -611,6 +611,76 @@ async fn media_token_invalidated_after_asset_delete() {
 }
 
 // ---------------------------------------------------------------------------
+// Regression guard: library-issued tokens must use cacheable Cache-Control,
+// not the no-store policy reserved for accompaniment session tokens.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn media_token_library_cache_control() {
+    let app = common::spawn_app().await;
+    let cookie = app.signup_teacher("t@test.com", "room-a").await;
+
+    // Upload a PDF asset so we have an accompaniment row with a page blob.
+    let r = app.client
+        .post(app.url("/teach/room-a/library/assets"))
+        .header("cookie", format!("sb_session={cookie}"))
+        .header("x-title", "Cache Test")
+        .body(PDF_HEADER.to_vec())
+        .send()
+        .await
+        .unwrap();
+    let id = r.json::<serde_json::Value>().await.unwrap()["id"].as_i64().unwrap();
+
+    // Insert a page blob and link it.
+    let page_bytes = b"\x89PNG cache test";
+    let page_key = format!("{}.png", uuid::Uuid::new_v4());
+    use std::pin::Pin;
+    app.state
+        .blob
+        .put(&page_key, Box::pin(std::io::Cursor::new(page_bytes.to_vec())) as Pin<Box<dyn tokio::io::AsyncRead + Send>>)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE accompaniments SET page_blob_keys_json = ? WHERE id = ?")
+        .bind(serde_json::to_string(&vec![&page_key]).unwrap())
+        .bind(id)
+        .execute(&app.state.db)
+        .await
+        .unwrap();
+
+    // GET /assets/:id issues a library token (no_cache = false).
+    let detail = app.client
+        .get(app.url(&format!("/teach/room-a/library/assets/{id}")))
+        .header("cookie", format!("sb_session={cookie}"))
+        .send()
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap();
+    let token = detail["page_tokens"][0].as_str().unwrap().to_string();
+
+    // Library tokens must use the cacheable policy, not no-store.
+    let media = app.client
+        .get(app.url(&format!("/api/media/{token}")))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(media.status(), 200);
+    let cache_control = media
+        .headers()
+        .get("cache-control")
+        .expect("Cache-Control header present")
+        .to_str()
+        .unwrap();
+    assert!(
+        cache_control.contains("private") && cache_control.contains("max-age=300"),
+        "library token must use private, max-age=300 but got: {cache_control}"
+    );
+
+    app.shutdown().await;
+}
+
+// ---------------------------------------------------------------------------
 // Sidecar proxy — wiremock-backed happy path for /parts endpoint
 // ---------------------------------------------------------------------------
 

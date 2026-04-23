@@ -596,9 +596,15 @@ def call_claude_cli(
             pass
 
     if result.returncode != 0:
-        stderr_first_line = (result.stderr or "").split("\n")[0][:200]
+        stderr_text = (result.stderr or "")
+        stderr_first_line = stderr_text.split("\n")[0][:200]
         print(f"  [debug] claude stderr: {stderr_first_line}", file=sys.stderr)
-        raise RuntimeError(f"claude CLI exited {result.returncode}")
+        # Embed a detectable tag so callers can apply longer backoff for rate limits.
+        rate_limit_signals = ("rate limit", "rate_limit", "429", "too many requests",
+                              "overloaded", "capacity")
+        is_rate_limit = any(s in stderr_text.lower() for s in rate_limit_signals)
+        tag = " [rate-limit]" if is_rate_limit else ""
+        raise RuntimeError(f"claude CLI exited {result.returncode}{tag}")
     output = result.stdout.strip()
     if not output:
         raise RuntimeError("claude CLI produced no output")
@@ -1462,12 +1468,15 @@ def run_council_member(
             primary_err = err
             primary_type = type(err).__name__
             if attempt == 0:
+                is_rate_limit = "[rate-limit]" in str(err)
+                actual_delay = 45 if is_rate_limit else retry_delay
+                delay_reason = "rate-limit backoff" if is_rate_limit else "retry"
                 print(
                     f"  [debug] {member['label']} attempt 1 failed "
-                    f"({primary_type}): {err}, retrying in {retry_delay}s...",
+                    f"({primary_type}): {err}, retrying in {actual_delay}s ({delay_reason})...",
                     file=sys.stderr,
                 )
-                time.sleep(retry_delay)
+                time.sleep(actual_delay)
             else:
                 print(f"  [debug] {member['label']} attempt 2 failed ({primary_type}): {err}", file=sys.stderr)
 
@@ -1553,8 +1562,11 @@ def run_consolidator(
         except Exception as err:
             primary_err = err
             if attempt == 0:
-                print(f"  [debug] Consolidator attempt 1 failed ({type(err).__name__}), retrying...", file=sys.stderr)
-                time.sleep(retry_delay)
+                is_rate_limit = "[rate-limit]" in str(err)
+                actual_delay = 45 if is_rate_limit else retry_delay
+                delay_reason = "rate-limit backoff" if is_rate_limit else "retry"
+                print(f"  [debug] Consolidator attempt 1 failed ({type(err).__name__}): {err}, retrying in {actual_delay}s ({delay_reason})...", file=sys.stderr)
+                time.sleep(actual_delay)
             else:
                 print(f"  [debug] Consolidator attempt 2 failed: {err}", file=sys.stderr)
 
@@ -2536,8 +2548,8 @@ def main():
                     import sqlite3 as _sqlite3
                     with _sqlite3.connect(str(db_path)) as _conn:
                         row = _conn.execute(
-                            "SELECT COUNT(*) FROM symbols WHERE file_path LIKE '%.js' "
-                            "OR file_path LIKE '%.ts' OR file_path LIKE '%.html'"
+                            "SELECT COUNT(*) FROM symbols s JOIN files f ON s.file_id = f.id "
+                            "WHERE f.path LIKE '%.js' OR f.path LIKE '%.ts' OR f.path LIKE '%.html'"
                         ).fetchone()
                         cg_token_est = row[0] if row else 0
                 except Exception:

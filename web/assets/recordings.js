@@ -31,10 +31,12 @@
 
   function setSort(sort) {
     currentSort = sort;
-    document.getElementById('sort-date').setAttribute('aria-pressed', sort === 'date' ? 'true' : 'false');
-    document.getElementById('sort-date').className = sort === 'date' ? 'sort-active' : '';
-    document.getElementById('sort-student').setAttribute('aria-pressed', sort === 'student' ? 'true' : 'false');
-    document.getElementById('sort-student').className = sort === 'student' ? 'sort-active' : '';
+    var dateBtn = document.getElementById('sort-date');
+    var studentBtn = document.getElementById('sort-student');
+    dateBtn.setAttribute('aria-pressed', sort === 'date' ? 'true' : 'false');
+    dateBtn.classList.toggle('sort-active', sort === 'date');
+    studentBtn.setAttribute('aria-pressed', sort === 'student' ? 'true' : 'false');
+    studentBtn.classList.toggle('sort-active', sort === 'student');
     loadRecordings();
   }
 

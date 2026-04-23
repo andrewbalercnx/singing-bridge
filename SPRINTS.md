@@ -445,7 +445,7 @@ _Media token delivery_
 - Sidecar 503 shows the banner without breaking upload or delete
 - All JS tests pass; no regression in existing test suite
 
-**Status:** PENDING
+**Status:** COMPLETE — 2026-04-23, commit `e116b95` (plan approved R5)
 
 ---
 
@@ -477,7 +477,7 @@ _In-session frontend_
 - All existing A/V, chat, and recording flows unaffected
 - All new JS and Rust WS tests pass
 
-**Status:** PENDING
+**Status:** IN PROGRESS — plan approved R5 (2026-04-23)
 
 ---
 

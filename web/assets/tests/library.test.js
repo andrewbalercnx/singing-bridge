@@ -1089,6 +1089,10 @@ test('encodeVlq_zero', function () {
   assert.deepEqual(lib.encodeVlq(0), [0x00]);
 });
 
+test('encodeVlq_negative_throws', function () {
+  assert.throws(function () { lib.encodeVlq(-1); }, RangeError);
+});
+
 test('encodeVlq_127', function () {
   assert.deepEqual(lib.encodeVlq(127), [0x7F]);
 });
@@ -1244,6 +1248,16 @@ test('serializeMidi_throws_on_ticksPerBeat_negative', function () {
   assert.throws(function () { lib.serializeMidi([], { ticksPerBeat: -1 }); }, RangeError);
 });
 
+test('serializeMidi_throws_on_ticksPerBeat_above_ppq_limit', function () {
+  assert.throws(function () { lib.serializeMidi([], { ticksPerBeat: 32768 }); }, RangeError);
+});
+
+test('serializeMidi_accepts_ticksPerBeat_32767', function () {
+  var buf = lib.serializeMidi([], { ticksPerBeat: 32767 });
+  assert.equal(buf[12], 0x7F);
+  assert.equal(buf[13], 0xFF);
+});
+
 test('serializeMidi_negative_elapsedMs_clamped_to_tick_0', function () {
   var evNeg = [{ elapsedMs: -500, type: 'note_on', channel: 0, data1: 60, data2: 64 }];
   var evZero = [{ elapsedMs: 0, type: 'note_on', channel: 0, data1: 60, data2: 64 }];
@@ -1355,7 +1369,8 @@ test('handleMidiMessage_note_display_updated_on_held', function () {
 
 test('handleMidiMessage_cap_10000_stops_recording', function () {
   var state = makeMidiState();
-  // Fill buffer to exactly 10000
+  var sentinelHandler = function () {};
+  state.port.onmidimessage = sentinelHandler; // pre-set to non-null so detachment is verifiable
   for (var i = 0; i < 10000; i++) {
     state.events.push({ elapsedMs: i, type: 'note_on', channel: 0, data1: 60, data2: 80 });
   }
@@ -1363,6 +1378,7 @@ test('handleMidiMessage_cap_10000_stops_recording', function () {
   assert.equal(result, 'capped');
   assert.equal(state.recording, false);
   assert.equal(state.events.length, 10000); // cap-triggering event NOT pushed
+  assert.notEqual(state.port.onmidimessage, sentinelHandler); // handler detached
   assert.equal(state.port.onmidimessage, null);
 });
 
@@ -1374,7 +1390,7 @@ test('handleMidiMessage_cap_shows_status_message', function () {
     state.events.push({ elapsedMs: i, type: 'note_on', channel: 0, data1: 60, data2: 80 });
   }
   lib.handleMidiMessage(state, midiEvt([0x90, 62, 80]));
-  assert.ok(statusEl.textContent.length > 0);
+  assert.ok(statusEl.textContent.indexOf('limit') !== -1, 'status should mention limit');
 });
 
 // ---------------------------------------------------------------------------
@@ -1388,10 +1404,12 @@ test('initMidiRecording_shows_unavailable_when_no_provider', function () {
     if (id === 'midi-unavailable-note') return noteEl;
     return null;
   };
-  // Pass null provider → no MIDI API → unavailable note shown
-  lib.initMidiRecording(null, null);
-  assert.equal(noteEl.hidden, false);
-  globalThis.document.getElementById = savedGetEl;
+  try {
+    lib.initMidiRecording(null, null);
+    assert.equal(noteEl.hidden, false);
+  } finally {
+    globalThis.document.getElementById = savedGetEl;
+  }
 });
 
 test('initMidiRecording_shows_unavailable_on_rejected_promise', async function () {
@@ -1402,10 +1420,13 @@ test('initMidiRecording_shows_unavailable_on_rejected_promise', async function (
     return null;
   };
   var rejectingProvider = function () { return Promise.reject(new Error('permission denied')); };
-  lib.initMidiRecording(null, rejectingProvider);
-  await new Promise(function (r) { setTimeout(r, 20); });
-  assert.equal(noteEl.hidden, false);
-  globalThis.document.getElementById = savedGetEl;
+  try {
+    lib.initMidiRecording(null, rejectingProvider);
+    await new Promise(function (r) { setTimeout(r, 20); });
+    assert.equal(noteEl.hidden, false);
+  } finally {
+    globalThis.document.getElementById = savedGetEl;
+  }
 });
 
 test('initMidiRecording_reveals_section_on_access_with_port', async function () {
@@ -1422,10 +1443,13 @@ test('initMidiRecording_reveals_section_on_access_with_port', async function () 
     if (id === 'midi-device-select') return null;
     return null;
   };
-  lib.initMidiRecording(null, successProvider);
-  await new Promise(function (r) { setTimeout(r, 20); });
-  assert.equal(sectionEl.hidden, false);
-  globalThis.document.getElementById = savedGetEl;
+  try {
+    lib.initMidiRecording(null, successProvider);
+    await new Promise(function (r) { setTimeout(r, 20); });
+    assert.equal(sectionEl.hidden, false);
+  } finally {
+    globalThis.document.getElementById = savedGetEl;
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -1635,4 +1659,40 @@ test('stopMidiCapture_returns_events_and_clears_module_state', function () {
   var events = lib.stopMidiCapture(); // idempotent when not recording
   assert.ok(Array.isArray(events));
   globalThis.document.getElementById = savedGetEl;
+});
+
+// ---------------------------------------------------------------------------
+// Lifecycle integration — start → capture → stop roundtrip
+// ---------------------------------------------------------------------------
+
+test('startMidiCapture_stopMidiCapture_full_capture_roundtrip', async function () {
+  var mockPort = { id: 'p1', name: 'Piano', onmidimessage: null };
+  var mockInputs = new Map([['p1', mockPort]]);
+  var provider = function () {
+    return Promise.resolve({ inputs: mockInputs, onstatechange: null });
+  };
+  var savedGetEl = globalThis.document.getElementById;
+  globalThis.document.getElementById = function () { return null; };
+  try {
+    lib.initMidiRecording(null, provider);
+    await new Promise(function (r) { setTimeout(r, 20); });
+
+    lib.startMidiCapture();
+    assert.ok(mockPort.onmidimessage !== null, 'port handler wired after startMidiCapture');
+
+    // Simulate one MIDI note_on event through the actual wired handler.
+    mockPort.onmidimessage({ data: new Uint8Array([0x90, 60, 80]), timeStamp: 500 });
+
+    var events = lib.stopMidiCapture();
+    assert.equal(events.length, 1, 'stopMidiCapture returns the captured event');
+    assert.equal(events[0].type, 'note_on');
+    assert.equal(events[0].data1, 60);
+    assert.equal(mockPort.onmidimessage, null, 'port handler detached after stop');
+
+    // Second stop returns empty — state was cleared.
+    var events2 = lib.stopMidiCapture();
+    assert.equal(events2.length, 0, 'second stopMidiCapture returns empty after state cleared');
+  } finally {
+    globalThis.document.getElementById = savedGetEl;
+  }
 });

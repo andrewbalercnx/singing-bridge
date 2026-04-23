@@ -611,8 +611,10 @@
   // ---------------------------------------------------------------------------
 
   // Standard variable-length quantity encoding (MIDI spec section 1).
+  // Throws RangeError for negative values to surface upstream delta-timing bugs.
   function encodeVlq(value) {
-    if (value <= 0) return [0x00];
+    if (value < 0) throw new RangeError('encodeVlq: value must be >= 0');
+    if (value === 0) return [0x00];
     var bytes = [];
     bytes.push(value & 0x7F);
     value = value >>> 7;
@@ -638,6 +640,9 @@
     var bpm = (opts && opts.bpm != null) ? opts.bpm : 120;
     if (typeof ticksPerBeat !== 'number' || ticksPerBeat <= 0) {
       throw new RangeError('ticksPerBeat must be > 0');
+    }
+    if (ticksPerBeat > 32767) {
+      throw new RangeError('ticksPerBeat must be <= 32767 (MIDI PPQ limit)');
     }
     if (typeof bpm !== 'number' || bpm <= 0) {
       throw new RangeError('bpm must be > 0');
@@ -995,6 +1000,7 @@
     serializeMidi: serializeMidi,
     handleMidiMessage: handleMidiMessage,
     initMidiRecording: initMidiRecording,
+    startMidiCapture: startMidiCapture,
     stopMidiCapture: stopMidiCapture,
     // Test-only hook: set _pendingAutoExpandId without triggering DOM/upload.
     _setPendingAutoExpandId: function (id) { _pendingAutoExpandId = id; },

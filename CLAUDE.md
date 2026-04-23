@@ -75,20 +75,51 @@ working in that directory.
 When the user says "Sprint N":
 
 1. Read `SPRINTS.md` for goal, deliverables, exit criteria.
-2. `python3 scripts/index-codebase.py --incremental`.
-3. `python3 scripts/index-codebase.py --context-for <key files>`.
-4. Draft `PLAN_Sprint<N>.md` with: problem statement + spec refs;
+2. **Before drafting the plan, verify you can answer all three
+   User Outcome questions** (see "Mandatory User Outcome section"
+   below). Check `SPRINTS.md`, `knowledge/`, and any prior sprint
+   plans. If any answer is absent or unclear, **stop and ask the
+   human** before proceeding. Do not infer or invent answers.
+3. `python3 scripts/index-codebase.py --incremental`.
+4. `python3 scripts/index-codebase.py --context-for <key files>`.
+5. Draft `PLAN_Sprint<N>.md` with: **User Outcome section
+   (MANDATORY — see below)**; problem statement + spec refs;
    Current State from codegraph; proposed solution with alternatives;
    component-by-component design with file paths; **Test Strategy
    section (MANDATORY — see below)**; risks and mitigations.
-5. Request plan review: `./scripts/council-review.py plan <N> "<title>"`.
-6. Iterate on feedback until `APPROVED`.
-7. Implement. **Commit before requesting code review** — reviewers
+6. Request plan review: `./scripts/council-review.py plan <N> "<title>"`.
+7. Iterate on feedback until `APPROVED`.
+8. Implement. **Commit before requesting code review** — reviewers
    diff against `.sprint-base-commit-<N>`, and untracked files are
    rejected. Code review:
    `./scripts/council-review.py code <N> "<title>"`.
    (Use `--allow-untracked` only for pre-commit approach-review.)
-8. On APPROVED, archive: `./scripts/archive-plan.sh <N> "<title>"`.
+9. On APPROVED, archive: `./scripts/archive-plan.sh <N> "<title>"`.
+
+### Mandatory User Outcome section
+
+Every `PLAN_Sprint<N>.md` MUST include `## User Outcome` immediately
+after the Problem Statement, with answers to these three questions:
+
+1. **Who benefits and what job are they doing?**
+   Name the user (teacher / student / both) and describe the real-world
+   task they are trying to accomplish — not the feature, the goal behind
+   it. E.g. "A voice teacher preparing tonight's lesson wants to attach a
+   backing track so the student can practise timing without the teacher
+   playing piano live."
+
+2. **What does success look like from the user's perspective?**
+   A concrete, observable outcome — not "tests pass". E.g. "The teacher
+   sets up accompaniment in under 2 minutes without reading any
+   instructions; the student hears the track start at the same moment
+   the teacher clicks Play."
+
+3. **Why is this sprint the right next step for the product?**
+   One or two sentences on the business or product rationale — what
+   would be blocked or worse without this sprint.
+
+If the answers are not derivable from `SPRINTS.md` or `knowledge/`,
+ask the human before writing the plan (see step 2 of "Sprint N").
 
 ### Mandatory Test Strategy section
 

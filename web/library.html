@@ -2,7 +2,7 @@
 <!--
   File: web/library.html
   Purpose: Teacher accompaniment library — upload, OMR flow, synthesise, manage variants.
-  Last updated: Sprint 13 (2026-04-22) -- initial implementation
+  Last updated: Sprint 15 (2026-04-23) -- MIDI keyboard recording UI
 -->
 <html lang="en">
 <head>
@@ -38,6 +38,31 @@
       <p id="upload-error" class="error" hidden></p>
       <p id="upload-progress" hidden>Uploading…</p>
     </section>
+
+    <section id="midi-record-section" hidden>
+      <h2>Record from keyboard</h2>
+      <div id="midi-device-row" hidden>
+        <label for="midi-device-select">Keyboard
+          <select id="midi-device-select"></select>
+        </label>
+      </div>
+      <div id="midi-title-row">
+        <label for="midi-title-input">Title
+          <input type="text" id="midi-title-input" maxlength="255"
+                 placeholder="e.g. Ave Maria (improvised)">
+        </label>
+      </div>
+      <div id="midi-controls">
+        <button id="midi-record-btn" type="button">Start recording</button>
+        <button id="midi-stop-btn" type="button" hidden>Stop</button>
+      </div>
+      <p id="midi-note-display" aria-live="polite" hidden></p>
+      <p id="midi-upload-progress" hidden>Uploading…</p>
+      <p id="midi-error" class="error" hidden></p>
+    </section>
+    <p id="midi-unavailable-note" class="hint" hidden>
+      MIDI keyboard recording requires Chrome or Edge with a MIDI device connected.
+    </p>
 
     <ul id="asset-list" aria-live="polite"></ul>
     <p id="assets-empty" hidden>No assets yet. Upload a PDF, MIDI, or WAV above.</p>

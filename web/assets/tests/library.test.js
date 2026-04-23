@@ -1079,3 +1079,410 @@ test('hide503Banner_hides_element', function () {
   lib.hide503Banner(bannerEl);
   assert.equal(bannerEl.hidden, true);
 });
+
+// ---------------------------------------------------------------------------
+// VLQ encoding tests
+// ---------------------------------------------------------------------------
+
+test('encodeVlq_zero', function () {
+  assert.deepEqual(lib.encodeVlq(0), [0x00]);
+});
+
+test('encodeVlq_127', function () {
+  assert.deepEqual(lib.encodeVlq(127), [0x7F]);
+});
+
+test('encodeVlq_128', function () {
+  assert.deepEqual(lib.encodeVlq(128), [0x81, 0x00]);
+});
+
+test('encodeVlq_16383', function () {
+  assert.deepEqual(lib.encodeVlq(16383), [0xFF, 0x7F]);
+});
+
+test('encodeVlq_16384', function () {
+  assert.deepEqual(lib.encodeVlq(16384), [0x81, 0x80, 0x00]);
+});
+
+test('encodeVlq_4byte_boundary', function () {
+  // 2097151 = 0x1FFFFF -> [0xFF, 0xFF, 0x7F] (3 bytes)
+  assert.deepEqual(lib.encodeVlq(2097151), [0xFF, 0xFF, 0x7F]);
+  // 2097152 = 0x200000 -> [0x81, 0x80, 0x80, 0x00] (4 bytes)
+  assert.deepEqual(lib.encodeVlq(2097152), [0x81, 0x80, 0x80, 0x00]);
+});
+
+// ---------------------------------------------------------------------------
+// serializeMidi — byte-level invariants
+// ---------------------------------------------------------------------------
+
+test('serializeMidi_empty_starts_with_MThd', function () {
+  var buf = lib.serializeMidi([]);
+  assert.equal(buf[0], 0x4D); // M
+  assert.equal(buf[1], 0x54); // T
+  assert.equal(buf[2], 0x68); // h
+  assert.equal(buf[3], 0x64); // d
+});
+
+test('serializeMidi_empty_format_type1', function () {
+  var buf = lib.serializeMidi([]);
+  // bytes 8-9 = format word
+  assert.equal(buf[8], 0x00);
+  assert.equal(buf[9], 0x01);
+});
+
+test('serializeMidi_empty_numtracks_2', function () {
+  var buf = lib.serializeMidi([]);
+  // bytes 10-11 = numTracks
+  assert.equal(buf[10], 0x00);
+  assert.equal(buf[11], 0x02);
+});
+
+test('serializeMidi_empty_ticks_480_default', function () {
+  var buf = lib.serializeMidi([]);
+  // bytes 12-13 = ticks/beat
+  assert.equal(buf[12], 0x01);
+  assert.equal(buf[13], 0xE0); // 480 = 0x01E0
+});
+
+test('serializeMidi_empty_tempo_track_has_set_tempo', function () {
+  var buf = lib.serializeMidi([]);
+  // Tempo MTrk starts at byte 14+8 = 22
+  // MTrk header: 4D 54 72 6B at bytes 14..17
+  assert.equal(buf[14], 0x4D); // M
+  assert.equal(buf[15], 0x54); // T
+  assert.equal(buf[16], 0x72); // r
+  assert.equal(buf[17], 0x6B); // k
+  // Tempo track data starts at byte 22 (after 4-byte length)
+  assert.equal(buf[22], 0x00); // delta VLQ
+  assert.equal(buf[23], 0xFF); // meta event
+  assert.equal(buf[24], 0x51); // set-tempo type
+  assert.equal(buf[25], 0x03); // 3 data bytes
+});
+
+test('serializeMidi_empty_tempo_track_length_11', function () {
+  var buf = lib.serializeMidi([]);
+  // Tempo track chunk length at bytes 18-21
+  var len = (buf[18] << 24) | (buf[19] << 16) | (buf[20] << 8) | buf[21];
+  assert.equal(len, 11);
+});
+
+test('serializeMidi_empty_note_track_length_4', function () {
+  var buf = lib.serializeMidi([]);
+  // Note MTrk header starts after tempo chunk: 14 + 8 + 11 = 33
+  var noteHdrStart = 33;
+  assert.equal(buf[noteHdrStart], 0x4D);
+  assert.equal(buf[noteHdrStart + 1], 0x54);
+  assert.equal(buf[noteHdrStart + 2], 0x72);
+  assert.equal(buf[noteHdrStart + 3], 0x6B);
+  var len = (buf[noteHdrStart + 4] << 24) | (buf[noteHdrStart + 5] << 16) |
+            (buf[noteHdrStart + 6] << 8) | buf[noteHdrStart + 7];
+  assert.equal(len, 4); // just end-of-track: 00 FF 2F 00
+});
+
+test('serializeMidi_tempo_60bpm_encodes_1000000_micros', function () {
+  var buf = lib.serializeMidi([], { bpm: 60 });
+  // microsPerBeat = 1000000 = 0x0F4240
+  assert.equal(buf[26], 0x0F);
+  assert.equal(buf[27], 0x42);
+  assert.equal(buf[28], 0x40);
+});
+
+test('serializeMidi_both_tracks_end_with_end_of_track', function () {
+  var buf = lib.serializeMidi([]);
+  // Tempo track end-of-track: at bytes 29-32 (22+7 = 29)
+  assert.equal(buf[29], 0x00);
+  assert.equal(buf[30], 0xFF);
+  assert.equal(buf[31], 0x2F);
+  assert.equal(buf[32], 0x00);
+  // Note track end-of-track: at bytes 41-44 (33+8 = 41 start of data)
+  assert.equal(buf[41], 0x00);
+  assert.equal(buf[42], 0xFF);
+  assert.equal(buf[43], 0x2F);
+  assert.equal(buf[44], 0x00);
+});
+
+test('serializeMidi_delta_tick_500ms_120bpm_480tpb', function () {
+  // 500ms at 120 BPM = 1 beat = 480 ticks
+  var events = [{ elapsedMs: 500, type: 'note_on', channel: 0, data1: 60, data2: 80 }];
+  var buf = lib.serializeMidi(events, { bpm: 120, ticksPerBeat: 480 });
+  // Note track data starts at noteHdrStart + 8 = 41
+  var noteDataStart = 41;
+  // VLQ for 480: 480 = 0x1E0 -> [0x83, 0x60]
+  assert.equal(buf[noteDataStart], 0x83);
+  assert.equal(buf[noteDataStart + 1], 0x60);
+  assert.equal(buf[noteDataStart + 2], 0x90); // note_on ch0
+  assert.equal(buf[noteDataStart + 3], 60);   // middle C
+  assert.equal(buf[noteDataStart + 4], 80);   // velocity
+});
+
+test('serializeMidi_default_opts_same_as_explicit', function () {
+  var evs = [{ elapsedMs: 100, type: 'note_on', channel: 0, data1: 64, data2: 64 }];
+  var a = lib.serializeMidi(evs);
+  var b = lib.serializeMidi(evs, { ticksPerBeat: 480, bpm: 120 });
+  assert.equal(a.length, b.length);
+  for (var i = 0; i < a.length; i++) assert.equal(a[i], b[i]);
+});
+
+// ---------------------------------------------------------------------------
+// serializeMidi — guards
+// ---------------------------------------------------------------------------
+
+test('serializeMidi_throws_on_bpm_zero', function () {
+  assert.throws(function () { lib.serializeMidi([], { bpm: 0 }); }, RangeError);
+});
+
+test('serializeMidi_throws_on_bpm_negative', function () {
+  assert.throws(function () { lib.serializeMidi([], { bpm: -1 }); }, RangeError);
+});
+
+test('serializeMidi_throws_on_ticksPerBeat_zero', function () {
+  assert.throws(function () { lib.serializeMidi([], { ticksPerBeat: 0 }); }, RangeError);
+});
+
+test('serializeMidi_throws_on_ticksPerBeat_negative', function () {
+  assert.throws(function () { lib.serializeMidi([], { ticksPerBeat: -1 }); }, RangeError);
+});
+
+test('serializeMidi_negative_elapsedMs_clamped_to_tick_0', function () {
+  var evNeg = [{ elapsedMs: -500, type: 'note_on', channel: 0, data1: 60, data2: 64 }];
+  var evZero = [{ elapsedMs: 0, type: 'note_on', channel: 0, data1: 60, data2: 64 }];
+  var a = lib.serializeMidi(evNeg);
+  var b = lib.serializeMidi(evZero);
+  assert.equal(a.length, b.length);
+  for (var i = 0; i < a.length; i++) assert.equal(a[i], b[i]);
+});
+
+// ---------------------------------------------------------------------------
+// handleMidiMessage — filter and normalization
+// ---------------------------------------------------------------------------
+
+function makeMidiState() {
+  return {
+    recording: true,
+    captureStart: 0,
+    events: [],
+    heldNotes: {},
+    port: { onmidimessage: null },
+    noteDisplayEl: null,
+    statusEl: null,
+  };
+}
+
+function midiEvt(bytes, timeStamp) {
+  return { data: new Uint8Array(bytes), timeStamp: timeStamp || 0 };
+}
+
+test('handleMidiMessage_note_on_pushed_and_held', function () {
+  var state = makeMidiState();
+  var result = lib.handleMidiMessage(state, midiEvt([0x90, 60, 80]));
+  assert.equal(result, 'pushed');
+  assert.equal(state.events.length, 1);
+  assert.equal(state.events[0].type, 'note_on');
+  assert.equal(state.events[0].data1, 60);
+  assert.equal(state.heldNotes[60], true);
+});
+
+test('handleMidiMessage_note_off_pushed_and_released', function () {
+  var state = makeMidiState();
+  state.heldNotes[60] = true;
+  var result = lib.handleMidiMessage(state, midiEvt([0x80, 60, 0]));
+  assert.equal(result, 'pushed');
+  assert.equal(state.events[0].type, 'note_off');
+  assert.equal(state.heldNotes[60], undefined);
+});
+
+test('handleMidiMessage_note_on_velocity_zero_normalised_to_note_off', function () {
+  var state = makeMidiState();
+  state.heldNotes[60] = true;
+  lib.handleMidiMessage(state, midiEvt([0x90, 60, 0]));
+  assert.equal(state.events[0].type, 'note_off');
+  assert.equal(state.heldNotes[60], undefined);
+});
+
+test('handleMidiMessage_control_change_pushed', function () {
+  var state = makeMidiState();
+  var result = lib.handleMidiMessage(state, midiEvt([0xB0, 64, 127]));
+  assert.equal(result, 'pushed');
+  assert.equal(state.events[0].type, 'control_change');
+});
+
+test('handleMidiMessage_program_change_ignored', function () {
+  var state = makeMidiState();
+  var result = lib.handleMidiMessage(state, midiEvt([0xC0, 40, 0]));
+  assert.equal(result, 'ignored');
+  assert.equal(state.events.length, 0);
+});
+
+test('handleMidiMessage_sysex_ignored', function () {
+  var state = makeMidiState();
+  var result = lib.handleMidiMessage(state, midiEvt([0xF0, 0x7E, 0xF7]));
+  assert.equal(result, 'ignored');
+  assert.equal(state.events.length, 0);
+});
+
+test('handleMidiMessage_clock_ignored', function () {
+  var state = makeMidiState();
+  var result = lib.handleMidiMessage(state, midiEvt([0xF8]));
+  assert.equal(result, 'ignored');
+  assert.equal(state.events.length, 0);
+});
+
+test('handleMidiMessage_not_recording_ignored', function () {
+  var state = makeMidiState();
+  state.recording = false;
+  var result = lib.handleMidiMessage(state, midiEvt([0x90, 60, 80]));
+  assert.equal(result, 'ignored');
+  assert.equal(state.events.length, 0);
+});
+
+test('handleMidiMessage_elapsed_ms_computed_from_captureStart', function () {
+  var state = makeMidiState();
+  state.captureStart = 1000;
+  lib.handleMidiMessage(state, midiEvt([0x90, 60, 80], 1500));
+  assert.equal(state.events[0].elapsedMs, 500);
+});
+
+test('handleMidiMessage_note_display_updated_on_held', function () {
+  var displayEl = makeEl();
+  var state = makeMidiState();
+  state.noteDisplayEl = displayEl;
+  lib.handleMidiMessage(state, midiEvt([0x90, 60, 80])); // C4
+  assert.ok(displayEl.textContent.indexOf('C4') !== -1);
+  lib.handleMidiMessage(state, midiEvt([0x80, 60, 0]));  // release
+  assert.ok(displayEl.textContent.indexOf('C4') === -1);
+});
+
+test('handleMidiMessage_cap_10000_stops_recording', function () {
+  var state = makeMidiState();
+  // Fill buffer to exactly 10000
+  for (var i = 0; i < 10000; i++) {
+    state.events.push({ elapsedMs: i, type: 'note_on', channel: 0, data1: 60, data2: 80 });
+  }
+  var result = lib.handleMidiMessage(state, midiEvt([0x90, 62, 80]));
+  assert.equal(result, 'capped');
+  assert.equal(state.recording, false);
+  assert.equal(state.events.length, 10000); // cap-triggering event NOT pushed
+  assert.equal(state.port.onmidimessage, null);
+});
+
+test('handleMidiMessage_cap_shows_status_message', function () {
+  var state = makeMidiState();
+  var statusEl = makeEl();
+  state.statusEl = statusEl;
+  for (var i = 0; i < 10000; i++) {
+    state.events.push({ elapsedMs: i, type: 'note_on', channel: 0, data1: 60, data2: 80 });
+  }
+  lib.handleMidiMessage(state, midiEvt([0x90, 62, 80]));
+  assert.ok(statusEl.textContent.length > 0);
+});
+
+// ---------------------------------------------------------------------------
+// initMidiRecording — degradation
+// ---------------------------------------------------------------------------
+
+test('initMidiRecording_shows_unavailable_when_no_provider', function () {
+  var noteEl = makeEl(); noteEl.hidden = true;
+  var savedGetEl = globalThis.document.getElementById;
+  globalThis.document.getElementById = function (id) {
+    if (id === 'midi-unavailable-note') return noteEl;
+    return null;
+  };
+  // Pass null provider → no MIDI API → unavailable note shown
+  lib.initMidiRecording(null, null);
+  assert.equal(noteEl.hidden, false);
+  globalThis.document.getElementById = savedGetEl;
+});
+
+test('initMidiRecording_shows_unavailable_on_rejected_promise', async function () {
+  var noteEl = makeEl(); noteEl.hidden = true;
+  var savedGetEl = globalThis.document.getElementById;
+  globalThis.document.getElementById = function (id) {
+    if (id === 'midi-unavailable-note') return noteEl;
+    return null;
+  };
+  var rejectingProvider = function () { return Promise.reject(new Error('permission denied')); };
+  lib.initMidiRecording(null, rejectingProvider);
+  await new Promise(function (r) { setTimeout(r, 20); });
+  assert.equal(noteEl.hidden, false);
+  globalThis.document.getElementById = savedGetEl;
+});
+
+test('initMidiRecording_reveals_section_on_access_with_port', async function () {
+  var sectionEl = makeEl(); sectionEl.hidden = true;
+  var mockPort = { id: 'p1', name: 'Piano', onmidimessage: null };
+  var mockInputs = new Map([['p1', mockPort]]);
+  var successProvider = function () {
+    return Promise.resolve({ inputs: mockInputs, onstatechange: null });
+  };
+  var savedGetEl = globalThis.document.getElementById;
+  globalThis.document.getElementById = function (id) {
+    if (id === 'midi-record-section') return sectionEl;
+    if (id === 'midi-device-row') return null;
+    if (id === 'midi-device-select') return null;
+    return null;
+  };
+  lib.initMidiRecording(null, successProvider);
+  await new Promise(function (r) { setTimeout(r, 20); });
+  assert.equal(sectionEl.hidden, false);
+  globalThis.document.getElementById = savedGetEl;
+});
+
+// ---------------------------------------------------------------------------
+// Device picker XSS guard
+// ---------------------------------------------------------------------------
+
+test('initMidiRecording_device_picker_uses_textContent', async function () {
+  var optionTextContent = null;
+  var mockPort1 = { id: 'p1', name: '<script>alert(1)</script>', onmidimessage: null };
+  var mockPort2 = { id: 'p2', name: 'Piano 2', onmidimessage: null };
+  var mockInputs = new Map([['p1', mockPort1], ['p2', mockPort2]]);
+  var provider = function () {
+    return Promise.resolve({ inputs: mockInputs, onstatechange: null });
+  };
+  var appendedTexts = [];
+  var deviceSelect = makeEl();
+  deviceSelect.replaceChildren = function () { appendedTexts = []; };
+  deviceSelect.appendChild = function (opt) {
+    if (opt.textContent != null) appendedTexts.push(opt.textContent);
+  };
+  var savedGetEl = globalThis.document.getElementById;
+  globalThis.document.getElementById = function (id) {
+    if (id === 'midi-record-section') return makeEl();
+    if (id === 'midi-device-row') { var el = makeEl(); el.hidden = true; return el; }
+    if (id === 'midi-device-select') return deviceSelect;
+    return null;
+  };
+  lib.initMidiRecording(null, provider);
+  await new Promise(function (r) { setTimeout(r, 20); });
+  // XSS string stored as literal text, not parsed as HTML
+  assert.ok(appendedTexts.indexOf('<script>alert(1)</script>') !== -1);
+  globalThis.document.getElementById = savedGetEl;
+});
+
+// ---------------------------------------------------------------------------
+// startUpload — no-onSuccess regression
+// ---------------------------------------------------------------------------
+
+test('startUpload_no_onSuccess_completes_without_error', async function () {
+  globalThis.fetch = fetchStub(201, { id: 42, title: 'T', kind: 'midi' });
+  var progressEl = makeEl(); progressEl.hidden = true;
+  var errorEl = makeEl(); errorEl.hidden = true;
+  var uploadBtn = makeEl();
+  var loadCalled = false;
+  await new Promise(function (resolve) {
+    lib.startUpload({
+      file: { type: 'audio/midi' },
+      title: 'T',
+      uploadBtn: uploadBtn,
+      progressEl: progressEl,
+      errorEl: errorEl,
+      BASE: '/base',
+      loadAssets: function () { loadCalled = true; resolve(); },
+      listEl: makeEl(), emptyEl: makeEl(), assetsErrorEl: makeEl(), bannerEl: makeBannerEl(),
+      // no onSuccess
+    });
+  });
+  assert.equal(loadCalled, true);
+  assert.equal(errorEl.hidden, true);
+  delete globalThis.fetch;
+});

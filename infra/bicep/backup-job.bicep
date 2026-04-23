@@ -7,7 +7,10 @@
 param location string = resourceGroup().location
 param jobName string = 'sb-backup-job'
 param acrLoginServer string
-param backupImageName string = 'singing-bridge-backup:latest'
+// Must be supplied as a digest-pinned reference at deploy time, e.g.
+// singing-bridge-backup@sha256:<digest>. No mutable-tag default is provided
+// to prevent accidental deployment of an unpinned image in production.
+param backupImageName string
 // Container Apps Environment ID — must be the same environment as the main app
 // so the NFS volume binding is accessible.
 param caEnvId string

@@ -1,49 +1,53 @@
 # File: infra/backup-job/test_backup.py
 # Purpose: Unit tests for the VACUUM INTO + blob upload contract in backup.py.
+# Role: Test suite for the production backup script; validates snapshot consistency,
+#       upload wire-up, and temp-file cleanup on both success and failure paths.
 # Last updated: Sprint 16 (2026-04-23) -- initial
 
 import sqlite3
 import tempfile
 import os
 import pytest
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
 from backup import run_backup
 
 
 # ---- Fixtures ----
 
-def make_source_db() -> tuple[str, str]:
-    """Create a temp SQLite DB with a known row. Returns (dir, path)."""
-    d = tempfile.mkdtemp()
-    path = os.path.join(d, "test.db")
-    with sqlite3.connect(path) as conn:
+@pytest.fixture
+def source_db(tmp_path):
+    """Pytest-managed temp SQLite DB with a known row."""
+    path = tmp_path / "test.db"
+    with sqlite3.connect(str(path)) as conn:
         conn.execute("CREATE TABLE t (v INTEGER)")
         conn.execute("INSERT INTO t VALUES (42)")
-    return d, path
+    return str(path)
 
 
 # ---- Tests ----
 
-def test_vacuum_into_produces_consistent_copy():
+def test_vacuum_into_produces_consistent_copy(source_db, tmp_path):
     """VACUUM INTO creates a valid, readable SQLite copy with the original data."""
-    _, src = make_source_db()
-    fd, dst_path = tempfile.mkstemp(suffix=".db")
-    os.close(fd)
-    os.unlink(dst_path)  # VACUUM INTO requires destination absent
-    try:
-        with sqlite3.connect(src) as conn:
+    dst_path = str(tmp_path / "copy.db")
+    with sqlite3.connect(source_db) as conn:
+        conn.execute(f"VACUUM INTO '{dst_path}'")
+    with sqlite3.connect(dst_path) as conn:
+        row = conn.execute("SELECT v FROM t").fetchone()
+    assert row == (42,)
+
+
+def test_vacuum_into_fails_if_destination_exists(source_db, tmp_path):
+    """VACUUM INTO raises OperationalError when destination already exists."""
+    dst_path = str(tmp_path / "exists.db")
+    open(dst_path, "w").close()  # pre-create
+    with sqlite3.connect(source_db) as conn:
+        with pytest.raises(sqlite3.OperationalError, match="output file already exists"):
             conn.execute(f"VACUUM INTO '{dst_path}'")
-        with sqlite3.connect(dst_path) as conn:
-            row = conn.execute("SELECT v FROM t").fetchone()
-        assert row == (42,)
-    finally:
-        os.unlink(dst_path)
 
 
-def test_run_backup_uploads_blob():
+def test_run_backup_uploads_blob(source_db):
     """run_backup calls upload_blob with a non-empty file."""
-    _, src = make_source_db()
     captured_content = []
 
     mock_blob_client = MagicMock()
@@ -54,7 +58,7 @@ def test_run_backup_uploads_blob():
 
     with patch("backup.DefaultAzureCredential"), \
          patch("backup.BlobServiceClient", return_value=mock_service_client):
-        blob_name = run_backup(src, "my-account", "backups")
+        blob_name = run_backup(source_db, "my-account", "backups")
 
     assert blob_name.startswith("singing-bridge-")
     assert blob_name.endswith(".db")
@@ -66,9 +70,8 @@ def test_run_backup_uploads_blob():
         "backup file should not be empty"
 
 
-def test_run_backup_deletes_temp_file_on_success():
+def test_run_backup_deletes_temp_file_on_success(source_db):
     """Temporary file is removed after a successful upload."""
-    _, src = make_source_db()
     created_tmp = []
 
     real_mkstemp = tempfile.mkstemp
@@ -82,15 +85,14 @@ def test_run_backup_deletes_temp_file_on_success():
          patch("backup.BlobServiceClient") as mock_svc, \
          patch("tempfile.mkstemp", side_effect=capturing_mkstemp):
         mock_svc.return_value.get_blob_client.return_value = MagicMock()
-        run_backup(src, "my-account", "backups")
+        run_backup(source_db, "my-account", "backups")
 
     for path in created_tmp:
         assert not os.path.exists(path), f"temp file not cleaned up: {path}"
 
 
-def test_run_backup_deletes_temp_file_on_upload_failure():
+def test_run_backup_deletes_temp_file_on_upload_failure(source_db):
     """Temporary file is removed even if the upload raises."""
-    _, src = make_source_db()
     created_tmp = []
 
     real_mkstemp = tempfile.mkstemp
@@ -108,7 +110,7 @@ def test_run_backup_deletes_temp_file_on_upload_failure():
          patch("tempfile.mkstemp", side_effect=capturing_mkstemp):
         mock_svc.return_value.get_blob_client.return_value = mock_blob_client
         with pytest.raises(RuntimeError, match="upload failed"):
-            run_backup(src, "my-account", "backups")
+            run_backup(source_db, "my-account", "backups")
 
     for path in created_tmp:
         assert not os.path.exists(path), f"temp file not cleaned up after failure: {path}"

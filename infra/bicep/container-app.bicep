@@ -6,7 +6,10 @@
 //             CF IP allow-list codified in ipSecurityRestrictions (not a runbook step).
 //             Ingress restricted to Cloudflare published IP ranges only.
 //             SB_DATA_DIR=/data: durable NFS volume; DB persists across deploys.
-//             NFS share uses RootSquash; server and backup containers run as UID 65532.
+//             NFS share uses NoRootSquash. EVERY container mounting sb-data MUST run as
+//             UID 65532:65532 with runAsNonRoot=true. Root-capable containers on this share
+//             would have unrestricted NFS server access. Enforce via securityContext on each
+//             container spec; never mount sb-data in a container without runAsUser=65532.
 // Last updated: Sprint 16 (2026-04-23) -- NFS Azure Files + VNet integration; remove SMB
 
 param location string = resourceGroup().location

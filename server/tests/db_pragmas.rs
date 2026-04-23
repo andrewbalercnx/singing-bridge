@@ -94,3 +94,46 @@ async fn db_pool_allows_concurrent_connections() {
     drop(conn2);
     pool.close().await;
 }
+
+/// Verify after_connect pragmas apply to a lazily-created second pool connection.
+/// Acquires two connections simultaneously so sqlx must open both, then reads
+/// pragmas on the second one to confirm after_connect ran for it too.
+#[tokio::test]
+async fn db_pragmas_apply_to_second_connection() {
+    use std::time::Duration;
+    use tokio::time::timeout;
+
+    let dir = TempDir::new().unwrap();
+    let pool = file_pool(&dir).await;
+
+    let mut conn1 = timeout(Duration::from_millis(100), pool.acquire())
+        .await
+        .expect("first acquire timed out")
+        .expect("first acquire error");
+
+    let mut conn2 = timeout(Duration::from_millis(100), pool.acquire())
+        .await
+        .expect("second acquire timed out")
+        .expect("second acquire error");
+
+    let (fk,): (i64,) = sqlx::query_as("PRAGMA foreign_keys")
+        .fetch_one(&mut *conn2)
+        .await
+        .unwrap();
+    let (timeout_ms,): (i64,) = sqlx::query_as("PRAGMA busy_timeout")
+        .fetch_one(&mut *conn2)
+        .await
+        .unwrap();
+    let (sync,): (i64,) = sqlx::query_as("PRAGMA synchronous")
+        .fetch_one(&mut *conn2)
+        .await
+        .unwrap();
+
+    drop(conn1);
+    drop(conn2);
+    pool.close().await;
+
+    assert_eq!(fk, 1, "second connection: expected foreign_keys=ON");
+    assert_eq!(timeout_ms, 30000, "second connection: expected busy_timeout=30000ms");
+    assert_eq!(sync, 1, "second connection: expected synchronous=NORMAL (1)");
+}

@@ -7,8 +7,9 @@
 //             Cache-Control: no-store. /healthz body is fixed JSON.
 //             /api/dev-blob/* is only compiled and mounted in debug builds + dev mode.
 //             /api/media/:token is public — the token itself is the auth.
-// Last updated: Sprint 12a (2026-04-21) -- DefaultBodyLimit::disable() on upload route
+// Last updated: Sprint 17 (2026-04-23) -- add /teach/:slug/dashboard and /teach/:slug/session routes
 
+pub mod dashboard;
 pub mod health;
 pub mod history;
 pub mod library;
@@ -45,6 +46,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/auth/verify", get(signup::get_verify))
         .route("/auth/consume", post(signup::post_consume))
         .route("/teach/:slug", get(teach::get_teach))
+        .route("/teach/:slug/dashboard", get(dashboard::get_dashboard))
+        .route("/teach/:slug/session", get(teach::get_session))
         .route("/teach/:slug/history", get(history::get_history))
         .route("/teach/:slug/recordings", get(recordings::get_recordings_page))
         // Accompaniment library

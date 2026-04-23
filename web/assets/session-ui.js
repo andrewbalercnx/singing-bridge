@@ -4,18 +4,17 @@
 // Role: Mounts the full live-session UI into a container element; wires to real
 //       Web Audio AnalyserNodes for RMS-driven breath ring and level meters.
 //       Orchestrator only — sub-component DOM builders live in session-panels.js.
-// Exports: window.sbSessionUI.mount(container, opts) → { teardown, setRemoteStream, appendChatMsg };
+// Exports: window.sbSessionUI.mount(container, opts) → { teardown, setRemoteStream, appendChatMsg, accmpPanel };
 //          deriveToggleView (pure, Node-testable; relocated from controls.js);
 //          buildBaselineStrip, buildMutedBanner, runAudioLoop (exported for testing)
 // Depends: Web Audio API (AudioContext, AnalyserNode), DOM (video, dialog elements),
-//          window.sbSessionPanels (buildRemotePanel, buildControls, buildEndDialog),
+//          window.sbSessionPanels (buildRemotePanel, buildSelfPip, buildAccmpPanel, buildIconBar, buildEndDialog),
 //          window.sbChatDrawer (buildChatDrawer, optional)
-// Invariants: peer-supplied strings (remoteName, remoteRoleLabel, "You") rendered via
-//             .textContent only; svgIcon uses innerHTML for hardcoded literal SVG
-//             paths only (no user input reaches innerHTML);
+// Invariants: peer-supplied strings (remoteName, remoteRoleLabel) rendered via .textContent only;
 //             exactly one RAF loop per mount; teardown is idempotent;
-//             mount is an orchestrator only (≤40 lines of own logic).
-// Last updated: Sprint 9 (2026-04-19) -- extracted sub-components to session-panels.js
+//             mount is an orchestrator only (≤40 lines of own logic);
+//             accmpPanel open-state persisted in sessionStorage (sb-accmp-open).
+// Last updated: Sprint 17 (2026-04-23) -- v2 layout: sb-session-v2 grid, buildSelfPip, buildIconBar, buildAccmpPanel
 
 (function (root, factory) {
   'use strict';
@@ -240,12 +239,12 @@
 
     if (opts.remoteStream) attachRemoteStream(opts.remoteStream);
 
-    parts.controls.setMicActive = (function (originalSetMicActive) {
+    parts.iconBar.setMicActive = (function (orig) {
       return function (active) {
         micEnabled = active;
-        originalSetMicActive(active);
+        orig(active);
       };
-    })(parts.controls.setMicActive);
+    })(parts.iconBar.setMicActive);
 
     return {
       teardown: teardown,
@@ -261,6 +260,7 @@
   function mount(container, opts) {
     var _g = typeof globalThis !== 'undefined' ? globalThis : (typeof window !== 'undefined' ? window : {});
     var panels = _g.sbSessionPanels;
+    var isTeacher = !!opts.isTeacher;
 
     var audioCtx = new AudioContext();
     var analyserSelf = null;
@@ -271,7 +271,12 @@
 
     var micEnabled = opts.micEnabled !== false;
     var vidEnabled = opts.videoEnabled !== false;
+    var _ss = (typeof sessionStorage !== 'undefined') ? sessionStorage : null;
+    var accmpOpen = isTeacher && (_ss ? _ss.getItem('sb-accmp-open') !== '0' : true);
+
     var remotePanel = panels.buildRemotePanel({ remoteName: opts.remoteName, remoteRoleLabel: opts.remoteRoleLabel, headphonesConfirmed: opts.headphonesConfirmed });
+    var selfPip = panels.buildSelfPip(opts.localStream);
+    var accmpPanel = isTeacher ? panels.buildAccmpPanel() : null;
     var baseline = buildBaselineStrip();
     var mutedBanner = opts.localStream ? buildMutedBanner() : makeNullBanner();
     var endDialog = panels.buildEndDialog(function () { opts.onEnd(); });
@@ -281,28 +286,52 @@
       chatDrawer = _g.sbChatDrawer.buildChatDrawer({
         onSendChat: opts.onSendChat,
         onUnreadChange: function (hasUnread) {
-          if (controls && controls.setSayBadge) controls.setSayBadge(hasUnread);
+          if (iconBar) iconBar.setSayBadge(hasUnread);
         },
       });
     }
 
-    var controls = panels.buildControls({
-      micEnabled: micEnabled, videoEnabled: vidEnabled,
-      onMicToggle: function () { micEnabled = !micEnabled; controls.setMicActive(micEnabled); opts.onMicToggle(); },
-      onVideoToggle: function () { vidEnabled = !vidEnabled; controls.setVideoActive(vidEnabled); opts.onVideoToggle(); },
+    var accmpPanelWrap = null;
+    var iconBar = panels.buildIconBar({
+      isTeacher: isTeacher,
+      micEnabled: micEnabled,
+      videoEnabled: vidEnabled,
+      accmpOpen: accmpOpen,
+      onMicToggle: function () { micEnabled = !micEnabled; iconBar.setMicActive(micEnabled); opts.onMicToggle(); },
+      onVideoToggle: function () { vidEnabled = !vidEnabled; iconBar.setVideoActive(vidEnabled); opts.onVideoToggle(); },
       onEnd: function () { endDialog.showModal(); },
-      onNote: opts.onNote,
+      onAccmpToggle: isTeacher ? function () {
+        accmpOpen = !accmpOpen;
+        if (_ss) _ss.setItem('sb-accmp-open', accmpOpen ? '1' : '0');
+        iconBar.setAccmpOpen(accmpOpen);
+        if (accmpPanelWrap) accmpPanelWrap.hidden = !accmpOpen;
+      } : null,
       onSay: chatDrawer ? function () { chatDrawer.toggle(); } : (opts.onSay || function () {}),
     });
-    var selfPreview = buildSelfPreview(opts.localStream);
-    var bottom = el('div', 'sb-bottom');
-    bottom.append(controls.node, selfPreview.node);
-    var root = el('div', 'sb-session');
-    root.append(remotePanel.node, baseline.node, bottom, mutedBanner.node, endDialog);
+
+    var videoZone = el('div', 'sb-video-zone');
+    videoZone.append(remotePanel.node, selfPip.node);
+
+    var body = el('div', 'sb-session-body');
+    body.appendChild(videoZone);
+
+    if (accmpPanel) {
+      accmpPanelWrap = el('div', 'sb-accmp-panel');
+      accmpPanelWrap.appendChild(accmpPanel.node);
+      accmpPanelWrap.hidden = !accmpOpen;
+      body.appendChild(accmpPanelWrap);
+    }
+
+    var root = el('div', 'sb-session-v2 sb-theme-dark');
+    root.append(body, iconBar.node, baseline.node, mutedBanner.node, endDialog);
     if (chatDrawer) root.append(chatDrawer.node);
     container.appendChild(root);
 
-    var lifecycle = runSessionLifecycle(root, { audioCtx: audioCtx, analyserSelf: analyserSelf, remotePanel: remotePanel, baseline: baseline, mutedBanner: mutedBanner, controls: controls }, opts);
+    var lifecycle = runSessionLifecycle(root, {
+      audioCtx: audioCtx, analyserSelf: analyserSelf,
+      remotePanel: remotePanel, baseline: baseline,
+      mutedBanner: mutedBanner, iconBar: iconBar,
+    }, opts);
 
     return {
       teardown: lifecycle.teardown,
@@ -310,6 +339,7 @@
       appendChatMsg: function (from, text) {
         if (chatDrawer) chatDrawer.appendMsg(from, text);
       },
+      accmpPanel: accmpPanel,
     };
   }
 

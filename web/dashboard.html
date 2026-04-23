@@ -1,0 +1,53 @@
+<!doctype html>
+<!--
+  File: web/dashboard.html
+  Purpose: Teacher dashboard — between-session hub for accessing recordings,
+           accompaniment library, session history, and entering the room.
+  Last updated: Sprint 17 (2026-04-23) -- initial
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>singing-bridge — dashboard</title>
+  <link rel="stylesheet" href="/assets/styles.css">
+  <link rel="stylesheet" href="/assets/theme.css">
+  <!-- sb:debug -->
+</head>
+<body class="sb-page">
+  <header class="sb-dashboard-nav">
+    <span class="sb-dashboard-brand">singing-bridge</span>
+    <span id="room-name" class="sb-dashboard-room"></span>
+    <a id="enter-room-btn" class="sb-btn" href="#">Enter Room</a>
+  </header>
+
+  <main class="sb-dashboard">
+    <div class="sb-dashboard-grid">
+
+      <section class="sb-dashboard-panel" id="panel-history">
+        <h2 class="sb-dashboard-panel-title">Session History</h2>
+        <p><a id="history-link" href="#">View full history →</a></p>
+      </section>
+
+      <section class="sb-dashboard-panel" id="panel-recordings">
+        <h2 class="sb-dashboard-panel-title">Recordings</h2>
+        <div id="recordings-list" aria-live="polite">
+          <p class="sb-dashboard-loading">Loading…</p>
+        </div>
+      </section>
+
+      <section class="sb-dashboard-panel sb-dashboard-panel--wide" id="panel-library">
+        <h2 class="sb-dashboard-panel-title">Accompaniment Library</h2>
+        <div id="library-summary" aria-live="polite">
+          <p class="sb-dashboard-loading">Loading…</p>
+        </div>
+        <a id="library-link" class="sb-btn sb-btn--ghost sb-mt-3" href="#">Manage library →</a>
+      </section>
+
+    </div>
+  </main>
+
+  <div id="sb-debug"></div>
+  <script src="/assets/dashboard.js"></script>
+</body>
+</html>

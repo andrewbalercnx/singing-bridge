@@ -10,7 +10,9 @@
 //             Audio element created only when wav_url is non-null.
 //             peer-supplied URL set via audio.src (no innerHTML).
 //             Score view wired after mount via handle.setScoreView(scoreViewHandle).
-// Last updated: Sprint 14 (2026-04-23) -- teacher playback offset by one-way latency
+//             opts.panelEl: when provided (v2 layout), drives panelEl API instead of
+//             building own UI; container may be null in that case.
+// Last updated: Sprint 17 (2026-04-23) -- panelEl option for inline accmp panel (v2 layout)
 
 (function (root, factory) {
   'use strict';
@@ -72,6 +74,7 @@
 
   function mount(container, opts) {
     var role = (opts && opts.role) || 'student';
+    var panelEl = (opts && opts.panelEl) || null; // buildAccmpPanel handle (v2 layout)
     var sendWs = (opts && opts.sendWs) || function () {};
     var getOneWayLatencyMs = (opts && opts.getOneWayLatencyMs) || function () { return 0; };
 
@@ -81,61 +84,75 @@
     var clientRefTime = 0;
     var skewMs = 0;
     var scoreViewHandle = null; // wired after mount via handle.setScoreView()
+    var _assetId = null;
+    var _variantId = null;
 
-    // Build minimal UI.
-    var root = el('div', 'sb-accompaniment-drawer');
-
-    // Status line (both roles).
-    var statusEl = el('div', 'sb-accompaniment-status');
-    statusEl.textContent = 'No accompaniment';
-    root.appendChild(statusEl);
-
-    // Teacher controls only.
+    var root = null;
+    var statusEl = null;
     var controls = null;
-    if (role === 'teacher') {
-      controls = el('div', 'sb-accompaniment-controls');
 
-      var playBtn = el('button', 'sb-btn sb-btn-play');
-      playBtn.type = 'button';
-      playBtn.textContent = 'Play';
-      playBtn.setAttribute('aria-label', 'Play accompaniment');
+    if (!panelEl) {
+      // Build own floating UI (backward-compatible path).
+      root = el('div', 'sb-accompaniment-drawer');
+      statusEl = el('div', 'sb-accompaniment-status');
+      statusEl.textContent = 'No accompaniment';
+      root.appendChild(statusEl);
 
-      var pauseBtn = el('button', 'sb-btn sb-btn-pause');
-      pauseBtn.type = 'button';
-      pauseBtn.textContent = 'Pause';
-      pauseBtn.setAttribute('aria-label', 'Pause accompaniment');
-      pauseBtn.disabled = true;
+      if (role === 'teacher') {
+        controls = el('div', 'sb-accompaniment-controls');
 
-      var stopBtn = el('button', 'sb-btn sb-btn-stop');
-      stopBtn.type = 'button';
-      stopBtn.textContent = 'Stop';
-      stopBtn.setAttribute('aria-label', 'Stop accompaniment');
-      stopBtn.disabled = true;
+        var playBtn = el('button', 'sb-btn sb-btn-play');
+        playBtn.type = 'button';
+        playBtn.textContent = 'Play';
+        playBtn.setAttribute('aria-label', 'Play accompaniment');
 
-      playBtn.addEventListener('click', function () {
-        var assetId = root.dataset.assetId;
-        var variantId = root.dataset.variantId;
-        if (!assetId || !variantId) return;
-        var posMs = audio && !audio.paused ? Math.round(audio.currentTime * 1000) : 0;
-        sendWs({ type: 'accompaniment_play', asset_id: Number(assetId), variant_id: Number(variantId), position_ms: posMs });
+        var pauseBtn = el('button', 'sb-btn sb-btn-pause');
+        pauseBtn.type = 'button';
+        pauseBtn.textContent = 'Pause';
+        pauseBtn.setAttribute('aria-label', 'Pause accompaniment');
+        pauseBtn.disabled = true;
+
+        var stopBtn = el('button', 'sb-btn sb-btn-stop');
+        stopBtn.type = 'button';
+        stopBtn.textContent = 'Stop';
+        stopBtn.setAttribute('aria-label', 'Stop accompaniment');
+        stopBtn.disabled = true;
+
+        playBtn.addEventListener('click', function () {
+          if (!_assetId || !_variantId) return;
+          var posMs = audio && !audio.paused ? Math.round(audio.currentTime * 1000) : 0;
+          sendWs({ type: 'accompaniment_play', asset_id: Number(_assetId), variant_id: Number(_variantId), position_ms: posMs });
+        });
+
+        pauseBtn.addEventListener('click', function () {
+          var posMs = audio ? Math.round(audio.currentTime * 1000) : 0;
+          sendWs({ type: 'accompaniment_pause', position_ms: posMs });
+        });
+
+        stopBtn.addEventListener('click', function () {
+          sendWs({ type: 'accompaniment_stop' });
+        });
+
+        controls.appendChild(playBtn);
+        controls.appendChild(pauseBtn);
+        controls.appendChild(stopBtn);
+        root.appendChild(controls);
+      }
+
+      if (container) container.appendChild(root);
+    } else if (role === 'teacher') {
+      // Drive the inline accmpPanel from session-panels.js (v2 layout).
+      panelEl.pauseBtn.addEventListener('click', function () {
+        if (!_assetId || !_variantId) return;
+        var posMs = audio ? Math.round(audio.currentTime * 1000) : serverPositionMs;
+        var isPlaying = audio && !audio.paused;
+        if (isPlaying) {
+          sendWs({ type: 'accompaniment_pause', position_ms: posMs });
+        } else {
+          sendWs({ type: 'accompaniment_play', asset_id: Number(_assetId), variant_id: Number(_variantId), position_ms: posMs });
+        }
       });
-
-      pauseBtn.addEventListener('click', function () {
-        var posMs = audio ? Math.round(audio.currentTime * 1000) : 0;
-        sendWs({ type: 'accompaniment_pause', position_ms: posMs });
-      });
-
-      stopBtn.addEventListener('click', function () {
-        sendWs({ type: 'accompaniment_stop' });
-      });
-
-      controls.appendChild(playBtn);
-      controls.appendChild(pauseBtn);
-      controls.appendChild(stopBtn);
-      root.appendChild(controls);
     }
-
-    container.appendChild(root);
 
     // ---- Internal helpers ----
 
@@ -148,18 +165,19 @@
 
     function startRaf(barTimings, seekToBar) {
       stopRaf();
-      if (!barTimings || !seekToBar) return;
+      if (!barTimings && !panelEl) return;
       (function tick() {
         var currentMs = serverPositionMs + (Date.now() - clientRefTime) + skewMs;
-        var tempo = _lastTempoPct;
-        if (!tempo || tempo <= 0) {
-          console.warn('[accompaniment-drawer] tempo_pct invalid, falling back to 100');
-          tempo = 100;
-        }
-        var scoreTimeSec = (currentMs / 1000) * (tempo / 100);
-        var idx = findBarIndex(barTimings, scoreTimeSec);
-        if (idx >= 0) {
-          seekToBar(barTimings[idx].bar);
+        if (panelEl) panelEl.setPosition(currentMs);
+        if (barTimings && seekToBar) {
+          var tempo = _lastTempoPct;
+          if (!tempo || tempo <= 0) {
+            console.warn('[accompaniment-drawer] tempo_pct invalid, falling back to 100');
+            tempo = 100;
+          }
+          var scoreTimeSec = (currentMs / 1000) * (tempo / 100);
+          var idx = findBarIndex(barTimings, scoreTimeSec);
+          if (idx >= 0) seekToBar(barTimings[idx].bar);
         }
         rafHandle = requestAnimationFrame(tick);
       }());
@@ -184,6 +202,11 @@
         });
         audio.addEventListener('error', function (e) {
           console.error('[accompaniment-drawer] audio error', e);
+        });
+        audio.addEventListener('loadedmetadata', function () {
+          if (panelEl && audio.duration && isFinite(audio.duration)) {
+            panelEl.setDuration(Math.round(audio.duration * 1000));
+          }
         });
       }
     }
@@ -216,24 +239,21 @@
       if (assetId === null || assetId === undefined) {
         // Cleared state.
         stopRaf();
-        if (audio) {
-          audio.pause();
-          audio.src = '';
-        }
-        statusEl.textContent = 'No accompaniment';
+        _assetId = null; _variantId = null;
+        if (audio) { audio.pause(); audio.src = ''; }
+        if (statusEl) statusEl.textContent = 'No accompaniment';
+        if (panelEl) { panelEl.setTrackName(null); panelEl.setPosition(0); panelEl.setPaused(true); }
         if (controls) {
           controls.querySelector('.sb-btn-pause').disabled = true;
           controls.querySelector('.sb-btn-stop').disabled = true;
         }
-        if (scoreViewHandle) {
-          scoreViewHandle.updatePages(null, null);
-        }
+        if (scoreViewHandle) scoreViewHandle.updatePages(null, null);
         return;
       }
 
-      // Store asset/variant IDs for teacher controls.
-      root.dataset.assetId = assetId;
-      root.dataset.variantId = state.variant_id || '';
+      _assetId = assetId;
+      _variantId = state.variant_id || null;
+      if (root) { root.dataset.assetId = assetId; root.dataset.variantId = state.variant_id || ''; }
 
       // Skew: sampled once on receipt; not per-frame.
       // Positive skew means server_time_ms was in the past (network delay):
@@ -267,20 +287,23 @@
       }
 
       // Update score view.
-      if (scoreViewHandle) {
-        scoreViewHandle.updatePages(state.page_urls || null, state.bar_coords || null);
+      if (scoreViewHandle) scoreViewHandle.updatePages(state.page_urls || null, state.bar_coords || null);
+
+      if (statusEl) statusEl.textContent = isPlaying ? 'Playing' : 'Paused';
+      if (panelEl) {
+        panelEl.setTrackName(isPlaying ? 'Playing' : 'Paused');
+        panelEl.setPosition(serverPositionMs);
+        panelEl.setPaused(!isPlaying);
       }
-
-      statusEl.textContent = isPlaying ? 'Playing' : 'Paused';
-
       if (controls) {
         controls.querySelector('.sb-btn-pause').disabled = !isPlaying;
         controls.querySelector('.sb-btn-stop').disabled = false;
       }
 
-      // Start rAF loop when playing and bar timings are available.
-      if (isPlaying && barTimings && barTimings.length > 0) {
-        var seekFn = scoreViewHandle ? function (bar) { scoreViewHandle.seekToBar(bar); } : null;
+      // Start rAF loop when playing (also updates panelEl position if present).
+      if (isPlaying) {
+        var seekFn = (scoreViewHandle && barTimings && barTimings.length > 0)
+          ? function (bar) { scoreViewHandle.seekToBar(bar); } : null;
         startRaf(barTimings, seekFn);
       }
     }
@@ -292,7 +315,7 @@
         audio.src = '';
         audio = null;
       }
-      if (container.contains(root)) {
+      if (root && container && container.contains(root)) {
         container.removeChild(root);
       }
     }

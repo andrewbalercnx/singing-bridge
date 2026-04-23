@@ -1,14 +1,16 @@
 // File: web/assets/session-panels.js
-// Purpose: DOM sub-component builders extracted from session-ui.js —
-//          remote panel, controls cluster, SVG icons, end-call dialog.
-//          Extracted to keep session-ui.js within the project module size limit.
+// Purpose: DOM sub-component builders for the session UI — remote panel, self-view PiP,
+//          accompaniment panel, icon-only control bar, end-call dialog.
 // Role: Pure DOM builders; no audio, no lifecycle. session-ui.js is the orchestrator.
-// Exports: window.sbSessionPanels.{ buildRemotePanel, buildControls, buildEndDialog }
+// Exports: window.sbSessionPanels.{ buildRemotePanel, buildSelfPip, buildAccmpPanel,
+//          buildIconBar, buildEndDialog }
 // Depends: DOM (createElement), theme.css (.sb-* classes)
 // Invariants: peer-supplied strings rendered via .textContent only (no innerHTML);
 //             svgIcon uses innerHTML for hardcoded literal SVG paths only
 //             (no user input reaches innerHTML).
-// Last updated: Sprint 9 (2026-04-19) -- extracted from session-ui.js
+//             buildIconBar: teacher gets 5 buttons (mic, vid, accmp, chat, end);
+//             non-teacher gets 3 (mic, vid, end).
+// Last updated: Sprint 17 (2026-04-23) -- new v2 builders; removed buildControls/buildSelfPreview
 
 (function (root, factory) {
   'use strict';
@@ -30,7 +32,7 @@
 
   function svgIcon(name) {
     var s = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    s.setAttribute('width', '18'); s.setAttribute('height', '18');
+    s.setAttribute('width', '20'); s.setAttribute('height', '20');
     s.setAttribute('viewBox', '0 0 24 24');
     s.setAttribute('fill', 'none');
     s.setAttribute('stroke', 'currentColor');
@@ -41,7 +43,7 @@
       'mic-off':'<rect x="9" y="3" width="6" height="12" rx="3" opacity=".4"/><path d="M5 11a7 7 0 0014 0" opacity=".4"/><path d="M12 18v3"/><line x1="4" y1="4" x2="20" y2="20"/>',
       vid:      '<rect x="3" y="6" width="13" height="12" rx="2"/><path d="M16 10l5-3v10l-5-3z"/>',
       'vid-off':'<rect x="3" y="6" width="13" height="12" rx="2" opacity=".4"/><path d="M16 10l5-3v10l-5-3z" opacity=".4"/><line x1="4" y1="4" x2="20" y2="20"/>',
-      note:     '<path d="M9 18V5l10-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="16" cy="16" r="3"/>',
+      music:    '<path d="M9 18V5l10-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="16" cy="16" r="3"/>',
       chat:     '<path d="M4 5h16v11H8l-4 4z"/>',
       end:      '<path d="M3 13a13 13 0 0118 0l-2 3-4-1-1-3a10 10 0 00-4 0l-1 3-4 1z"/>',
     };
@@ -49,12 +51,11 @@
     return s;
   }
 
+  // ---- buildRemotePanel (unchanged from Sprint 9) ----
+
   function buildRemotePanel(opts) {
     var wrap = el('div', 'sb-remote-panel');
     var ring = el('div', 'sb-breath-ring');
-    // Muted video for display — browsers block autoplay on unmuted video.
-    // Audio is routed through a separate hidden <audio> element which can
-    // autoplay freely (no user-gesture requirement for audio-only elements).
     var vid = document.createElement('video');
     vid.autoplay = true; vid.playsInline = true; vid.muted = true;
     var aud = document.createElement('audio');
@@ -91,53 +92,138 @@
     };
   }
 
-  function buildControls(opts) {
-    var wrap = el('div', 'sb-controls');
-    var micActive = !!opts.micEnabled;
-    var vidActive = !!opts.videoEnabled;
+  // ---- buildSelfPip — small PiP overlay for self-view ----
 
-    function makeBtn(icon, label, active, isEnd) {
-      var b = el('button', 'sb-btn' + (isEnd ? ' sb-end' : active ? ' sb-active' : ''));
+  function buildSelfPip(stream) {
+    var wrap = el('div', 'sb-selfpip');
+    var vid = document.createElement('video');
+    vid.autoplay = true; vid.playsInline = true; vid.muted = true;
+    vid.style.cssText = 'width:100%;height:100%;object-fit:cover;transform:scaleX(-1);';
+    if (stream) { vid.srcObject = stream; vid.play().catch(function () {}); }
+    wrap.appendChild(vid);
+    return { node: wrap };
+  }
+
+  // ---- buildAccmpPanel — right-side accompaniment controls (teacher only) ----
+
+  function buildAccmpPanel() {
+    var panel = el('div', 'sb-accmp-panel-inner');
+
+    var trackName = el('p', 'sb-accmp-track-name');
+    trackName.textContent = 'No track selected';
+
+    var slider = document.createElement('input');
+    slider.type = 'range';
+    slider.min = '0';
+    slider.max = '0';
+    slider.value = '0';
+    slider.className = 'sb-accmp-slider';
+    slider.setAttribute('aria-label', 'Position');
+
+    var pauseBtn = el('button', 'sb-iconbtn sb-accmp-pause');
+    pauseBtn.type = 'button';
+    pauseBtn.setAttribute('aria-label', 'Pause');
+    pauseBtn.setAttribute('aria-pressed', 'false');
+    pauseBtn.appendChild(svgIcon('music'));
+
+    var scoreBtn = el('button', 'sb-iconbtn sb-accmp-score');
+    scoreBtn.type = 'button';
+    scoreBtn.setAttribute('aria-label', 'Toggle score viewer');
+    scoreBtn.setAttribute('aria-pressed', 'false');
+
+    // Use a simple document-style icon (lines)
+    var scoreIcon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    scoreIcon.setAttribute('width', '20'); scoreIcon.setAttribute('height', '20');
+    scoreIcon.setAttribute('viewBox', '0 0 24 24'); scoreIcon.setAttribute('fill', 'none');
+    scoreIcon.setAttribute('stroke', 'currentColor'); scoreIcon.setAttribute('stroke-width', '1.6');
+    scoreIcon.setAttribute('aria-hidden', 'true');
+    scoreIcon.innerHTML = '<rect x="4" y="2" width="16" height="20" rx="2"/><line x1="8" y1="7" x2="16" y2="7"/><line x1="8" y1="11" x2="16" y2="11"/><line x1="8" y1="15" x2="13" y2="15"/>';
+    scoreBtn.appendChild(scoreIcon);
+
+    var btnRow = el('div', 'sb-accmp-btn-row');
+    btnRow.append(pauseBtn, scoreBtn);
+
+    panel.append(trackName, slider, btnRow);
+
+    return {
+      node: panel,
+      pauseBtn: pauseBtn,
+      scoreToggleBtn: scoreBtn,
+      setTrackName: function (name) { trackName.textContent = name || 'No track selected'; },
+      setPosition: function (ms) { slider.value = String(ms); },
+      setDuration: function (ms) { slider.max = String(ms); },
+      setPaused: function (paused) {
+        pauseBtn.setAttribute('aria-pressed', paused ? 'false' : 'true');
+        pauseBtn.setAttribute('aria-label', paused ? 'Resume' : 'Pause');
+      },
+      getSlider: function () { return slider; },
+    };
+  }
+
+  // ---- buildIconBar — icon-only control strip ----
+
+  function buildIconBar(opts) {
+    var bar = el('div', 'sb-iconbar');
+    var isTeacher = !!opts.isTeacher;
+    var micActive = opts.micEnabled !== false;
+    var vidActive = opts.videoEnabled !== false;
+    var accmpOpen = !!opts.accmpOpen;
+
+    function makeBtn(icon, label, active, extraCls) {
+      var b = el('button', 'sb-iconbtn' + (extraCls ? ' ' + extraCls : ''));
       b.type = 'button';
-      b.append(svgIcon(icon));
-      var lbl = el('span', 'sb-btn-label'); lbl.textContent = label;
-      b.append(lbl);
+      b.setAttribute('aria-label', label);
+      b.setAttribute('aria-pressed', active ? 'true' : 'false');
+      b.appendChild(svgIcon(icon));
       return b;
     }
 
-    function refreshBtn(btn, icon, active) {
-      btn.className = 'sb-btn' + (active ? ' sb-active' : '');
-      btn.replaceChildren(svgIcon(icon));
-      var lbl = el('span', 'sb-btn-label'); lbl.textContent = btn._label;
-      btn.append(lbl);
+    var micBtn = makeBtn(micActive ? 'mic' : 'mic-off', micActive ? 'Mute microphone' : 'Unmute microphone', micActive);
+    var vidBtn = makeBtn(vidActive ? 'vid' : 'vid-off', vidActive ? 'Turn off camera' : 'Turn on camera', vidActive);
+    var endBtn = makeBtn('end', 'Leave call', false, 'sb-end');
+
+    bar.append(micBtn, vidBtn);
+
+    var accmpBtn = null;
+    var chatBtn = null;
+    var sayBadge = null;
+
+    if (isTeacher) {
+      accmpBtn = makeBtn('music', 'Toggle accompaniment', accmpOpen);
+      chatBtn = makeBtn('chat', 'Chat', false);
+      sayBadge = el('span', 'sb-btn-badge'); sayBadge.hidden = true;
+      chatBtn.appendChild(sayBadge);
+      bar.append(accmpBtn, chatBtn);
     }
 
-    var micBtn  = makeBtn(micActive ? 'mic' : 'mic-off', 'Mic',   micActive, false);
-    var vidBtn  = makeBtn(vidActive ? 'vid' : 'vid-off', 'Video', vidActive, false);
-    var noteBtn = makeBtn('note', 'Note', false, false);
-    var sayBtn  = makeBtn('chat', 'Say',  false, false);
-    var endBtn  = makeBtn('end',  'End',  false, true);
-    micBtn._label = 'Mic';
-    vidBtn._label = 'Video';
+    bar.append(endBtn);
 
-    var sayBadge = el('span', 'sb-btn-badge'); sayBadge.hidden = true;
-    sayBtn.appendChild(sayBadge);
-
-    micBtn.addEventListener('click', function () { opts.onMicToggle(); });
-    vidBtn.addEventListener('click', function () { opts.onVideoToggle(); });
-    noteBtn.addEventListener('click', function () { opts.onNote(); });
-    sayBtn.addEventListener('click', function () { opts.onSay(); });
-    endBtn.addEventListener('click', function () { opts.onEnd(); });
-
-    wrap.append(micBtn, vidBtn, noteBtn, sayBtn, endBtn);
+    micBtn.addEventListener('click', function () { if (opts.onMicToggle) opts.onMicToggle(); });
+    vidBtn.addEventListener('click', function () { if (opts.onVideoToggle) opts.onVideoToggle(); });
+    endBtn.addEventListener('click', function () { if (opts.onEnd) opts.onEnd(); });
+    if (accmpBtn) accmpBtn.addEventListener('click', function () { if (opts.onAccmpToggle) opts.onAccmpToggle(); });
+    if (chatBtn) chatBtn.addEventListener('click', function () { if (opts.onSay) opts.onSay(); });
 
     return {
-      node: wrap,
-      setMicActive: function (active) { refreshBtn(micBtn, active ? 'mic' : 'mic-off', active); },
-      setVideoActive: function (active) { refreshBtn(vidBtn, active ? 'vid' : 'vid-off', active); },
-      setSayBadge: function (visible) { sayBadge.hidden = !visible; },
+      node: bar,
+      setMicActive: function (active) {
+        micBtn.setAttribute('aria-pressed', active ? 'true' : 'false');
+        micBtn.setAttribute('aria-label', active ? 'Mute microphone' : 'Unmute microphone');
+        micBtn.replaceChildren(svgIcon(active ? 'mic' : 'mic-off'));
+      },
+      setVideoActive: function (active) {
+        vidBtn.setAttribute('aria-pressed', active ? 'true' : 'false');
+        vidBtn.setAttribute('aria-label', active ? 'Turn off camera' : 'Turn on camera');
+        vidBtn.replaceChildren(svgIcon(active ? 'vid' : 'vid-off'));
+      },
+      setAccmpOpen: function (open) {
+        if (accmpBtn) accmpBtn.setAttribute('aria-pressed', open ? 'true' : 'false');
+      },
+      setSayBadge: function (visible) { if (sayBadge) sayBadge.hidden = !visible; },
     };
   }
+
+  // ---- buildEndDialog (unchanged) ----
 
   function buildEndDialog(onConfirm) {
     var dlg = document.createElement('dialog');
@@ -153,5 +239,11 @@
     return dlg;
   }
 
-  return { buildRemotePanel: buildRemotePanel, buildControls: buildControls, buildEndDialog: buildEndDialog };
+  return {
+    buildRemotePanel: buildRemotePanel,
+    buildSelfPip: buildSelfPip,
+    buildAccmpPanel: buildAccmpPanel,
+    buildIconBar: buildIconBar,
+    buildEndDialog: buildEndDialog,
+  };
 });

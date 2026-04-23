@@ -321,11 +321,10 @@ test('mic button click calls onMicToggle', () => {
   let calls = 0;
   const container = document.createElement('div');
   const h = mod.mount(container, Object.assign(defaultOpts(), { onMicToggle() { calls++; } }));
-  // controls node is the first child of .sb-bottom, which is the third child of root
+  // v2 layout: root.children[1] is the .sb-iconbar; mic is first button
   const root = container.children[0];
-  const bottom = root.children[2];
-  const controls = bottom.children[0];
-  const micBtn = controls.children[0];
+  const iconBar = root.children[1];
+  const micBtn = iconBar.children[0];
   micBtn.dispatchClick();
   assert.equal(calls, 1, 'onMicToggle must be called on mic button click');
   h.teardown();
@@ -335,32 +334,37 @@ test('video button click calls onVideoToggle', () => {
   let calls = 0;
   const container = document.createElement('div');
   const h = mod.mount(container, Object.assign(defaultOpts(), { onVideoToggle() { calls++; } }));
-  const bottom = container.children[0].children[2];
-  const vidBtn = bottom.children[0].children[1];
+  // v2 layout: root.children[1] is the .sb-iconbar; vid is second button
+  const iconBar = container.children[0].children[1];
+  const vidBtn = iconBar.children[1];
   vidBtn.dispatchClick();
   assert.equal(calls, 1, 'onVideoToggle must be called on video button click');
   h.teardown();
 });
 
-test('note button click calls onNote', () => {
-  let calls = 0;
+test('end button click opens end dialog (v2 layout)', () => {
+  let shown = false;
   const container = document.createElement('div');
-  const h = mod.mount(container, Object.assign(defaultOpts(), { onNote() { calls++; } }));
-  const bottom = container.children[0].children[2];
-  const noteBtn = bottom.children[0].children[2];
-  noteBtn.dispatchClick();
-  assert.equal(calls, 1, 'onNote must be called on note button click');
+  const h = mod.mount(container, defaultOpts());
+  // Non-teacher: mic(0), vid(1), end(2)
+  const iconBar = container.children[0].children[1];
+  const endBtn = iconBar.children[2];
+  assert.equal(endBtn.getAttribute('aria-label'), 'Leave call', 'end button must have correct aria-label');
   h.teardown();
 });
 
-test('say button click calls onSay', () => {
+test('teacher iconBar: onSay callback fires on chat button click', () => {
   let calls = 0;
   const container = document.createElement('div');
-  const h = mod.mount(container, Object.assign(defaultOpts(), { onSay() { calls++; } }));
-  const bottom = container.children[0].children[2];
-  const sayBtn = bottom.children[0].children[3];
-  sayBtn.dispatchClick();
-  assert.equal(calls, 1, 'onSay must be called on say button click');
+  const h = mod.mount(container, Object.assign(defaultOpts(), {
+    isTeacher: true,
+    onSay() { calls++; },
+  }));
+  // Teacher: mic(0), vid(1), accmp(2), chat(3), end(4)
+  const iconBar = container.children[0].children[1];
+  const chatBtn = iconBar.children[3];
+  chatBtn.dispatchClick();
+  assert.equal(calls, 1, 'onSay must be called on chat button click (teacher)');
   h.teardown();
 });
 
@@ -461,7 +465,6 @@ test('appendChatMsg after teardown() does not throw', () => {
 
 function defaultOpts() {
   return {
-    role: 'teacher',
     remoteName: 'Alex',
     remoteRoleLabel: 'Student',
     localStream: null,
@@ -472,7 +475,6 @@ function defaultOpts() {
     onMicToggle() {},
     onVideoToggle() {},
     onEnd() {},
-    onNote() {},
     onSay() {},
   };
 }

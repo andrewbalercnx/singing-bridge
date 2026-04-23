@@ -1,23 +1,23 @@
 // File: server/src/http/teach.rs
-// Purpose: GET /teach/<slug> — serves teacher.html when the caller owns the
-//          slug via session cookie; otherwise student.html. In dev mode,
-//          injects the <meta name="sb-debug"> tag that enables the debug
-//          overlay; in prod mode, injects nothing (hot path stays
-//          allocation-light by short-circuiting the replace).
-// Role: The one page students actually visit.
-// Exports: get_teach
+// Purpose: GET /teach/<slug> — redirects authenticated owner to dashboard; serves
+//          student.html to unauthenticated visitors. GET /teach/<slug>/session —
+//          serves teacher.html (session + lobby) to authenticated owner.
+// Role: Entry point for all /teach/<slug> traffic; slug auth gating.
+// Exports: get_teach, get_session
 // Depends: axum, tokio::fs
 // Invariants: failing to read the session cookie does NOT differ observably
-//             from a missing cookie — both fall through to student view.
-//             Debug marker injection is driven solely by Config.dev; no
-//             other gate (cookie, query string, header) promotes to dev.
-// Last updated: Sprint 2 (2026-04-17) -- +debug marker injection
+//             from a missing cookie — both fall through to student view / redirect.
+//             Debug marker injection is driven solely by Config.dev.
+//             All owner-only responses carry Cache-Control: private, no-store
+//             and Vary: Cookie. Non-owner dashboard/session requests redirect to
+//             /teach/<slug> (student entry point).
+// Last updated: Sprint 17 (2026-04-23) -- dashboard redirect + /session route
 
 use std::sync::Arc;
 
 use axum::{
     extract::{Path, State},
-    http::{header, HeaderMap, HeaderValue},
+    http::{header, HeaderMap, HeaderValue, StatusCode},
     response::{Html, IntoResponse, Response},
 };
 
@@ -25,57 +25,95 @@ use crate::auth::{resolve_teacher_from_cookie, slug::validate};
 use crate::error::{AppError, Result};
 use crate::state::AppState;
 
+/// GET /teach/<slug> — authenticated owner → redirect to dashboard;
+/// unauthenticated → serve student.html.
 pub async fn get_teach(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Path(slug): Path<String>,
 ) -> Result<Response> {
     let slug = validate(&slug).map_err(|_| AppError::NotFound)?;
+    ensure_slug_exists(&state, &slug).await?;
 
-    let (teacher_id_owns_slug,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM teachers WHERE slug = ?",
-    )
-    .bind(&slug)
-    .fetch_one(&state.db)
-    .await?;
-    if teacher_id_owns_slug == 0 {
-        return Err(AppError::NotFound);
+    if is_owner(&state, &headers, &slug).await {
+        let location = format!("/teach/{}/dashboard", slug);
+        return Ok(private_redirect(location));
     }
 
-    let authed_teacher = resolve_teacher_from_cookie(&state.db, &headers).await;
+    serve_html(&state, "student.html", false).await
+}
 
-    let is_owner = if let Some(tid) = authed_teacher {
-        let (owned,): (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM teachers WHERE id = ? AND slug = ?",
-        )
-        .bind(tid)
-        .bind(&slug)
+/// GET /teach/<slug>/session — authenticated owner → teacher.html (lobby + session);
+/// unauthenticated → redirect to /teach/<slug>.
+pub async fn get_session(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(slug): Path<String>,
+) -> Result<Response> {
+    let slug = validate(&slug).map_err(|_| AppError::NotFound)?;
+    ensure_slug_exists(&state, &slug).await?;
+
+    if !is_owner(&state, &headers, &slug).await {
+        return Ok(private_redirect(format!("/teach/{}", slug)));
+    }
+
+    serve_html(&state, "teacher.html", state.config.dev).await
+}
+
+// ---- helpers (pub for dashboard.rs reuse) ----
+
+pub async fn ensure_slug_exists(state: &AppState, slug: &str) -> Result<()> {
+    let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM teachers WHERE slug = ?")
+        .bind(slug)
         .fetch_one(&state.db)
         .await?;
-        owned > 0
-    } else {
-        false
+    if count == 0 { Err(AppError::NotFound) } else { Ok(()) }
+}
+
+pub async fn is_owner(state: &AppState, headers: &HeaderMap, slug: &str) -> bool {
+    let Some(tid) = resolve_teacher_from_cookie(&state.db, headers).await else {
+        return false;
     };
+    let Ok((owned,)): std::result::Result<(i64,), _> = sqlx::query_as(
+        "SELECT COUNT(*) FROM teachers WHERE id = ? AND slug = ?",
+    )
+    .bind(tid)
+    .bind(slug)
+    .fetch_one(&state.db)
+    .await else {
+        return false;
+    };
+    owned > 0
+}
 
-    let page = if is_owner { "teacher.html" } else { "student.html" };
-    let html_path = state.config.static_dir.join(page);
-    let html = tokio::fs::read_to_string(&html_path).await?;
-
-    let html = inject_debug_marker(html, state.config.dev);
+pub async fn serve_html(state: &AppState, page: &str, dev: bool) -> Result<Response> {
+    let path = state.config.static_dir.join(page);
+    let html = tokio::fs::read_to_string(&path).await?;
+    let html = inject_debug_marker(html, dev);
     let mut resp = Html(html).into_response();
-    let h = resp.headers_mut();
-    h.insert(header::CACHE_CONTROL, HeaderValue::from_static("private, no-store"));
-    h.insert(header::VARY, HeaderValue::from_static("Cookie"));
+    set_private_headers(resp.headers_mut());
     Ok(resp)
 }
 
-/// Placeholder token in `teacher.html` / `student.html`. In dev mode it
-/// is replaced with the `<meta name="sb-debug">` tag; in prod it is
-/// stripped (replaced with "") so the comment never reaches the client.
-const DEBUG_MARKER_PLACEHOLDER: &str = "<!-- sb:debug -->";
+/// 302 redirect with private cache headers so proxies never cache it.
+pub fn private_redirect(location: String) -> Response {
+    let mut resp = (
+        StatusCode::FOUND,
+        [(header::LOCATION, location)],
+    ).into_response();
+    set_private_headers(resp.headers_mut());
+    resp
+}
+
+pub fn set_private_headers(h: &mut axum::http::HeaderMap) {
+    h.insert(header::CACHE_CONTROL, HeaderValue::from_static("private, no-store"));
+    h.insert(header::VARY, HeaderValue::from_static("Cookie"));
+}
+
+pub const DEBUG_MARKER_PLACEHOLDER: &str = "<!-- sb:debug -->";
 const DEBUG_MARKER_TAG: &str = "<meta name=\"sb-debug\" content=\"1\">";
 
-fn inject_debug_marker(html: String, dev: bool) -> String {
+pub fn inject_debug_marker(html: String, dev: bool) -> String {
     let replacement = if dev { DEBUG_MARKER_TAG } else { "" };
     html.replace(DEBUG_MARKER_PLACEHOLDER, replacement)
 }

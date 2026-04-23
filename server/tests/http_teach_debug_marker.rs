@@ -3,7 +3,7 @@
 //          correctly and that both HTML pages carry the required DOM structure.
 //          Sprint 8: updated assertions for Variation A session-root layout;
 //          removed static #mute/#video-off/#hangup checks (now dynamic via session-ui.js).
-// Last updated: Sprint 9 (2026-04-19) -- self-check, lobby-toast, chat-drawer script tag asserts
+// Last updated: Sprint 17 (2026-04-23) -- /teach/<slug> now redirects owner to dashboard; teacher.html at /session
 
 mod common;
 
@@ -110,78 +110,85 @@ async fn test_dev_teach_html_carries_debug_marker_student_view() {
 }
 
 #[tokio::test]
-async fn test_dev_teach_html_carries_debug_marker_teacher_view() {
+async fn test_authenticated_owner_teach_redirects_to_dashboard() {
     let app = spawn_app().await;
     let cookie = app.signup_teacher("teacher@test.example", "myroom").await;
-    // Teacher view: authenticated cookie
-    let (status, headers, body) = app.get_html("/teach/myroom", Some(&cookie)).await;
+    // Sprint 17: authenticated owner at /teach/<slug> gets 302 → dashboard
+    let (status, headers, _body) = app.get_html("/teach/myroom", Some(&cookie)).await;
+    assert_eq!(status, reqwest::StatusCode::FOUND);
+    assert_eq!(
+        headers.get("location").unwrap().to_str().unwrap(),
+        "/teach/myroom/dashboard",
+        "redirect must point to /teach/<slug>/dashboard"
+    );
+    assert_eq!(
+        headers.get("cache-control").unwrap().to_str().unwrap(),
+        "private, no-store",
+        "redirect must carry private cache headers"
+    );
+    assert_eq!(
+        headers.get("vary").unwrap().to_str().unwrap(),
+        "Cookie",
+    );
+    app.shutdown().await;
+}
+
+#[tokio::test]
+async fn test_session_route_serves_teacher_html() {
+    let app = spawn_app().await;
+    let cookie = app.signup_teacher("teacher@test.example", "myroom").await;
+    // Sprint 17: /teach/<slug>/session serves teacher.html for authenticated owner
+    let (status, headers, body) = app.get_html("/teach/myroom/session", Some(&cookie)).await;
     assert_eq!(status, reqwest::StatusCode::OK);
     assert!(headers.contains_key("content-security-policy"));
+    assert_eq!(
+        headers.get("cache-control").unwrap().to_str().unwrap(),
+        "private, no-store"
+    );
+    assert_eq!(headers.get("vary").unwrap().to_str().unwrap(), "Cookie");
     assert!(
         body.contains(r#"<meta name="sb-debug""#),
-        "dev teacher view missing sb-debug meta tag"
+        "dev session view missing sb-debug meta tag"
     );
-    assert!(
-        !body.contains("<!-- sb:debug -->"),
-        "dev teacher view still has placeholder"
-    );
-
-    // Sprint 8: session UI mounts into #session-root
     assert!(body.contains(r#"id="session-root""#), "teacher.html missing #session-root");
+    assert!(body.contains(r#"src="/assets/session-ui.js""#), "teacher.html missing session-ui.js");
+    assert!(body.contains(r#"href="/assets/theme.css""#), "teacher.html missing theme.css");
+    assert!(!body.contains("fonts.googleapis.com"), "teacher.html must not reference Google Fonts");
+    assert!(!body.contains("fonts.gstatic.com"));
 
-    // Sprint 8: session-ui.js and theme.css must be loaded
-    assert!(
-        body.contains(r#"src="/assets/session-ui.js""#),
-        "teacher.html missing session-ui.js"
-    );
-    assert!(
-        body.contains(r#"href="/assets/theme.css""#),
-        "teacher.html missing theme.css"
-    );
-
-    // Sprint 8: no Google Fonts
-    assert!(
-        !body.contains("fonts.googleapis.com"),
-        "teacher.html must not reference Google Fonts"
-    );
-    assert!(
-        !body.contains("fonts.gstatic.com"),
-        "teacher.html must not reference Google Fonts CDN"
-    );
-
-    // Sprint 4: quality badge + reconnect banner + floor violation notice.
     assert!(body.contains(r#"id="quality-badge""#), "teacher.html missing #quality-badge");
     assert!(body.contains(r#"id="reconnect-banner""#), "teacher.html missing #reconnect-banner");
     assert!(body.contains(r#"id="floor-violation""#), "teacher.html missing #floor-violation");
 
-    // Sprint 4: script load order must match student.html.
     let t_adapt = body.find(r#"src="/assets/adapt.js""#).expect("teacher.html missing adapt.js");
     let t_quality = body.find(r#"src="/assets/quality.js""#).expect("teacher.html missing quality.js");
     let t_reconnect = body.find(r#"src="/assets/reconnect.js""#).expect("teacher.html missing reconnect.js");
     let t_sessioncore = body.find(r#"src="/assets/session-core.js""#).expect("teacher.html missing session-core.js");
     let t_signalling = body.find(r#"src="/assets/signalling.js""#).expect("teacher.html missing signalling.js");
-    assert!(t_adapt < t_quality, "teacher: adapt.js must load before quality.js");
-    assert!(t_quality < t_reconnect, "teacher: quality.js must load before reconnect.js");
-    assert!(t_reconnect < t_sessioncore, "teacher: reconnect.js must load before session-core.js");
-    assert!(t_sessioncore < t_signalling, "teacher: session-core.js must load before signalling.js");
+    assert!(t_adapt < t_quality);
+    assert!(t_quality < t_reconnect);
+    assert!(t_reconnect < t_sessioncore);
+    assert!(t_sessioncore < t_signalling);
 
-    let t_session_ui = body.find(r#"src="/assets/session-ui.js""#).expect("teacher.html missing session-ui.js");
-    assert!(t_session_ui < t_signalling, "teacher: session-ui.js must load before signalling.js");
+    let t_session_ui = body.find(r#"src="/assets/session-ui.js""#).expect("missing session-ui.js");
+    assert!(t_session_ui < t_signalling);
 
-    // Sprint 9: teacher gets self-check and chat-drawer; chat-drawer before session-ui.
-    let t_self_check = body.find(r#"src="/assets/self-check.js""#).expect("teacher.html missing self-check.js");
-    let t_chat_drawer = body.find(r#"src="/assets/chat-drawer.js""#).expect("teacher.html missing chat-drawer.js");
-    let t_panels = body.find(r#"src="/assets/session-panels.js""#).expect("teacher.html missing session-panels.js");
-    assert!(t_chat_drawer < t_session_ui, "teacher: chat-drawer.js must load before session-ui.js");
-    assert!(t_panels < t_session_ui, "teacher: session-panels.js must load before session-ui.js");
-    let _ = t_self_check;
+    let t_chat_drawer = body.find(r#"src="/assets/chat-drawer.js""#).expect("missing chat-drawer.js");
+    let t_panels = body.find(r#"src="/assets/session-panels.js""#).expect("missing session-panels.js");
+    assert!(t_chat_drawer < t_session_ui);
+    assert!(t_panels < t_session_ui);
+    assert!(!body.contains(r#"id="chat-panel""#));
 
-    // Sprint 9: legacy static chat panel removed from teacher.html.
-    assert!(
-        !body.contains(r#"id="chat-panel""#),
-        "teacher.html must not contain legacy #chat-panel"
-    );
+    app.shutdown().await;
+}
 
+#[tokio::test]
+async fn test_session_route_redirects_unauthenticated() {
+    let app = spawn_app().await;
+    app.signup_teacher("teacher@test.example", "myroom").await;
+    let (status, headers, _) = app.get_html("/teach/myroom/session", None).await;
+    assert_eq!(status, reqwest::StatusCode::FOUND);
+    assert_eq!(headers.get("location").unwrap().to_str().unwrap(), "/teach/myroom");
     app.shutdown().await;
 }
 

@@ -2,12 +2,13 @@
 // Purpose: Teacher UI wiring. Student-supplied strings rendered via
 //          textContent only (no innerHTML — XSS prevention). Sprint 8:
 //          replaced wireControls with sbSessionUI.mount into #session-root.
-// Last updated: Sprint 14 (2026-04-23) -- pass getOneWayLatencyMs to accompaniment-drawer mount
+// Last updated: Sprint 17 (2026-04-23) -- v2 session layout; slug from /teach/<slug>/session; panelEl accmp
 
 'use strict';
 
 (function () {
-  const slug = location.pathname.replace(/^\/teach\//, '');
+  // pathname is /teach/<slug>/session — extract the middle segment
+  const slug = location.pathname.split('/')[2] || '';
   document.getElementById('room-heading').textContent = `Your room: ${slug}`;
   const recordingsLink = document.getElementById('recordings-link');
   if (recordingsLink) recordingsLink.href = `/teach/${slug}/recordings`;
@@ -218,23 +219,11 @@
       localAudioTrack = audioTrack;
       if (qualityBadge) qualityBadge.hidden = false;
       setRecordState('idle');
-      const drawerRoot = document.getElementById('accompaniment-drawer-root');
-      const scoreRoot = document.getElementById('score-view-root');
-      if (window.sbAccompanimentDrawer && drawerRoot) {
-        accompanimentHandle = window.sbAccompanimentDrawer.mount(drawerRoot, {
-          role: 'teacher',
-          slug,
-          sendWs(msg) { if (sessionHandle) sessionHandle.sendRaw(msg); },
-          getOneWayLatencyMs: getOneWayLatencyMs || function () { return 0; },
-        });
-        if (window.sbScoreView && scoreRoot) {
-          scoreViewHandle = window.sbScoreView.mount(scoreRoot);
-          accompanimentHandle.setScoreView(scoreViewHandle);
-        }
-      }
+
+      // Mount session UI first so we can pass accmpPanel to the accompaniment drawer.
       const sessionRoot = document.getElementById('session-root');
       sessionUiHandle = window.sbSessionUI.mount(sessionRoot, {
-        role: 'teacher',
+        isTeacher: true,
         remoteName: lastStudentEmail,
         remoteRoleLabel: 'Student',
         localStream: localStream || null,
@@ -251,9 +240,33 @@
           if (track) track.enabled = !track.enabled;
         },
         onEnd() { if (sessionHandle) sessionHandle.hangup(); },
-        onNote() { console.log('[sprint9] note panel'); },
         onSendChat(text) { if (sessionHandle) sessionHandle.sendChat(text); },
       });
+
+      // Wire accompaniment into the inline panel (v2 layout).
+      const accmpPanel = sessionUiHandle && sessionUiHandle.accmpPanel;
+      if (window.sbAccompanimentDrawer && accmpPanel) {
+        accompanimentHandle = window.sbAccompanimentDrawer.mount(null, {
+          role: 'teacher',
+          panelEl: accmpPanel,
+          slug,
+          sendWs(msg) { if (sessionHandle) sessionHandle.sendRaw(msg); },
+          getOneWayLatencyMs: getOneWayLatencyMs || function () { return 0; },
+        });
+        const scoreRoot = document.getElementById('score-view-root');
+        if (window.sbScoreView && scoreRoot) {
+          scoreViewHandle = window.sbScoreView.mount(scoreRoot);
+          accompanimentHandle.setScoreView(scoreViewHandle);
+        }
+        // Wire score-viewer toggle button.
+        if (accmpPanel.scoreToggleBtn && scoreViewHandle) {
+          accmpPanel.scoreToggleBtn.addEventListener('click', function () {
+            const pressed = accmpPanel.scoreToggleBtn.getAttribute('aria-pressed') === 'true';
+            accmpPanel.scoreToggleBtn.setAttribute('aria-pressed', pressed ? 'false' : 'true');
+            if (scoreRoot) scoreRoot.hidden = pressed;
+          });
+        }
+      }
       dataChannel.addEventListener('message', (e) => {
         statusEl.textContent = `Student says: ${e.data}`;
       });

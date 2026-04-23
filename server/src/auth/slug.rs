@@ -5,7 +5,7 @@
 // Depends: regex, once_cell
 // Invariants: pure fn — no IO; regex ^[a-z][a-z0-9-]{1,30}[a-z0-9]$; reserved list
 //             never contains strings the regex would reject.
-// Last updated: Sprint 1 (2026-04-17) -- initial implementation
+// Last updated: Sprint 17 (2026-04-23) -- reserve "session" and "dashboard" (new server-owned path segments)
 
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -13,8 +13,8 @@ use regex::Regex;
 use crate::error::AppError;
 
 pub const RESERVED_SLUGS: &[&str] = &[
-    "admin", "api", "assets", "auth", "dev", "health", "login", "logout",
-    "signup", "static", "teach", "ws",
+    "admin", "api", "assets", "auth", "dashboard", "dev", "health", "login",
+    "logout", "session", "signup", "static", "teach", "ws",
 ];
 
 static SLUG_RE: Lazy<Regex> =

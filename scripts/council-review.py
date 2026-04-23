@@ -2490,6 +2490,41 @@ def main():
                 print(file=sys.stderr)
                 sys.exit(5)
 
+    # Advisory warning for plan reviews: if we're at R3+ with zero resolutions
+    # and ≥3 open Highs, the tracker is in the same loop-state that causes
+    # code reviews to re-flag verbatim. No hard block (plan findings are design
+    # gaps, not code bugs, and some rounds legitimately stay all-OPEN while the
+    # plan is being revised) but the agent needs a clear signal to update the
+    # tracker before continuing.
+    if review_type == "plan" and tracker_content and round_num >= 3:
+        prior_findings = _read_tracker(tracker_file)
+        if prior_findings:
+            open_count = sum(1 for f in prior_findings if f.get("status", "OPEN") == "OPEN")
+            resolved_count = len(prior_findings) - open_count
+            high_open = sum(
+                1 for f in prior_findings
+                if f.get("status", "OPEN") == "OPEN" and f.get("severity", "") == "High"
+            )
+            if resolved_count == 0 and high_open >= 3:
+                print(file=sys.stderr)
+                print(f"  WARNING: plan tracker has 0 resolved findings at R{round_num}.",
+                      file=sys.stderr)
+                print(f"  {high_open} High findings are OPEN in "
+                      f"FINDINGS_Sprint{sprint}.md", file=sys.stderr)
+                print(file=sys.stderr)
+                print("  Reviewers will re-examine the same plan sections and",
+                      file=sys.stderr)
+                print("  regenerate identical findings. Before continuing:", file=sys.stderr)
+                print("  1. For each finding you addressed in the plan revision,",
+                      file=sys.stderr)
+                print("     set Status → ADDRESSED with a note pointing to the",
+                      file=sys.stderr)
+                print("     specific plan section that resolves it.", file=sys.stderr)
+                print("  2. Set WONTFIX+reason for any you are intentionally deferring.",
+                      file=sys.stderr)
+                print("  Continuing this round (not blocked)...", file=sys.stderr)
+                print(file=sys.stderr)
+
     prompt_token_estimates = _estimate_prompt_tokens(
         active_members, materials, sprint, round_num, review_type, tracker_content,
     )

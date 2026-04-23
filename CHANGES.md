@@ -11,6 +11,17 @@
 > **Commit:** `<sha>`
 > ```
 
+## Sprint 15: Web MIDI keyboard recording — 2026-04-23
+
+**Files changed:**
+- `web/library.html` — `#midi-record-section` UI: device picker, record/stop controls, note display, progress, error; `#midi-unavailable-note` hint
+- `web/assets/library.js` — `encodeVlq`, `serializeMidi` (Type-1 MIDI serializer, PPQ guard ≤32767), `handleMidiMessage`, `startMidiCapture`, `stopMidiCapture`, `initMidiRecording` (Web MIDI API with injectable `accessProvider`), `updateMidiDevicePicker`, `initMidiUploadControls`; `_setPendingAutoExpandId` test hook; `startUpload` `onSuccess` callback; `renderSummary` auto-expand on `_pendingAutoExpandId`
+- `web/assets/tests/library.test.js` — 118 tests (49 new MIDI tests): VLQ encoding, MIDI serialization, PPQ limit guard, multi-event relative delta, `handleMidiMessage` filtering/normalisation/cap, `initMidiRecording` degradation/hotplug/XSS, lifecycle integration roundtrip, session isolation, `pendingAutoExpandId` auto-expand
+
+**Commit:** `f13e8b8`
+
+---
+
 ## Sprint 14: In-session accompaniment playback — 2026-04-23
 
 **Files changed:**

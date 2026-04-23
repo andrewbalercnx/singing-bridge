@@ -502,7 +502,7 @@ _In-session frontend_
 - Web MIDI unavailable (mocked) → graceful degradation with tooltip
 - All existing library tests pass; new MIDI recording tests pass
 
-**Status:** PENDING
+**Status:** COMPLETE — 2026-04-23, commit `f13e8b8` (code review APPROVED R3)
 
 ---
 

@@ -1477,11 +1477,14 @@ test('initMidiRecording_device_picker_uses_textContent', async function () {
     if (id === 'midi-device-select') return deviceSelect;
     return null;
   };
-  lib.initMidiRecording(null, provider);
-  await new Promise(function (r) { setTimeout(r, 20); });
-  // XSS string stored as literal text, not parsed as HTML
-  assert.ok(appendedTexts.indexOf('<script>alert(1)</script>') !== -1);
-  globalThis.document.getElementById = savedGetEl;
+  try {
+    lib.initMidiRecording(null, provider);
+    await new Promise(function (r) { setTimeout(r, 20); });
+    // XSS string stored as literal text, not parsed as HTML
+    assert.ok(appendedTexts.indexOf('<script>alert(1)</script>') !== -1);
+  } finally {
+    globalThis.document.getElementById = savedGetEl;
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -1564,18 +1567,20 @@ test('initMidiRecording_onstatechange_reveals_section_when_port_appears', async 
   };
 
   var provider = function () { return Promise.resolve(mockAccess); };
-  lib.initMidiRecording(null, provider);
-  await new Promise(function (r) { setTimeout(r, 20); });
+  try {
+    lib.initMidiRecording(null, provider);
+    await new Promise(function (r) { setTimeout(r, 20); });
 
-  // Section still hidden — no ports yet
-  assert.equal(sectionEl.hidden, true);
+    // Section still hidden — no ports yet
+    assert.equal(sectionEl.hidden, true);
 
-  // Device plugged in: update inputs and fire onstatechange
-  currentInputs = mockInputsWithPort;
-  if (capturedStateChange) capturedStateChange({});
-  assert.equal(sectionEl.hidden, false);
-
-  globalThis.document.getElementById = savedGetEl;
+    // Device plugged in: update inputs and fire onstatechange
+    currentInputs = mockInputsWithPort;
+    if (capturedStateChange) capturedStateChange({});
+    assert.equal(sectionEl.hidden, false);
+  } finally {
+    globalThis.document.getElementById = savedGetEl;
+  }
 });
 
 // ---------------------------------------------------------------------------

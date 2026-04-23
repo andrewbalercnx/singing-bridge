@@ -11,6 +11,18 @@
 > **Commit:** `<sha>`
 > ```
 
+## Sprint 13: Library Management UI — 2026-04-23
+
+**Files changed:**
+- `web/library.html` — new library page with upload zone, asset list, sidecar banner
+- `web/assets/library.js` — UMD module: load/upload/OMR/synthesise/delete helpers + document mock fix
+- `web/assets/tests/library.test.js` — 69 JS unit tests covering all helpers
+- `server/src/http/library.rs` — slug ownership on all 9 asset handlers, N+1 fix in list_assets, db_insert_accompaniment dedup
+- `server/tests/http_library.rs` — wrong-slug, invalid-slug-404, WAV-detail-flags tests; 43 total
+- `scripts/council-config.json` — trailing newline
+
+**Commit:** `3f1543b`
+
 ## Sprint 12A: Accompaniment backend gap closure — 2026-04-21
 
 **Files changed:**

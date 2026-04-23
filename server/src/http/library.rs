@@ -15,7 +15,7 @@
 //             page_blob_keys_json ≤ 10 KB.
 //             GET /api/media/:token returns 404 for both unknown and expired tokens (no oracle).
 //             Blob keys are never returned directly — callers receive short-lived media tokens.
-// Last updated: Sprint 12a (2026-04-21) -- WAV upload, 413 guard, typed upload errors
+// Last updated: Sprint 13 (2026-04-23) -- slug ownership on all asset routes, N+1 fix, db_insert dedup
 
 use std::pin::Pin;
 use std::sync::Arc;

@@ -425,7 +425,7 @@ _Media token delivery_
 
 ---
 
-## Sprint 13: Library management UI
+## Sprint 13: Library management UI — COMPLETE (2026-04-23)
 
 **Goal:** Give the teacher a browser-based interface for building and managing their accompaniment library, wired entirely to the Sprint 12 JSON API.
 
@@ -486,3 +486,5 @@ _In-session frontend_
 - Persistent "my students" list for the teacher — deliberately out of MVP; addressed partially by Sprint 11 history
 - Multi-participant sessions — MVP is strictly 2 peers
 - Low-latency "try to match duet" mode — explicitly not a goal; this tool is coaching-focused
+- **Accompaniment latency compensation:** music played at the teacher's end should be delayed by the one-way audio latency from the student's microphone to the teacher's earpiece. Without this, the student hears the backing track in sync but the teacher hears it slightly ahead of the student's voice — making it harder for the teacher to evaluate timing. The latency estimate is already available from the debug overlay (Sprint 2); it needs to be wired into the accompaniment playback start offset.
+- **Web MIDI recording:** use the Web MIDI API to detect attached MIDI keyboards on the teacher's machine and record a live performance directly as an accompaniment MIDI file, skipping the PDF/OMR upload flow entirely.

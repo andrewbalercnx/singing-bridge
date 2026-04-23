@@ -2,7 +2,7 @@
 // Purpose: Integration tests for the accompaniment library HTTP API.
 // Role: Verify asset CRUD, ownership isolation, token lifecycle, magic-byte rejection,
 //       and media endpoint semantics (404 on unknown/expired tokens, no oracle).
-// Last updated: Sprint 12a (2026-04-21) -- WAV, 413, typed upload errors, wiremock tests
+// Last updated: Sprint 13 (2026-04-23) -- wrong-slug, invalid-slug, WAV-detail tests; 43 tests total
 
 mod common;
 

@@ -2,7 +2,7 @@
 // Purpose: Teacher UI wiring. Student-supplied strings rendered via
 //          textContent only (no innerHTML — XSS prevention). Sprint 8:
 //          replaced wireControls with sbSessionUI.mount into #session-root.
-// Last updated: Sprint 14 (2026-04-23) -- accompaniment-drawer + score-view mounts + AccompanimentState handler
+// Last updated: Sprint 14 (2026-04-23) -- pass getOneWayLatencyMs to accompaniment-drawer mount
 
 'use strict';
 
@@ -213,7 +213,7 @@
       if (accompanimentHandle) accompanimentHandle.updateState(state);
       if (scoreViewHandle) scoreViewHandle.updatePages(state.page_urls || null, state.bar_coords || null);
     },
-    onPeerConnected({ dataChannel, audioTrack, videoTrack, localStream, remoteStream }) {
+    onPeerConnected({ dataChannel, audioTrack, videoTrack, localStream, remoteStream, getOneWayLatencyMs }) {
       statusEl.textContent = 'Connected.';
       localAudioTrack = audioTrack;
       if (qualityBadge) qualityBadge.hidden = false;
@@ -225,6 +225,7 @@
           role: 'teacher',
           slug,
           sendWs(msg) { if (sessionHandle) sessionHandle.sendRaw(msg); },
+          getOneWayLatencyMs: getOneWayLatencyMs || function () { return 0; },
         });
         if (window.sbScoreView && scoreRoot) {
           scoreViewHandle = window.sbScoreView.mount(scoreRoot);

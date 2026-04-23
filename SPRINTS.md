@@ -552,6 +552,5 @@ Recommendation to evaluate during planning: **Option B (Turso)** for lowest migr
 - Persistent "my students" list for the teacher — deliberately out of MVP; addressed partially by Sprint 11 history
 - Multi-participant sessions — MVP is strictly 2 peers
 - Low-latency "try to match duet" mode — explicitly not a goal; this tool is coaching-focused
-- **Accompaniment latency compensation:** music played at the teacher's end should be delayed by the one-way audio latency from the student's microphone to the teacher's earpiece. Without this, the student hears the backing track in sync but the teacher hears it slightly ahead of the student's voice — making it harder for the teacher to evaluate timing. The latency estimate is already available from the debug overlay (Sprint 2); it needs to be wired into the accompaniment playback start offset.
 - **Web MIDI recording:** promoted to Sprint 15.
 - **WAV recording:** allow the teacher to record a live audio performance directly in the browser (Web Audio / MediaRecorder) as a WAV accompaniment, without needing a separate recording app. Input paths summary: PDF = upload only; MIDI = upload or record (Sprint 15); WAV = upload only until this is implemented.

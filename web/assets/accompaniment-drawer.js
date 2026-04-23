@@ -10,7 +10,7 @@
 //             Audio element created only when wav_url is non-null.
 //             peer-supplied URL set via audio.src (no innerHTML).
 //             Score view wired after mount via handle.setScoreView(scoreViewHandle).
-// Last updated: Sprint 14 (2026-04-23) -- initial implementation
+// Last updated: Sprint 14 (2026-04-23) -- teacher playback offset by one-way latency
 
 (function (root, factory) {
   'use strict';
@@ -73,6 +73,7 @@
   function mount(container, opts) {
     var role = (opts && opts.role) || 'student';
     var sendWs = (opts && opts.sendWs) || function () {};
+    var getOneWayLatencyMs = (opts && opts.getOneWayLatencyMs) || function () { return 0; };
 
     var audio = null;
     var rafHandle = null;
@@ -250,7 +251,11 @@
         if (audio.src !== wavUrl) {
           audio.src = wavUrl;
         }
-        audio.currentTime = serverPositionMs / 1000;
+        // Teacher advances their playback by one-way latency so the track
+        // arrives in sync with the student's voice (which is delayed by that
+        // same amount on the teacher's feed).
+        var latencyOffsetMs = (role === 'teacher') ? getOneWayLatencyMs() : 0;
+        audio.currentTime = (serverPositionMs + latencyOffsetMs) / 1000;
 
         if (isPlaying) {
           audio.play().catch(function (e) {

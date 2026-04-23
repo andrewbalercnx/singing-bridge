@@ -16,7 +16,7 @@
 //             rejections are swallowed + logged (never rethrown);
 //             stopAll() clears every timer started by
 //             startSessionSubsystems (adapt interval, reconnect watcher).
-// Last updated: Sprint 5 (2026-04-18) -- metricsSink every 5th adapt tick
+// Last updated: Sprint 14 (2026-04-23) -- expose getOneWayLatencyMs on session handle
 
 (function (root, factory) {
   'use strict';
@@ -88,6 +88,9 @@
         stopped = true;
         clearInterval(interval);
         try { watcher.stop(); } catch (_) {}
+      },
+      getOneWayLatencyMs: function () {
+        return lastSummary && lastSummary.rttMs ? Math.round(lastSummary.rttMs / 2) : 0;
       },
     };
   }

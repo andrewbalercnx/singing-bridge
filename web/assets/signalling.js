@@ -21,7 +21,7 @@
 //             is the sole sender.setParameters mutation site AFTER
 //             session subsystems start; priority hints at transceiver
 //             creation are the only pre-session setParameters calls.
-// Last updated: Sprint 14 (2026-04-23) -- onAccompanimentState + sendRaw in connectTeacher/connectStudent
+// Last updated: Sprint 14 (2026-04-23) -- forward getOneWayLatencyMs to onPeerConnected
 
 (function (root, factory) {
   'use strict';
@@ -279,6 +279,7 @@
             videoTrack: refs.media.video.track,
             localStream: new MediaStream([refs.media.audio.track, refs.media.video.track]),
             remoteStream: remoteStream,
+            getOneWayLatencyMs: function () { return refs.session ? refs.session.getOneWayLatencyMs() : 0; },
           });
         };
       };

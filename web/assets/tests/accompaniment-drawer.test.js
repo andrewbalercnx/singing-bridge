@@ -234,12 +234,13 @@ test('bar advancement tempo_pct=50: 10 s real → scoreTime=5.0 (not 20.0)', fun
   assert.strictEqual(last, 2, 'correct bar selected at tempo_pct=50');
 });
 
-test('clock-skew clamped: server 600 ms behind → effective skew = -500 ms', function () {
-  // server_time_ms is 600ms behind → raw skew = -600 → clamped to -500.
-  // With barTimings [{bar:1,time_s:0},{bar:2,time_s:1.45}]:
-  //   unclamped (-600): currentMs=2000-600=1400, score=1.4 < 1.45 → bar 1
-  //   clamped (-500):   currentMs=2000-500=1500, score=1.5 > 1.45 → bar 2
-  var barTimings = [{ bar: 1, time_s: 0 }, { bar: 2, time_s: 1.45 }];
+test('clock-skew clamped: server 600 ms behind (stale) → skew clamped to +500 ms', function () {
+  // server_time_ms is 600ms in the past → Date.now()-server_time_ms = +600 → clamped to +500.
+  // Positive skew advances currentMs (compensates for network delay).
+  // With barTimings [{bar:1,time_s:0},{bar:2,time_s:2.55}]:
+  //   unclamped (+600): currentMs=2000+600=2600, score=2.6 > 2.55 → bar 2
+  //   clamped   (+500): currentMs=2000+500=2500, score=2.5 < 2.55 → bar 1
+  var barTimings = [{ bar: 1, time_s: 0 }, { bar: 2, time_s: 2.55 }];
   var { handle, sv } = setup('teacher');
   var serverTime = fakeNow - 600;
   handle.updateState({
@@ -252,15 +253,16 @@ test('clock-skew clamped: server 600 ms behind → effective skew = -500 ms', fu
   fakeNow += 2000;
   drainRaf();
   var last = sv.calls[sv.calls.length - 1];
-  assert.strictEqual(last, 2, 'skew clamped to -500 → bar 2 selected');
+  assert.strictEqual(last, 1, 'skew clamped to +500 → bar 1 selected');
 });
 
-test('clock-skew clamped: server 600 ms ahead → effective skew = +500 ms', function () {
-  // server 600ms ahead → raw skew = +600 → clamped to +500.
-  // barTimings [{bar:1,time_s:0},{bar:2,time_s:1.55}]:
-  //   unclamped (+600): currentMs=1000+600=1600, score=1.6 > 1.55 → bar 2
-  //   clamped (+500):   currentMs=1000+500=1500, score=1.5 < 1.55 → bar 1
-  var barTimings = [{ bar: 1, time_s: 0 }, { bar: 2, time_s: 1.55 }];
+test('clock-skew clamped: server 600 ms ahead → skew clamped to -500 ms', function () {
+  // server_time_ms 600ms ahead → Date.now()-server_time_ms = -600 → clamped to -500.
+  // Negative skew delays currentMs (server over-estimated elapsed time).
+  // barTimings [{bar:1,time_s:0},{bar:2,time_s:0.45}]:
+  //   unclamped (-600): currentMs=1000-600=400, score=0.4 < 0.45 → bar 1
+  //   clamped   (-500): currentMs=1000-500=500, score=0.5 > 0.45 → bar 2
+  var barTimings = [{ bar: 1, time_s: 0 }, { bar: 2, time_s: 0.45 }];
   var { handle, sv } = setup('teacher');
   var serverTime = fakeNow + 600;
   handle.updateState({
@@ -273,7 +275,7 @@ test('clock-skew clamped: server 600 ms ahead → effective skew = +500 ms', fun
   fakeNow += 1000;
   drainRaf();
   var last = sv.calls[sv.calls.length - 1];
-  assert.strictEqual(last, 1, 'skew clamped to +500 → bar 1 selected');
+  assert.strictEqual(last, 2, 'skew clamped to -500 → bar 2 selected');
 });
 
 test('before-first-bar: position_ms=0, bar starts at 0.5 s → seekToBar(1)', function () {

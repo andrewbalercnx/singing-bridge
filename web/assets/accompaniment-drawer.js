@@ -2,13 +2,14 @@
 // Purpose: In-session accompaniment playback UI — audio control and bar-advancement loop.
 //          Teacher sees play/pause/stop controls; student sees read-only status.
 // Role: Manages the Audio element lifecycle, rAF bar-advancement loop, and WS message dispatch.
-// Exports: window.sbAccompanimentDrawer.mount(container, opts) → { teardown, updateState }
+// Exports: window.sbAccompanimentDrawer.mount(container, opts) → { teardown, updateState, setScoreView }
 // Depends: DOM, Audio, requestAnimationFrame, signalling.js (caller provides sendWs)
 // Invariants: skewMs sampled once on receipt; not resampled per rAF tick.
-//             effectiveTempoPct = tempo_pct || 100 (fallback + console warning on null/0).
+//             _lastTempoPct fallback = 100 when tempo_pct is null or absent.
 //             cancelAnimationFrame called via stored handle on every state change.
 //             Audio element created only when wav_url is non-null.
 //             peer-supplied URL set via audio.src (no innerHTML).
+//             Score view wired after mount via handle.setScoreView(scoreViewHandle).
 // Last updated: Sprint 14 (2026-04-23) -- initial implementation
 
 (function (root, factory) {
@@ -79,7 +80,7 @@
     var clientRefTime = 0;
     var skewMs = 0;
     var currentBarTimings = null;
-    var scoreViewHandle = null; // set by caller via opts.scoreView
+    var scoreViewHandle = null; // wired after mount via handle.setScoreView()
 
     // Build minimal UI.
     var root = el('div', 'sb-accompaniment-drawer');
@@ -235,8 +236,10 @@
       root.dataset.variantId = state.variant_id || '';
 
       // Skew: sampled once on receipt; not per-frame.
+      // Positive skew means server_time_ms was in the past (network delay):
+      // advance currentMs to compensate. Formula: Date.now() - server_time_ms.
       if (typeof state.server_time_ms === 'number') {
-        skewMs = clamp(state.server_time_ms - Date.now(), -MAX_SKEW_MS, MAX_SKEW_MS);
+        skewMs = clamp(Date.now() - state.server_time_ms, -MAX_SKEW_MS, MAX_SKEW_MS);
       }
 
       serverPositionMs = state.position_ms || 0;

@@ -2,7 +2,8 @@
 // Purpose: E2E tests for in-session accompaniment playback — teacher controls,
 //          student read-only UI, token revocation on stop/disconnect.
 // Role: Two-browser Playwright specs; no sidecar required (WAV upload seeding).
-// Depends: Playwright, tests/e2e/helpers/auth.js, running server at localhost:8080
+//       Playback is driven by setting the drawer's dataset and clicking Play.
+// Depends: Playwright, running server at localhost:8080
 // Last updated: Sprint 14 (2026-04-23) -- initial implementation
 
 import { test, expect, Browser, BrowserContext, Page } from '@playwright/test';
@@ -10,31 +11,33 @@ import { parse as parseCookieHeader } from 'set-cookie-parser';
 
 const BASE_URL = 'http://localhost:8080';
 
-// Minimal valid WAV header (44 bytes, stub data body).
-const WAV_BYTES = Buffer.from(
-  '52494646' + 'ffffffff' + '57415645' + '666d7420' +
-  '10000000' + '01000100' + '44ac0000' + '88580100' +
-  '02001000' + '64617461' + 'ffffffff' +
-  '00000000000000000000000000000000',
-  'hex'
-);
+// Minimal valid WAV: RIFF header + WAVE marker + fmt chunk + data chunk.
+const WAV_BYTES = Buffer.from([
+  0x52, 0x49, 0x46, 0x46, // "RIFF"
+  0xFF, 0xFF, 0xFF, 0xFF, // chunk size (placeholder)
+  0x57, 0x41, 0x56, 0x45, // "WAVE"
+  0x66, 0x6D, 0x74, 0x20, // "fmt "
+  0x10, 0x00, 0x00, 0x00, // sub-chunk size 16
+  0x01, 0x00,             // PCM
+  0x01, 0x00,             // 1 channel
+  0x44, 0xAC, 0x00, 0x00, // 44100 Hz
+  0x88, 0x58, 0x01, 0x00, // byte rate
+  0x02, 0x00,             // block align
+  0x10, 0x00,             // 16 bits
+  0x64, 0x61, 0x74, 0x61, // "data"
+  0xFF, 0xFF, 0xFF, 0xFF, // data size (placeholder)
+  0x00, 0x00, 0x00, 0x00, // 4 bytes of silence
+]);
 
 // ---------------------------------------------------------------------------
-// Session helpers
+// Helpers
 // ---------------------------------------------------------------------------
-
-interface SessionPair {
-  teacherCtx: BrowserContext;
-  studentCtx: BrowserContext;
-  teacherPage: Page;
-  studentPage: Page;
-}
 
 async function registerTeacher(page: Page, email: string, slug: string): Promise<string> {
   const res = await page.request.post(`${BASE_URL}/auth/register`, {
     data: { email, slug, password: 'test-passphrase-12' },
   });
-  if (!res.ok()) throw new Error(`register failed: ${res.status()}`);
+  if (!res.ok()) throw new Error(`register failed: ${res.status()} ${await res.text()}`);
   return res.headers()['set-cookie'];
 }
 
@@ -50,38 +53,47 @@ async function injectCookie(context: BrowserContext, rawCookie: string): Promise
   }]);
 }
 
-/** Upload a WAV asset and return { assetId, variantId }. */
-async function seedWavAsset(page: Page, slug: string, cookieHeader: string): Promise<{ assetId: number; variantId: number }> {
+/** Upload a WAV asset. WAV uploads return { id, variant_id } directly. */
+async function seedWavAsset(
+  page: Page, slug: string, rawCookieHeader: string
+): Promise<{ assetId: number; variantId: number }> {
+  const cookieValue = rawCookieHeader.split(';')[0];
   const res = await page.request.post(`${BASE_URL}/teach/${slug}/library/assets`, {
     headers: {
-      'cookie': cookieHeader.split(';')[0],
+      'cookie': cookieValue,
       'x-title': 'E2E Fixture WAV',
       'content-type': 'audio/wav',
     },
     data: WAV_BYTES,
   });
-  if (!res.ok()) throw new Error(`seed WAV failed: ${res.status()}`);
+  if (!res.ok()) throw new Error(`WAV upload failed: ${res.status()} ${await res.text()}`);
   const body = await res.json();
-  return { assetId: body.id as number, variantId: body.variant_id as number };
+  const assetId = body.id as number;
+  const variantId = body.variant_id as number;
+  if (!assetId || !variantId) {
+    throw new Error(`WAV upload missing id/variant_id: ${JSON.stringify(body)}`);
+  }
+  return { assetId, variantId };
 }
 
-/** Stub Audio globally so autoplay policy doesn't block tests. */
+/** Replace Audio constructor so autoplay policy never blocks tests. */
 async function stubAudio(page: Page): Promise<void> {
   await page.addInitScript(() => {
-    (window as any).__audioInstances = [];
+    const instances: any[] = [];
+    (window as any).__stubAudioInstances = instances;
     (window as any).Audio = class FakeAudio {
       src = '';
       currentTime = 0;
       paused = true;
-      private listeners: Record<string, Array<(e?: Event) => void>> = {};
+      private _listeners: Record<string, Array<(e?: Event) => void>> = {};
+      constructor() { instances.push(this); }
       play() { this.paused = false; return Promise.resolve(); }
       pause() { this.paused = true; }
       addEventListener(ev: string, fn: (e?: Event) => void) {
-        (this.listeners[ev] = this.listeners[ev] || []).push(fn);
+        (this._listeners[ev] = this._listeners[ev] || []).push(fn);
       }
-      dispatchEvent(ev: Event) {
-        (this.listeners[ev.type] || []).forEach(f => f(ev));
-        return true;
+      _fireEnded() {
+        (this._listeners['ended'] || []).forEach(f => f());
       }
     };
   });
@@ -99,16 +111,23 @@ async function dismissSelfCheck(page: Page): Promise<void> {
   }
 }
 
-async function establishSession(browser: Browser, slug: string, teacherCookieHeader: string): Promise<SessionPair> {
-  const ctxOpts = { permissions: ['camera', 'microphone'] as Array<'camera' | 'microphone'> };
-  const teacherCtx = await browser.newContext({ ...ctxOpts });
-  const studentCtx = await browser.newContext({ ...ctxOpts });
+interface SessionPair {
+  teacherCtx: BrowserContext;
+  studentCtx: BrowserContext;
+  teacherPage: Page;
+  studentPage: Page;
+}
 
-  await injectCookie(teacherCtx, teacherCookieHeader);
+async function establishSession(
+  browser: Browser, slug: string, cookieHeader: string
+): Promise<SessionPair> {
+  const ctxOpts = { permissions: ['camera', 'microphone'] as Array<'camera' | 'microphone'> };
+  const teacherCtx = await browser.newContext(ctxOpts);
+  const studentCtx = await browser.newContext(ctxOpts);
+  await injectCookie(teacherCtx, cookieHeader);
 
   const teacherPage = await teacherCtx.newPage();
   const studentPage = await studentCtx.newPage();
-
   await stubAudio(teacherPage);
   await stubAudio(studentPage);
 
@@ -132,8 +151,22 @@ async function establishSession(browser: Browser, slug: string, teacherCookieHea
   return { teacherCtx, studentCtx, teacherPage, studentPage };
 }
 
+/** Arm the drawer with asset/variant IDs then click Play. */
+async function clickPlay(page: Page, assetId: number, variantId: number): Promise<void> {
+  await page.evaluate(
+    ([aid, vid]) => {
+      const drawer = document.querySelector('.sb-accompaniment-drawer') as HTMLElement | null;
+      if (!drawer) throw new Error('Drawer not found');
+      drawer.dataset.assetId = String(aid);
+      drawer.dataset.variantId = String(vid);
+    },
+    [assetId, variantId] as [number, number]
+  );
+  await page.locator('.sb-btn-play').click();
+}
+
 // ---------------------------------------------------------------------------
-// Shared fixture state (populated in first test, reused across suite).
+// Suite-level state
 // ---------------------------------------------------------------------------
 
 let sharedSlug = '';
@@ -142,7 +175,7 @@ let sharedAssetId = 0;
 let sharedVariantId = 0;
 
 // ---------------------------------------------------------------------------
-// Test 1: Setup + drawer visible
+// Test 1: Register teacher and seed WAV asset
 // ---------------------------------------------------------------------------
 
 test('setup: register teacher and seed WAV asset', async ({ page, context }) => {
@@ -174,9 +207,10 @@ test('drawer visible after session established', async ({ browser }) => {
     await establishSession(browser, sharedSlug, sharedCookieHeader);
 
   try {
-    // Accompaniment drawer root is present in DOM.
-    await expect(teacherPage.locator('#accompaniment-drawer-root')).toBeVisible({ timeout: 5_000 });
-    await expect(studentPage.locator('#accompaniment-drawer-root')).toBeVisible({ timeout: 5_000 });
+    await expect(teacherPage.locator('#accompaniment-drawer-root')).toBeAttached();
+    await expect(studentPage.locator('#accompaniment-drawer-root')).toBeAttached();
+    await expect(teacherPage.locator('.sb-accompaniment-status')).toBeVisible({ timeout: 5_000 });
+    await expect(studentPage.locator('.sb-accompaniment-status')).toBeVisible({ timeout: 5_000 });
   } finally {
     await teacherCtx.close();
     await studentCtx.close();
@@ -187,7 +221,7 @@ test('drawer visible after session established', async ({ browser }) => {
 // Test 3: Play — student drawer shows "Playing"
 // ---------------------------------------------------------------------------
 
-test('play: student drawer shows Playing', async ({ browser }) => {
+test('play: student drawer shows Playing after teacher clicks Play', async ({ browser }) => {
   test.setTimeout(60_000);
   if (!sharedSlug || !sharedAssetId) test.skip();
 
@@ -195,25 +229,17 @@ test('play: student drawer shows Playing', async ({ browser }) => {
     await establishSession(browser, sharedSlug, sharedCookieHeader);
 
   try {
-    // Teacher sends AccompanimentPlay via the drawer.
-    // The drawer mounts with the asset picker; we trigger via WS stub since the UI
-    // requires asset selection — use evaluate to call sendWs directly.
-    await teacherPage.evaluate(
-      ([assetId, variantId]) => {
-        (window as any).signallingClient?.__sendAccompanimentPlay?.(assetId, variantId, 0);
-      },
-      [sharedAssetId, sharedVariantId]
-    );
+    // Arm the drawer dataset and click Play. This emits accompaniment_play via WS.
+    await clickPlay(teacherPage, sharedAssetId, sharedVariantId);
 
-    // Fallback: if the above doesn't work (no __sendAccompanimentPlay), use the
-    // drawer's dataset to trigger via click (dataset populated by updateState).
-    // Student drawer updates to "Playing" when AccompanimentState arrives.
+    // Student drawer must transition to "Playing" (receives AccompanimentState).
     await expect(studentPage.locator('.sb-accompaniment-status')).toContainText(
+      /Playing/i, { timeout: 8_000 }
+    );
+    // Teacher drawer also shows "Playing".
+    await expect(teacherPage.locator('.sb-accompaniment-status')).toContainText(
       /Playing/i, { timeout: 5_000 }
-    ).catch(async () => {
-      // Expected if signallingClient doesn't expose __sendAccompanimentPlay.
-      // Skip this assertion in environments without WebRTC media.
-    });
+    );
   } finally {
     await teacherCtx.close();
     await studentCtx.close();
@@ -221,7 +247,69 @@ test('play: student drawer shows Playing', async ({ browser }) => {
 });
 
 // ---------------------------------------------------------------------------
-// Test 4: Student cannot control — no Play/Pause/Stop buttons
+// Test 4: Pause — student shows "Paused"
+// ---------------------------------------------------------------------------
+
+test('pause: student drawer shows Paused after teacher clicks Pause', async ({ browser }) => {
+  test.setTimeout(60_000);
+  if (!sharedSlug || !sharedAssetId) test.skip();
+
+  const { teacherCtx, studentCtx, teacherPage, studentPage } =
+    await establishSession(browser, sharedSlug, sharedCookieHeader);
+
+  try {
+    await clickPlay(teacherPage, sharedAssetId, sharedVariantId);
+    await expect(teacherPage.locator('.sb-accompaniment-status')).toContainText(/Playing/i, { timeout: 8_000 });
+
+    await teacherPage.locator('.sb-btn-pause').click();
+    await expect(studentPage.locator('.sb-accompaniment-status')).toContainText(/Paused/i, { timeout: 5_000 });
+  } finally {
+    await teacherCtx.close();
+    await studentCtx.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Test 5: Stop — student returns to idle; previously issued token 404s
+// ---------------------------------------------------------------------------
+
+test('stop: student returns to idle; media token 404s', async ({ browser }) => {
+  test.setTimeout(60_000);
+  if (!sharedSlug || !sharedAssetId) test.skip();
+
+  const { teacherCtx, studentCtx, teacherPage, studentPage } =
+    await establishSession(browser, sharedSlug, sharedCookieHeader);
+
+  let wavUrl = '';
+  try {
+    await clickPlay(teacherPage, sharedAssetId, sharedVariantId);
+    await expect(teacherPage.locator('.sb-accompaniment-status')).toContainText(/Playing/i, { timeout: 8_000 });
+
+    // Capture the wav_url from the Audio stub.
+    wavUrl = await teacherPage.evaluate(() => {
+      const instances = (window as any).__stubAudioInstances ?? [];
+      return instances.length > 0 ? instances[instances.length - 1].src : '';
+    });
+
+    await teacherPage.locator('.sb-btn-stop').click();
+    await expect(studentPage.locator('.sb-accompaniment-status')).toContainText(
+      /No accompaniment/i, { timeout: 5_000 }
+    );
+  } finally {
+    await teacherCtx.close();
+    await studentCtx.close();
+  }
+
+  // After stop, the issued media token should return 404.
+  if (wavUrl) {
+    const tokenPath = new URL(wavUrl).pathname;
+    const res = await fetch(`${BASE_URL}${tokenPath}`);
+    expect(res.status).toBe(404);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Test 6: Student cannot control — no Play/Pause/Stop buttons
 // ---------------------------------------------------------------------------
 
 test('student cannot control: no play/pause/stop buttons', async ({ browser }) => {
@@ -232,14 +320,9 @@ test('student cannot control: no play/pause/stop buttons', async ({ browser }) =
     await establishSession(browser, sharedSlug, sharedCookieHeader);
 
   try {
-    // Student's accompaniment drawer must not have control buttons.
-    const playBtn = studentPage.locator('#accompaniment-drawer-root .sb-btn-play');
-    const pauseBtn = studentPage.locator('#accompaniment-drawer-root .sb-btn-pause');
-    const stopBtn = studentPage.locator('#accompaniment-drawer-root .sb-btn-stop');
-
-    await expect(playBtn).toHaveCount(0);
-    await expect(pauseBtn).toHaveCount(0);
-    await expect(stopBtn).toHaveCount(0);
+    await expect(studentPage.locator('#accompaniment-drawer-root .sb-btn-play')).toHaveCount(0);
+    await expect(studentPage.locator('#accompaniment-drawer-root .sb-btn-pause')).toHaveCount(0);
+    await expect(studentPage.locator('#accompaniment-drawer-root .sb-btn-stop')).toHaveCount(0);
   } finally {
     await teacherCtx.close();
     await studentCtx.close();
@@ -247,7 +330,7 @@ test('student cannot control: no play/pause/stop buttons', async ({ browser }) =
 });
 
 // ---------------------------------------------------------------------------
-// Test 5: Teacher has Play/Pause/Stop controls
+// Test 7: Teacher has play/pause/stop controls
 // ---------------------------------------------------------------------------
 
 test('teacher has play/pause/stop controls in drawer', async ({ browser }) => {
@@ -258,13 +341,8 @@ test('teacher has play/pause/stop controls in drawer', async ({ browser }) => {
     await establishSession(browser, sharedSlug, sharedCookieHeader);
 
   try {
-    const drawerRoot = teacherPage.locator('#accompaniment-drawer-root');
-    await expect(drawerRoot).toBeVisible();
-
-    // Teacher role: controls div with play/pause/stop should be present.
-    const controls = drawerRoot.locator('.sb-accompaniment-controls');
+    const controls = teacherPage.locator('.sb-accompaniment-controls');
     await expect(controls).toBeVisible({ timeout: 5_000 });
-
     await expect(controls.locator('.sb-btn-play')).toBeVisible();
     await expect(controls.locator('.sb-btn-pause')).toBeVisible();
     await expect(controls.locator('.sb-btn-stop')).toBeVisible();
@@ -274,63 +352,92 @@ test('teacher has play/pause/stop controls in drawer', async ({ browser }) => {
 });
 
 // ---------------------------------------------------------------------------
-// Test 6: Score view root present and initially hidden (WAV-only = no pages)
+// Test 8: WAV-only asset — no score panel visible
 // ---------------------------------------------------------------------------
 
-test('score view root present; hidden when no pages', async ({ browser }) => {
+test('WAV-only asset: score view hidden (no page images)', async ({ browser }) => {
   test.setTimeout(60_000);
-  if (!sharedSlug) test.skip();
+  if (!sharedSlug || !sharedAssetId) test.skip();
 
   const { teacherCtx, teacherPage } =
     await establishSession(browser, sharedSlug, sharedCookieHeader);
 
   try {
-    // score-view-root must be in DOM.
-    await expect(teacherPage.locator('#score-view-root')).toBeAttached();
-    // Inner sb-score-view should be hidden (no page URLs for WAV-only asset).
-    const scoreView = teacherPage.locator('#score-view-root .sb-score-view');
-    const display = await scoreView.evaluate(el => (el as HTMLElement).style.display).catch(() => 'none');
-    expect(display).toBe('none');
+    await clickPlay(teacherPage, sharedAssetId, sharedVariantId);
+    await expect(teacherPage.locator('.sb-accompaniment-status')).toContainText(/Playing/i, { timeout: 8_000 });
+
+    const scoreViewDisplay = await teacherPage.evaluate(() => {
+      const sv = document.querySelector('#score-view-root .sb-score-view') as HTMLElement | null;
+      return sv ? sv.style.display : 'none';
+    });
+    expect(scoreViewDisplay).toBe('none');
   } finally {
     await teacherCtx.close();
   }
 });
 
 // ---------------------------------------------------------------------------
-// Test 7: Disconnect clears accompaniment state on student
+// Test 9: Natural end (audio ended fires on teacher)
+// ---------------------------------------------------------------------------
+
+test('natural end: audio ended fires AccompanimentStop; student returns to idle', async ({ browser }) => {
+  test.setTimeout(60_000);
+  if (!sharedSlug || !sharedAssetId) test.skip();
+
+  const { teacherCtx, studentCtx, teacherPage, studentPage } =
+    await establishSession(browser, sharedSlug, sharedCookieHeader);
+
+  try {
+    await clickPlay(teacherPage, sharedAssetId, sharedVariantId);
+    await expect(teacherPage.locator('.sb-accompaniment-status')).toContainText(/Playing/i, { timeout: 8_000 });
+
+    // Fire the 'ended' event on the Audio stub to simulate natural playback end.
+    await teacherPage.evaluate(() => {
+      const instances = (window as any).__stubAudioInstances ?? [];
+      if (instances.length > 0) instances[instances.length - 1]._fireEnded();
+    });
+
+    await expect(studentPage.locator('.sb-accompaniment-status')).toContainText(
+      /No accompaniment/i, { timeout: 8_000 }
+    );
+  } finally {
+    await teacherCtx.close();
+    await studentCtx.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Test 10: Disconnect clears accompaniment state on student
 // ---------------------------------------------------------------------------
 
 test('teacher disconnect clears accompaniment state on student', async ({ browser }) => {
   test.setTimeout(90_000);
   if (!sharedSlug) test.skip();
 
-  const { teacherCtx, studentCtx, teacherPage, studentPage } =
+  const { teacherCtx, studentCtx, studentPage } =
     await establishSession(browser, sharedSlug, sharedCookieHeader);
 
   try {
-    // Close the teacher context (simulates disconnect).
     await teacherCtx.close();
 
-    // Student should see disconnection.
     await expect(studentPage.locator('#error')).toContainText(
       /disconnected/i, { timeout: 15_000 }
     );
 
-    // Accompaniment status should reset to idle / no-accompaniment.
-    const status = studentPage.locator('.sb-accompaniment-status');
-    // May have been torn down with session — either gone or idle.
-    const text = await status.textContent({ timeout: 3_000 }).catch(() => '');
-    expect(text ?? '').not.toMatch(/Playing/i);
+    const statusText = await studentPage.locator('.sb-accompaniment-status')
+      .textContent({ timeout: 3_000 })
+      .catch(() => '');
+    expect(statusText ?? '').not.toMatch(/Playing/i);
   } finally {
     await studentCtx.close().catch(() => {});
   }
 });
 
 // ---------------------------------------------------------------------------
-// Test 8: No JS console errors during session
+// Test 11: No JS console errors during session lifecycle
 // ---------------------------------------------------------------------------
 
-test('no JS console errors during accompaniement session lifecycle', async ({ browser }) => {
+test('no JS console errors during accompaniment session lifecycle', async ({ browser }) => {
   test.setTimeout(60_000);
   if (!sharedSlug) test.skip();
 
@@ -347,12 +454,13 @@ test('no JS console errors during accompaniement session lifecycle', async ({ br
     if (msg.type() === 'error') studentErrors.push(msg.text());
   });
 
-  // Brief interaction time.
-  await teacherPage.waitForTimeout(3_000);
+  await teacherPage.waitForTimeout(2_000);
 
   try {
-    expect(teacherErrors.filter(e => !e.includes('autoplay'))).toHaveLength(0);
-    expect(studentErrors.filter(e => !e.includes('autoplay'))).toHaveLength(0);
+    const nonAutoplayErrors = (errors: string[]) =>
+      errors.filter(e => !e.toLowerCase().includes('autoplay') && !e.toLowerCase().includes('play()'));
+    expect(nonAutoplayErrors(teacherErrors), 'teacher console errors').toHaveLength(0);
+    expect(nonAutoplayErrors(studentErrors), 'student console errors').toHaveLength(0);
   } finally {
     await teacherCtx.close();
     await studentCtx.close();

@@ -475,18 +475,22 @@ pub(crate) async fn get_asset(
         .and_then(|s| serde_json::from_str(s).ok())
         .unwrap_or(serde_json::Value::Array(vec![]));
 
-    Ok(Json(AssetDetail {
-        id,
-        title,
-        has_pdf: pdf_key.is_some(),
-        has_midi: midi_key.is_some(),
-        page_tokens,
-        bar_coords,
-        bar_timings,
-        variants,
-        created_at,
-    })
-    .into_response())
+    Ok((
+        StatusCode::OK,
+        [(header::CACHE_CONTROL, HeaderValue::from_static("no-store"))],
+        Json(AssetDetail {
+            id,
+            title,
+            has_pdf: pdf_key.is_some(),
+            has_midi: midi_key.is_some(),
+            page_tokens,
+            bar_coords,
+            bar_timings,
+            variants,
+            created_at,
+        }),
+    )
+        .into_response())
 }
 
 // ---------------------------------------------------------------------------
@@ -917,6 +921,10 @@ pub(crate) async fn get_media(
             (
                 header::CACHE_CONTROL,
                 HeaderValue::from_static(cache_control),
+            ),
+            (
+                header::REFERRER_POLICY,
+                HeaderValue::from_static("no-referrer"),
             ),
         ],
         Body::from(data),

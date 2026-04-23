@@ -239,6 +239,11 @@ pub async fn handle_accompaniment_stop(
             return true;
         };
 
+        // No-op if no accompaniment is active (matches Pause behavior).
+        if session.accompaniment.is_none() {
+            return true;
+        }
+
         // Revoke tokens before clearing (no .await under guard).
         if let Some(snap) = session.accompaniment.as_ref() {
             state.media_tokens.invalidate_by_blob_keys(&snap.all_blob_keys());

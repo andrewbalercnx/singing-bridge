@@ -543,7 +543,7 @@ Recommendation to evaluate during planning: **Option B (Turso)** for lowest migr
 - Runbook documents how to take a backup and how to restore from backup
 - Connection pool is no longer capped at 1
 
-**Status:** PENDING
+**Status:** COMPLETE — 2026-04-23, commit `a57792a` (code review APPROVED R6, 81% convergence)
 
 ---
 

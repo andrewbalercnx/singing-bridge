@@ -1,58 +1,68 @@
-## Code Review: Sprint 16 - Persistent database (R1)
+## Code Review: Sprint 16 - Persistent database (R3)
 
-**Round:** 1  
-**Verdict:** PLAN_REVISION_REQUIRED  
+**Round:** 3  
+**Verdict:** CHANGES_REQUESTED  
 **Review Method:** Council of Experts (4 reviewers + consolidator)
 
 ### Implementation Assessment
-The implementation does not safely realize the approved persistence design. Core deployment and recovery assumptions are invalid.
+The implementation completes most planned work and resolves the earlier correctness and test gaps. Approval is blocked by unresolved storage-security issues and plan drift against the shipped configuration.
 
 ### Code Quality
-The Rust changes are mostly direct and readable. Error handling and operational code still contain silent-failure and resource-management gaps. One frontend asset regresses an established CSP constraint.
+The code is generally clear and the recent changes improve failure handling and operational clarity. Remaining issues are minor duplication, comment-style drift, and one small test-setup idiom issue.
 
 ### Test Coverage
-Coverage is incomplete for the new recovery path and for connection-level database initialization guarantees. The current tests do not prove the full operational contract.
+Coverage is now materially stronger and includes the critical backup and multi-connection database paths. Remaining gaps are edge-case coverage around backup behavior and one missing assertion on a safety-sensitive upload parameter.
 
 ### Findings
-- **[High]** Backup and restore cover only the SQLite file and omit the persistent accompaniment blob store, so the durable dataset is not recoverable. (File: `infra/backup-job/backup.py`, Location: backup flow) (Source: domain)
-- **[High]** The NFS bootstrap is incompatible with `RootSquash`: the init container relies on `chown` as root, which Azure Files NFS root squash blocks, so `/data` can remain unwritable. (File: `infra/bicep/container-app.bicep`, Location: storage + init container configuration) (Source: domain)
-- **[High]** The live SQLite database now contains authentication-bearing state on Azure Files NFS with `supportsHttpsTrafficOnly: false`, leaving the database transport intentionally non-TLS. (File: `infra/bicep/container-app.bicep`, Location: storage account config; File: `server/src/config.rs`, Location: data dir config; File: `server/migrations/0001_initial.sql`, Location: sessions table; File: `server/migrations/0003_recordings.sql`, Location: token hashes) (Source: security)
-- **[High]** The root-capable init container runs from a mutable tag with no digest pin, creating a pre-start supply-chain execution risk. (File: `infra/bicep/container-app.bicep`, Location: init container image) (Source: security)
-- **[High]** The backup job also runs from mutable, unpinned images while holding database read access and Blob write permissions. (File: `infra/bicep/backup-job.bicep`, Location: image parameter and job template; File: `infra/backup-job/Dockerfile`, Location: base image) (Source: security)
-- **[High]** The backup script has no tests, despite being the only production recovery mechanism. The snapshot and upload contract are unverified. (File: `infra/backup-job/backup.py`, Location: entire script) (Source: test_quality)
-- **[High]** `init_pool` discards the result of `PRAGMA journal_mode=WAL`, so WAL fallback is silent at startup instead of failing fast. (File: `server/src/db.rs`, Location: `init_pool` `after_connect`) (Source: test_quality)
-- **[Medium]** The backup job identity is scoped to the entire storage account instead of the backup container. (File: `infra/bicep/backup-job.bicep`, Location: role assignment) (Source: security)
-- **[Medium]** The backup storage account has no network restriction such as disabled public network access or deny-by-default ACLs. (File: `infra/bicep/backup-job.bicep`, Location: storage account config) (Source: security)
-- **[Medium]** `backup.py` does not guard the SQLite connection with a context manager, so a failed `VACUUM INTO` leaks the connection. (File: `infra/backup-job/backup.py`, Location: backup execution path) (Source: code_quality)
-- **[Medium]** `gallery.html` reintroduces Google Fonts and breaks the project’s CSP-compliant self-hosted font approach. (File: `web/assets/design_system/gallery.html`, Location: head links) (Source: code_quality)
-- **[Medium]** Database tests do not verify session-scoped pragmas across every pool connection, and they do not cover the read-path `Sqlx -> 500` case. (File: `server/tests/db_pragmas.rs`, Location: pragma tests; File: `server/tests/db_error_500.rs`, Location: closed-pool test) (Source: test_quality)
+- **[High]** Live authentication-bearing database state still traverses Azure Files NFS without transport encryption. This remains a blocking security issue in the chosen storage model. (File: `infra/bicep/container-app.bicep`, Location: lines 48-80) (Source: security)
+- **[Medium]** The approved plan no longer matches the implementation for the container runtime security model. The document still describes `RootSquash` and an init-container ownership bootstrap, while the code uses `NoRootSquash` and per-container UID enforcement. (File: `PLAN_Sprint16.md`, Location: "Container runtime security"; File: `infra/bicep/container-app.bicep`, Location: line 80) (Source: domain)
+- **[Medium]** `NoRootSquash` remains the enforcement model for the live database share. Storage-level protection is absent and the design still relies on container configuration discipline. (File: `infra/bicep/container-app.bicep`, Location: lines 69-80) (Source: security)
+- **[Medium]** The backup storage account still permits `AzureServices` bypass, which weakens the deny-by-default network posture. (File: `infra/bicep/backup-job.bicep`, Location: lines 23-45) (Source: security)
+- **[Medium]** The backup job has write-capable access to the live database share even though it only needs read access. (File: `infra/bicep/backup-job.bicep`, Location: lines 81-108) (Source: security)
+- **[Low]** `test_run_backup_uploads_blob` does not assert that `upload_blob` is called with `overwrite=False`, so a silent overwrite regression would not be caught. (File: `infra/backup-job/test_backup.py`, Location: `test_run_backup_uploads_blob`) (Source: test_quality)
+- **[Low]** No test covers `run_backup()` when the source database path does not exist. (File: `infra/backup-job/test_backup.py`) (Source: test_quality)
+- **[Low]** `capturing_mkstemp` is duplicated verbatim across two tests instead of being extracted as shared test support. (File: `infra/backup-job/test_backup.py`, Location: lines 77-82 and 98-103) (Source: code_quality)
+- **[Low]** Multi-line comment blocks in `server/src/db.rs` and `server/tests/common/mod.rs` violate the project’s one-line comment convention. (Files: `server/src/db.rs`, `server/tests/common/mod.rs`) (Source: code_quality)
+- **[Low]** `open(dst_path, "w").close()` in test code should be replaced with an idiomatic context-managed or `Path.touch()` form. (File: `infra/backup-job/test_backup.py`, Location: line 43) (Source: code_quality)
+- **[Low]** The plan status header is stale and still marked as draft/R2-era text. (File: `PLAN_Sprint16.md`, Location: line 4) (Source: domain)
 
 ### Excluded Findings
-- `db_pool_allows_concurrent_connections` should also issue `SELECT 1` on both connections — Reason: weaker duplicate of the broader missing per-connection and behavioral DB test coverage finding. (Source: test_quality)
-- `backup.py` should add an inline comment explaining the safe f-string for `VACUUM INTO` — Reason: no current security impact because the path is system-generated. (Source: test_quality)
-- Missing negative test for unwritable `init_pool` path — Reason: lower-value test gap compared with the silent WAL misconfiguration and per-connection pragma coverage gaps. (Source: test_quality)
-- Function-local `use` imports in `db_pragmas.rs` — Reason: style-only issue. (Source: code_quality)
-- Missing file header in `gallery.html` — Reason: documentation convention issue, not material to this review outcome. (Source: code_quality)
-- Missing `Role` field in `backup.py` header — Reason: documentation convention issue, not material to this review outcome. (Source: code_quality)
+- Blob-backup accepted-risk documentation not confirmed in `knowledge/decisions/0001-mvp-architecture.md` — Reason: the reviewer explicitly could not verify the file content from the available evidence, so the finding is not sufficiently grounded for consolidation. (Source: domain)
 
-### Plan Revisions
-- Redefine the persistence architecture so authentication-bearing SQLite data is not stored on non-TLS Azure Files NFS.
-- Redefine the filesystem ownership strategy so it does not depend on `chown` under `RootSquash`.
-- Redefine backup scope to include the entire durable dataset, not only `singing-bridge.db`.
-- Require digest-pinned images for privileged init containers and backup jobs in the deployment plan.
-- Add explicit acceptance criteria for WAL startup validation and recovery-path test coverage.
+### Required Changes (if CHANGES_REQUESTED)
+1. **File**: `infra/bicep/container-app.bicep` and supporting design/docs as needed  
+   **Location**: storage configuration for the live database  
+   **Current behavior**: the live SQLite database, including auth/session-bearing state, remains on Azure Files NFS with `supportsHttpsTrafficOnly: false` as part of the active design.  
+   **Required change**: remove live auth/session-bearing state from this unencrypted NFS path, or move the live database to a transport-encrypted storage model.  
+   **Acceptance criteria**: deployed architecture no longer places authentication-bearing database state on unencrypted NFS transport; code and documentation describe the new storage model consistently.
+
+2. **File**: `PLAN_Sprint16.md`  
+   **Location**: "Container runtime security" section and status header  
+   **Current behavior**: the plan still describes `RootSquash` plus an init-container `chown` flow and still carries stale draft/R2 status text.  
+   **Required change**: update the plan to match the implemented security model exactly, including the actual `rootSquash` setting, the absence of the init container, the enforced UID/non-root invariant, the accepted risk statement, and the current review status.  
+   **Acceptance criteria**: plan text matches the implementation with no contradictory runtime-security description and no stale status markers.
+
+3. **File**: `infra/bicep/backup-job.bicep`  
+   **Location**: storage account network ACLs  
+   **Current behavior**: the backup storage account uses deny-by-default rules but still allows `AzureServices` bypass.  
+   **Required change**: remove the broad bypass and keep only explicitly required network exceptions.  
+   **Acceptance criteria**: `bypass` is set to `None`, or an equally narrow documented exception set is present and justified.
+
+4. **File**: `infra/bicep/backup-job.bicep`  
+   **Location**: backup job volume mount for the live database share  
+   **Current behavior**: the backup job can write to the live database share.  
+   **Required change**: mount the source database path read-only if the platform supports it, or introduce an equivalent narrower access path.  
+   **Acceptance criteria**: backup execution cannot modify or delete the live database through its mounted access path.
 
 ### Recommendations
-- Scope Blob permissions to the backup container.
-- Lock down backup storage network access.
-- Wrap the backup SQLite connection in a context manager.
-- Restore self-hosted fonts in `gallery.html`.
+- Add the missing `overwrite=False` assertion and the nonexistent-source-db test in [infra/backup-job/test_backup.py](/Users/andrewbale/code/active/singing-bridge/infra/backup-job/test_backup.py).
+- Extract shared `mkstemp` capture logic and clean up the minor test-style issues.
+- Collapse the multi-line explanatory comments in [server/src/db.rs](/Users/andrewbale/code/active/singing-bridge/server/src/db.rs) and [server/tests/common/mod.rs](/Users/andrewbale/code/active/singing-bridge/server/tests/common/mod.rs) to single-line form.
 
 ### Expert Concordance
 | Area | Experts Agreeing | Key Theme |
-|------|------------------|-----------|
-| Backup and recovery | Domain, Test Quality, Code Quality, Security | Recovery path is incomplete and insufficiently hardened |
-| Database initialization | Test Quality | Startup should fail on WAL misconfiguration |
-| Storage architecture | Domain, Security | Current NFS design breaks operational and security assumptions |
-| Supply chain hardening | Security | Privileged and sensitive jobs must use pinned images |
-| Frontend/code hygiene | Code Quality | One asset regresses established project standards |
+|------|-----------------|-----------|
+| Storage security | Security, Consolidator | Live database storage model remains the approval blocker |
+| Runtime security documentation | Domain, Security, Consolidator | Plan and implementation diverge on the NFS/root model |
+| Backup hardening | Security, Test Quality, Consolidator | Backup path is improved but still needs tighter safeguards |
+| Test/code polish | Test Quality, Code Quality, Consolidator | Remaining issues are low-severity coverage and maintainability gaps |

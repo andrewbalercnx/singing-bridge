@@ -1,7 +1,7 @@
 // File: server/tests/common/mod.rs
 // Purpose: Shared test harness — spawn_app, dev-mail reader, WS client.
 // Role: Keep integration-test bodies short and behaviour-focused.
-// Last updated: Sprint 14 (2026-04-23) -- seed_accompaniment_asset helper
+// Last updated: Sprint 16 (2026-04-23) -- use named shared-cache in-memory URI for multi-connection test isolation
 
 #![allow(dead_code)]
 

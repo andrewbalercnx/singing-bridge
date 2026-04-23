@@ -11,6 +11,26 @@
 > **Commit:** `<sha>`
 > ```
 
+## Sprint 16: Persistent database — 2026-04-23
+
+**Files changed:**
+- `infra/bicep/vnet.bicep` — new: VNet (10.0.0.0/16), ACA subnet (10.0.0.0/23), storage subnet (10.0.4.0/28) with Microsoft.Storage service endpoint
+- `infra/bicep/container-app.bicep` — NFS storage account (FileStorage Premium, supportsHttpsTrafficOnly=false, deny-by-default ACLs), nfsAzureFile share (NoRootSquash), VNet-integrated CAE, nfsAzureFile storage binding, SB_DATA_DIR=/data, securityContext runAsUser=65532; init container removed; API versions bumped to 2024-03-01
+- `infra/bicep/backup-job.bicep` — new: Container App Job (Manual trigger, system-assigned identity), backup blob storage account (deny-by-default, VNet rule), Storage Blob Data Contributor role scoped to backups container; backupImageName required param (no :latest default)
+- `infra/backup-job/Dockerfile` — new: python:3.12-slim@sha256 (digest-pinned), runs as UID 65532:65532
+- `infra/backup-job/backup.py` — new: VACUUM INTO backup via DefaultAzureCredential; run_backup() function; microsecond timestamp; safe temp-file cleanup
+- `infra/backup-job/requirements.txt` — new: azure-storage-blob, azure-identity
+- `infra/backup-job/test_backup.py` — new: 5 tests (VACUUM INTO consistency, destination-exists error, upload contract, cleanup on success/failure); pytest fixtures via tmp_path
+- `server/src/db.rs` — re-enable WAL (journal_mode=WAL verified via fetch_one; accepts "memory" for in-memory test DBs); max_connections 1→4
+- `server/tests/db_pragmas.rs` — new: 6 tests (journal_mode, foreign_keys, busy_timeout, synchronous, concurrent connections, second-connection pragma verification)
+- `server/tests/db_error_500.rs` — new: pool closed → POST /auth/register → HTTP 500
+- `server/tests/common/mod.rs` — use named shared-cache in-memory URI (file:testmem{n}?mode=memory&cache=shared) so max_connections=4 shares one DB per test
+- `knowledge/runbook/deploy.md` — NFS migration cutover procedure, backup/restore runbook, single-replica constraint warning
+- `knowledge/decisions/0001-mvp-architecture.md` — document NFS Azure Files v4.1 and accepted unencrypted transport risk
+- `web/assets/design_system/gallery.html` — remove 3 Google Fonts link tags (CSP compliance)
+
+**Commit:** `a57792a`
+
 ## Sprint 15: Web MIDI keyboard recording — 2026-04-23
 
 **Files changed:**

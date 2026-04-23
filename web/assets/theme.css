@@ -730,8 +730,51 @@
 .tier-badge.unworkable { background: rgba(200,104,79,0.22); color: #7a2f1f; }
 
 /* ============================================================
-  14. Utilities
+  14. Auth page layout + brand mark
    ============================================================ */
+
+/* Full-viewport centred layout used by login and signup pages. */
+.sb-auth-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--sb-space-10);
+}
+.sb-auth-page .sb-card--paper {
+  width: 100%;
+  max-width: 440px;
+}
+.sb-auth-page h1 {
+  font-size: var(--sb-text-2xl);
+  margin-top: var(--sb-space-6);
+}
+
+/* Brand mark — the rose dot + wordmark used in auth cards and topbar. */
+.sb-brand {
+  font-family: var(--sb-font-display);
+  font-weight: 500;
+  font-size: 20px;
+  letter-spacing: -0.01em;
+  margin-bottom: var(--sb-space-1);
+}
+.sb-brand__dot {
+  display: inline-block;
+  width: 8px; height: 8px; border-radius: var(--sb-r-pill);
+  background: var(--sb-rose);
+  margin-right: 10px;
+  transform: translateY(-2px);
+  vertical-align: middle;
+}
+
+/* ============================================================
+  15. Utilities
+   ============================================================ */
+
+/* Layout helpers */
+.sb-row--end-align { align-items: flex-end; }
+.sb-grow { flex: 1 1 0; min-width: 0; }
+.sb-text-sm { font-size: var(--sb-text-sm); }
 
 .sb-mt-0 { margin-top: 0 !important; }
 .sb-mt-2 { margin-top: var(--sb-space-2) !important; }

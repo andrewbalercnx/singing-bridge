@@ -307,24 +307,19 @@ fn set_session_cookie_header(resp: &mut Response, state: &AppState, cookie: &str
 
 // ── HTML ──────────────────────────────────────────────────────────────────────
 
-const LOGIN_HTML: &str = r##"<!doctype html>
+const LOGIN_HTML: &str = r#"<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Log in — Singing Bridge</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,500;0,600;1,400;1,500&family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/assets/styles.css">
 <link rel="stylesheet" href="/assets/theme.css">
 </head>
-<body class="sb-page" style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:40px;">
-<div class="sb-card sb-card--paper" style="width:100%;max-width:440px;">
-  <div style="font-family:var(--sb-font-display);font-weight:500;font-size:20px;letter-spacing:-0.01em;margin-bottom:4px;">
-    <span style="display:inline-block;width:8px;height:8px;border-radius:999px;background:var(--sb-rose);margin-right:10px;transform:translateY(-2px);"></span>Singing Bridge
-  </div>
-  <h1 style="font-size:28px;margin-top:24px;">Welcome back</h1>
+<body class="sb-page sb-auth-page">
+<div class="sb-card sb-card--paper">
+  <div class="sb-brand"><span class="sb-brand__dot"></span>Singing Bridge</div>
+  <h1>Welcome back</h1>
   <p class="sb-lede">Sign in to your teacher account.</p>
   <form id="f" class="sb-stack sb-mt-8">
     <div class="sb-field">
@@ -336,36 +331,31 @@ const LOGIN_HTML: &str = r##"<!doctype html>
       <input class="sb-input" id="f-pass" type="password" name="password" required>
     </div>
     <button class="sb-btn sb-btn--block sb-btn--lg sb-mt-2" type="submit">Sign in</button>
-    <p class="sb-text-center sb-text-muted sb-mt-4" style="font-size:14px;">
+    <p class="sb-text-center sb-text-muted sb-text-sm sb-mt-4">
       New here? <a href="/signup">Create an account</a>
     </p>
   </form>
-  <p id="status" class="sb-text-muted" style="font-size:14px;margin-top:12px;"></p>
+  <p id="status" class="sb-text-muted sb-text-sm sb-mt-3"></p>
 </div>
 <script src="/assets/login.js"></script>
 </body>
-</html>"##;
+</html>"#;
 
-const SIGNUP_HTML: &str = r##"<!doctype html>
+const SIGNUP_HTML: &str = r#"<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Create account — Singing Bridge</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,500;0,600;1,400;1,500&family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/assets/styles.css">
 <link rel="stylesheet" href="/assets/theme.css">
 </head>
-<body class="sb-page" style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:40px;">
-<div class="sb-card sb-card--paper" style="width:100%;max-width:440px;">
-  <div style="font-family:var(--sb-font-display);font-weight:500;font-size:20px;letter-spacing:-0.01em;margin-bottom:4px;">
-    <span style="display:inline-block;width:8px;height:8px;border-radius:999px;background:var(--sb-rose);margin-right:10px;transform:translateY(-2px);"></span>Singing Bridge
-  </div>
-  <h1 style="font-size:26px;margin-top:20px;">Join the studio</h1>
-  <p class="sb-text-muted" style="margin:0 0 24px;font-size:14px;">Teacher accounts only.</p>
-  <form id="f" class="sb-stack">
+<body class="sb-page sb-auth-page">
+<div class="sb-card sb-card--paper">
+  <div class="sb-brand"><span class="sb-brand__dot"></span>Singing Bridge</div>
+  <h1>Join the studio</h1>
+  <p class="sb-text-muted sb-text-sm">Teacher accounts only.</p>
+  <form id="f" class="sb-stack sb-mt-4">
     <div class="sb-field">
       <label class="sb-label" for="f-email">Email</label>
       <input class="sb-input" id="f-email" type="email" name="email" required autocomplete="email">
@@ -384,12 +374,12 @@ const SIGNUP_HTML: &str = r##"<!doctype html>
       <input class="sb-input" id="f-confirm" type="password" name="confirm" required>
     </div>
     <button class="sb-btn sb-btn--block sb-btn--lg sb-mt-2" type="submit">Create account</button>
-    <p class="sb-text-center sb-text-muted sb-mt-4" style="font-size:14px;">
+    <p class="sb-text-center sb-text-muted sb-text-sm sb-mt-4">
       Already have an account? <a href="/auth/login">Sign in</a>
     </p>
   </form>
-  <p id="status" class="sb-text-muted" style="font-size:14px;margin-top:12px;"></p>
+  <p id="status" class="sb-text-muted sb-text-sm sb-mt-3"></p>
 </div>
 <script src="/assets/signup.js"></script>
 </body>
-</html>"##;
+</html>"#;

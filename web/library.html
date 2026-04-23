@@ -9,9 +9,6 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Accompaniment Library — singing-bridge</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,500;0,600;1,400;1,500&family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/assets/styles.css">
   <link rel="stylesheet" href="/assets/theme.css">
 </head>
@@ -33,13 +30,13 @@
         <input type="file" id="file-input" accept=".pdf,.mid,.midi,.wav"
                aria-label="Choose file">
       </div>
-      <div id="title-row" class="sb-row sb-mt-4">
-        <div class="sb-field" style="flex:1;">
+      <div id="title-row" class="sb-row sb-row--end-align sb-mt-4">
+        <div class="sb-field sb-grow">
           <label class="sb-label" for="title-input">Title</label>
           <input class="sb-input" type="text" id="title-input" maxlength="255"
                  placeholder="e.g. Ave Maria (Schubert)" required>
         </div>
-        <button class="sb-btn" id="upload-btn" type="button" style="margin-top:22px;">Upload</button>
+        <button class="sb-btn" id="upload-btn" type="button">Upload</button>
       </div>
       <p id="upload-error" class="error" hidden></p>
       <p id="upload-progress" hidden>Uploading…</p>

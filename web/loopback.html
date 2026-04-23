@@ -9,10 +9,15 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>singing-bridge — loopback latency</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,500;0,600;1,400;1,500&family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/assets/styles.css">
+  <link rel="stylesheet" href="/assets/theme.css">
 </head>
-<body>
+<body class="sb-page">
   <main class="loopback">
     <h1>Loopback latency</h1>
     <p>
@@ -24,7 +29,7 @@
     <p class="setup-note">Point the microphone at the speaker. Avoid
       headphones for this measurement.</p>
 
-    <button id="loopback-start" type="button">Start measurement</button>
+    <button class="sb-btn" id="loopback-start" type="button">Start measurement</button>
     <p id="loopback-status">Idle.</p>
     <pre id="loopback-results" aria-live="polite"></pre>
 

@@ -11,6 +11,26 @@
 > **Commit:** `<sha>`
 > ```
 
+## Sprint 14: In-session accompaniment playback — 2026-04-23
+
+**Files changed:**
+- `server/src/ws/protocol.rs` — AccompanimentPlay/Pause/Stop ClientMsg; AccompanimentState ServerMsg; ErrorCode::Forbidden; protocol roundtrip tests
+- `server/src/ws/accompaniment.rs` — handle_accompaniment_play/pause/stop; revoke_and_clear_accompaniment; media token lifecycle
+- `server/src/http/library.rs` — Cache-Control: no-store on get_asset; Referrer-Policy: no-referrer on get_media
+- `server/src/state.rs` — AccompanimentSnapshot with all_blob_keys(); active_session.accompaniment field
+- `web/assets/accompaniment-drawer.js` — UMD mount: teacher play/pause/stop controls; rAF bar-advancement; clock-skew compensation
+- `web/assets/score-view.js` — UMD mount: rasterised page display; bar-highlight overlay; deferred pendingBar on image load
+- `web/assets/tests/accompaniment-drawer.test.js` — 23 unit tests (Node.js built-in runner)
+- `web/assets/tests/score-view.test.js` — 8 unit tests
+- `web/teacher.html` — #accompaniment-drawer-root + #score-view-root containers; scripts wired
+- `web/student.html` — same containers and scripts; read-only drawer
+- `server/tests/ws_accompaniment.rs` — 22 WS integration tests
+- `server/tests/http_library.rs` — media_token_library_cache_control regression guard
+- `server/tests/common/mod.rs` — make_session asserts message types
+- `tests/e2e/accompaniment.spec.ts` — 11 E2E scenarios (Playwright)
+
+**Commit:** `TBD`
+
 ## Sprint 13: Library Management UI — 2026-04-23
 
 **Files changed:**

@@ -15,7 +15,7 @@
 //             page_blob_keys_json ≤ 10 KB.
 //             GET /api/media/:token returns 404 for both unknown and expired tokens (no oracle).
 //             Blob keys are never returned directly — callers receive short-lived media tokens.
-// Last updated: Sprint 13 (2026-04-23) -- slug ownership on all asset routes, N+1 fix, db_insert dedup
+// Last updated: Sprint 14 (2026-04-23) -- Cache-Control: no-store on get_asset; Referrer-Policy: no-referrer on get_media
 
 use std::pin::Pin;
 use std::sync::Arc;

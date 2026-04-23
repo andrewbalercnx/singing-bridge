@@ -477,7 +477,32 @@ _In-session frontend_
 - All existing A/V, chat, and recording flows unaffected
 - All new JS and Rust WS tests pass
 
-**Status:** IN PROGRESS — plan approved R5 (2026-04-23)
+**Status:** COMPLETE — 2026-04-23, code review APPROVED R3 (38% convergence, 84 findings closed)
+
+---
+
+## Sprint 15: Web MIDI keyboard recording
+
+**Goal:** Teacher can record a live performance from an attached MIDI keyboard directly into the accompaniment library, bypassing the PDF/OMR upload flow.
+
+**Deliverables:**
+- Web MIDI API integration in `library.js`: enumerate available MIDI input devices on page load; show a "Record from keyboard" button when at least one device is detected
+- Recording UI: device picker (if multiple keyboards present), record/stop controls, real-time note visualisation (simple piano roll or note name display) during recording
+- MIDI capture: collect `note_on` / `note_off` / `control_change` events with accurate timestamps; on stop, serialise to a standard Type-1 MIDI file in the browser (no server round-trip for capture)
+- Upload the captured MIDI file to the existing `POST /api/accompaniments/:id/midi` endpoint, creating or updating the MIDI component of an asset
+- New asset flow: "Record keyboard" creates a new accompaniment asset (teacher names it before or after recording), then drops straight into the synthesise step
+- Graceful degradation: if `navigator.requestMIDIAccess` is unavailable (Firefox without flag, iOS), hide the button with a tooltip explaining the browser requirement
+- New JS tests: device enumeration mock, note capture timing, MIDI serialisation round-trip, unavailable-API degradation path
+
+**Exit criteria:**
+- Teacher connects a MIDI keyboard; "Record from keyboard" button appears in the library UI
+- Teacher records a short phrase; stops recording; a MIDI file is created and attached to a new or existing asset
+- The captured MIDI can be synthesised into a WAV using the existing synthesise flow
+- No MIDI device connected → button hidden; no error
+- Web MIDI unavailable (mocked) → graceful degradation with tooltip
+- All existing library tests pass; new MIDI recording tests pass
+
+**Status:** PENDING
 
 ---
 
@@ -487,4 +512,5 @@ _In-session frontend_
 - Multi-participant sessions — MVP is strictly 2 peers
 - Low-latency "try to match duet" mode — explicitly not a goal; this tool is coaching-focused
 - **Accompaniment latency compensation:** music played at the teacher's end should be delayed by the one-way audio latency from the student's microphone to the teacher's earpiece. Without this, the student hears the backing track in sync but the teacher hears it slightly ahead of the student's voice — making it harder for the teacher to evaluate timing. The latency estimate is already available from the debug overlay (Sprint 2); it needs to be wired into the accompaniment playback start offset.
-- **Web MIDI recording:** use the Web MIDI API to detect attached MIDI keyboards on the teacher's machine and record a live performance directly as an accompaniment MIDI file, skipping the PDF/OMR upload flow entirely.
+- **Web MIDI recording:** promoted to Sprint 15.
+- **WAV recording:** allow the teacher to record a live audio performance directly in the browser (Web Audio / MediaRecorder) as a WAV accompaniment, without needing a separate recording app. Input paths summary: PDF = upload only; MIDI = upload or record (Sprint 15); WAV = upload only until this is implemented.

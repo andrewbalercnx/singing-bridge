@@ -52,8 +52,8 @@ pub async fn handle_accompaniment_play(
         return true;
     };
 
-    // Step 2: validate_play_fields
-    if !validate_play_fields(ctx, position_ms, None).await {
+    // Step 2: validate_position_ms
+    if !validate_position_ms(ctx, position_ms).await {
         return true;
     }
 
@@ -173,7 +173,7 @@ pub async fn handle_accompaniment_pause(
     }
 
     // Validate position_ms.
-    if !validate_play_fields(ctx, position_ms, None).await {
+    if !validate_position_ms(ctx, position_ms).await {
         return true;
     }
 
@@ -240,14 +240,12 @@ pub async fn handle_accompaniment_stop(
         };
 
         // No-op if no accompaniment is active (matches Pause behavior).
-        if session.accompaniment.is_none() {
+        let Some(snap) = session.accompaniment.as_ref() else {
             return true;
-        }
+        };
 
         // Revoke tokens before clearing (no .await under guard).
-        if let Some(snap) = session.accompaniment.as_ref() {
-            state.media_tokens.invalidate_by_blob_keys(&snap.all_blob_keys());
-        }
+        state.media_tokens.invalidate_by_blob_keys(&snap.all_blob_keys());
         session.accompaniment = None;
 
         let teacher_tx = rs.teacher_conn.as_ref().map(|c| c.tx.clone());
@@ -271,13 +269,11 @@ pub async fn revoke_and_clear_accompaniment(
             return;
         };
 
-        if session.accompaniment.is_none() {
+        let Some(snap) = session.accompaniment.as_ref() else {
             return;
-        }
+        };
 
-        if let Some(snap) = session.accompaniment.as_ref() {
-            state.media_tokens.invalidate_by_blob_keys(&snap.all_blob_keys());
-        }
+        state.media_tokens.invalidate_by_blob_keys(&snap.all_blob_keys());
         session.accompaniment = None;
 
         let teacher_tx = rs.teacher_conn.as_ref().map(|c| c.tx.clone());
@@ -300,17 +296,10 @@ async fn check_role(ctx: &ConnContext) -> bool {
     true
 }
 
-/// Returns `true` if fields are valid. Sends error and returns `false` otherwise.
-async fn validate_play_fields(ctx: &ConnContext, position_ms: u64, tempo_pct: Option<i32>) -> bool {
+async fn validate_position_ms(ctx: &ConnContext, position_ms: u64) -> bool {
     if position_ms > MAX_POSITION_MS {
         pump_send_error(&ctx.tx, ErrorCode::Malformed, "position_ms out of range").await;
         return false;
-    }
-    if let Some(t) = tempo_pct {
-        if t < MIN_TEMPO_PCT || t > MAX_TEMPO_PCT {
-            pump_send_error(&ctx.tx, ErrorCode::Malformed, "tempo_pct out of range").await;
-            return false;
-        }
     }
     true
 }

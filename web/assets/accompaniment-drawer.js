@@ -79,7 +79,6 @@
     var serverPositionMs = 0;
     var clientRefTime = 0;
     var skewMs = 0;
-    var currentBarTimings = null;
     var scoreViewHandle = null; // wired after mount via handle.setScoreView()
 
     // Build minimal UI.
@@ -244,7 +243,6 @@
 
       serverPositionMs = state.position_ms || 0;
       clientRefTime = Date.now();
-      currentBarTimings = barTimings;
 
       ensureAudio(wavUrl);
 

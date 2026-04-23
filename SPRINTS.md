@@ -583,7 +583,7 @@ _Accompaniment panel (teacher-only)_
 - Layout tested at 1280×800 and 1440×900 (typical laptop); no horizontal scroll; no overlapping elements
 - All existing lobby admit/reject/message actions still work
 
-**Status:** IN PROGRESS
+**Status:** COMPLETE — 2026-04-23, commit `a39a5be` (code review APPROVED R4, 87% convergence)
 
 - Persistent "my students" list for the teacher — deliberately out of MVP; addressed partially by Sprint 11 history
 - Multi-participant sessions — MVP is strictly 2 peers

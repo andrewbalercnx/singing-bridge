@@ -11,6 +11,26 @@
 > **Commit:** `<sha>`
 > ```
 
+## Sprint 17: Teacher dashboard + session UI redesign — 2026-04-23
+
+**Files changed:**
+- `web/assets/dashboard.js` — new: IIFE dashboard page (room name, Enter Room/history/library links, recordings + library fetches; XSS-safe; credentials: include)
+- `web/assets/session-panels.js` — new: pure DOM builders `buildSelfPip`, `buildAccmpPanel`, `buildIconBar`, `buildRemotePanel`, `buildEndDialog`; added `svgIcon('score')`; exposed `pauseBtn` on accmpPanel handle
+- `web/assets/session-ui.js` — rewritten mount() to v2 three-zone layout (video zone + accmp panel + icon bar); removed dead `buildSelfPreview` and `buildControls`
+- `web/assets/accompaniment-drawer.js` — added `panelEl` option: routes setTrackName/setPosition/setPaused to inline panel; closure vars `_assetId`/`_variantId`; rAF starts even without barTimings when panelEl present
+- `web/assets/teacher.js` — fixed slug extraction (`split('/')[2]`); mounts accmpPanel inline; wires score-viewer toggle
+- `web/assets/theme.css` — sections 16 (session v2 layout: sb-session-v2, sb-video-zone, sb-selfpip, sb-accmp-panel, sb-iconbar) and 17 (dashboard grid)
+- `server/src/http/dashboard.rs` — new: GET /teach/:slug/dashboard handler with auth gate, Cache-Control: private no-store, Vary: Cookie
+- `server/src/http/teach.rs` — added GET /teach/:slug/session route; updated Exports header; fixed non-owner redirect
+- `server/src/slug.rs` — added "session" and "dashboard" to RESERVED_SLUGS
+- `server/tests/http_dashboard.rs` — new: 8 integration tests (owner 200, Vary, unauthenticated 302, wrong-owner 302, unknown 404, teach redirect, session wrong-owner, session owner)
+- `web/assets/tests/session-panels.test.js` — new: 24 tests for all panel builders
+- `web/assets/tests/dashboard.test.js` — new: 9 tests (room name, hrefs, XSS, fetch-failure independence, credentials)
+- `web/assets/tests/accompaniment-drawer.test.js` — 8 new panelEl tests (updateState, pauseBtn WS messages, rAF position, loadedmetadata)
+- `web/assets/tests/session-ui.test.js` — updated 4 tests for v2 DOM layout; added end-dialog click test; teacher chat test
+
+**Commit:** `a39a5be`
+
 ## Sprint 16: Persistent database — 2026-04-23
 
 **Files changed:**

@@ -21,7 +21,7 @@
 //             is the sole sender.setParameters mutation site AFTER
 //             session subsystems start; priority hints at transceiver
 //             creation are the only pre-session setParameters calls.
-// Last updated: Sprint 9 (2026-04-20) -- teacher uses addTrack after setRemoteDescription (answerer pattern) to fix one-way video
+// Last updated: Sprint 14 (2026-04-23) -- onAccompanimentState + sendRaw in connectTeacher/connectStudent
 
 (function (root, factory) {
   'use strict';
@@ -203,6 +203,7 @@
     var onChat = args.onChat;
     var onWsClose = args.onWsClose;
     var onRemoteStream = args.onRemoteStream;
+    var onAccompanimentState = args.onAccompanimentState;
 
     var sig = new Signalling(openWs());
     sig.send({ type: 'lobby_watch', slug: slug });
@@ -351,6 +352,9 @@
     sig.on('chat', function (m) {
       if (onChat) onChat({ from: m.from, text: m.text });
     });
+    sig.on('accompaniment_state', function (m) {
+      if (onAccompanimentState) onAccompanimentState(m);
+    });
 
     return {
       admit: function (entryId) { sig.send({ type: 'lobby_admit', slug: slug, entry_id: entryId }); },
@@ -364,6 +368,7 @@
       sendLobbyMessage: function (entryId, text) {
         sig.send({ type: 'lobby_message', entry_id: entryId, text: text });
       },
+      sendRaw: function (msg) { sig.send(msg); },
       hangup: function () { teardownSession(); sig.close(); },
     };
   }
@@ -386,6 +391,7 @@
     var onChat = args.onChat;
     var onLobbyMessage = args.onLobbyMessage;
     var onRemoteStream = args.onRemoteStream;
+    var onAccompanimentState = args.onAccompanimentState;
 
     var detect = detectTier();
     var sig = new Signalling(openWs());
@@ -484,6 +490,9 @@
     });
     sig.on('lobby_message', function (m) {
       if (onLobbyMessage) onLobbyMessage({ text: m.text });
+    });
+    sig.on('accompaniment_state', function (m) {
+      if (onAccompanimentState) onAccompanimentState(m);
     });
 
     return {

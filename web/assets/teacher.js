@@ -2,7 +2,7 @@
 // Purpose: Teacher UI wiring. Student-supplied strings rendered via
 //          textContent only (no innerHTML — XSS prevention). Sprint 8:
 //          replaced wireControls with sbSessionUI.mount into #session-root.
-// Last updated: Sprint 9 (2026-04-19) -- chat drawer via session-ui, teacher self-check, headphones chip
+// Last updated: Sprint 14 (2026-04-23) -- accompaniment-drawer + score-view mounts + AccompanimentState handler
 
 'use strict';
 
@@ -193,6 +193,8 @@
 
   let sessionUiHandle = null;
   let sessionHandle = null;
+  let accompanimentHandle = null;
+  let scoreViewHandle = null;
 
   window.signallingClient.connectTeacher({
     slug,
@@ -207,11 +209,28 @@
     onRemoteStream(stream) {
       if (sessionUiHandle) sessionUiHandle.setRemoteStream(stream);
     },
+    onAccompanimentState(state) {
+      if (accompanimentHandle) accompanimentHandle.updateState(state);
+      if (scoreViewHandle) scoreViewHandle.updatePages(state.page_urls || null, state.bar_coords || null);
+    },
     onPeerConnected({ dataChannel, audioTrack, videoTrack, localStream, remoteStream }) {
       statusEl.textContent = 'Connected.';
       localAudioTrack = audioTrack;
       if (qualityBadge) qualityBadge.hidden = false;
       setRecordState('idle');
+      const drawerRoot = document.getElementById('accompaniment-drawer-root');
+      const scoreRoot = document.getElementById('score-view-root');
+      if (window.sbAccompanimentDrawer && drawerRoot) {
+        accompanimentHandle = window.sbAccompanimentDrawer.mount(drawerRoot, {
+          role: 'teacher',
+          slug,
+          sendWs(msg) { if (sessionHandle) sessionHandle.sendRaw(msg); },
+        });
+        if (window.sbScoreView && scoreRoot) {
+          scoreViewHandle = window.sbScoreView.mount(scoreRoot);
+          accompanimentHandle.setScoreView(scoreViewHandle);
+        }
+      }
       const sessionRoot = document.getElementById('session-root');
       sessionUiHandle = window.sbSessionUI.mount(sessionRoot, {
         role: 'teacher',
@@ -243,6 +262,8 @@
       statusEl.textContent = 'Student disconnected.';
       localAudioTrack = null;
       if (sessionUiHandle) { sessionUiHandle.teardown(); sessionUiHandle = null; }
+      if (accompanimentHandle) { accompanimentHandle.teardown(); accompanimentHandle = null; }
+      if (scoreViewHandle) { scoreViewHandle.teardown(); scoreViewHandle = null; }
       if (qualityBadge) qualityBadge.hidden = true;
       if (reconnectBanner) reconnectBanner.hidden = true;
       if (floorNotice) floorNotice.hidden = true;

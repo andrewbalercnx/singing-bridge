@@ -10,7 +10,7 @@
 //             AppState::room / ::room_or_insert (no direct DashMap access
 //             from async fns). BLOCK_LIST_CAP enforced on every block insert;
 //             oldest entry evicted when cap is reached (FIFO).
-// Last updated: Sprint 12a (2026-04-21) -- sidecar + media_tokens on AppState
+// Last updated: Sprint 14 (2026-04-23) -- AccompanimentSnapshot + ActiveSession.accompaniment
 
 use std::net::IpAddr;
 use std::sync::atomic::{AtomicU16, AtomicUsize, Ordering};
@@ -29,7 +29,7 @@ use crate::blob::BlobStore;
 use crate::auth::secret::SecretString;
 use crate::config::Config;
 use crate::http::media_token::MediaTokenStore;
-use crate::sidecar::SidecarClient;
+use crate::sidecar::{BarCoord, BarTiming, SidecarClient};
 use crate::error::{AppError, Result};
 use crate::ws::protocol::{EntryId, LobbyEntryView, PumpDirective, Tier};
 use crate::ws::rate_limit::WsJoinBucket;
@@ -110,6 +110,32 @@ impl LobbyEntry {
     }
 }
 
+/// In-memory state for an active accompaniment play session.
+/// Stored in `ActiveSession`; `None` when stopped.
+pub struct AccompanimentSnapshot {
+    pub asset_id: i64,
+    pub variant_id: i64,
+    pub tempo_pct: i32,
+    pub position_ms: u64,
+    pub is_playing: bool,
+    pub wav_blob_key: String,
+    pub page_blob_keys: Vec<String>,
+    pub wav_url: String,
+    pub page_urls: Vec<String>,
+    /// Sorted ascending by bar number before storage.
+    pub bar_coords: Vec<BarCoord>,
+    pub bar_timings: Vec<BarTiming>,
+}
+
+impl AccompanimentSnapshot {
+    /// Returns all blob keys: WAV first, then pages in order.
+    pub fn all_blob_keys(&self) -> Vec<String> {
+        let mut keys = vec![self.wav_blob_key.clone()];
+        keys.extend(self.page_blob_keys.iter().cloned());
+        keys
+    }
+}
+
 pub struct ActiveSession {
     pub student: LobbyEntry,
     pub started_at: Instant,
@@ -125,6 +151,7 @@ pub struct ActiveSession {
     pub session_teacher_id: Option<TeacherId>,
     pub peak_loss_bp: AtomicU16,
     pub peak_rtt_ms: AtomicU16,
+    pub accompaniment: Option<AccompanimentSnapshot>,
 }
 
 pub const BLOCK_LIST_CAP: usize = 256;

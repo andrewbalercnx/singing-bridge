@@ -9,10 +9,11 @@
 //             Role is decided on the first LobbyJoin/LobbyWatch and immutable
 //             thereafter. SessionMetrics rate-limited to 1 frame per 5 s.
 //             loss_bp clamped to [0, 10000] before persist (100% = 10000 bp).
-// Last updated: Sprint 111 (2026-04-21) -- session_history close + recording slot
+// Last updated: Sprint 14 (2026-04-23) -- accompaniment module + AccompanimentPlay/Pause/Stop dispatch
 
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 
+pub mod accompaniment;
 pub mod connection;
 pub mod lobby;
 pub mod protocol;
@@ -274,6 +275,15 @@ async fn handle_client_msg(
             handle_lobby_message(ctx, state, entry_id, text).await
         }
         ClientMsg::HeadphonesConfirmed => handle_headphones_confirmed(ctx, state).await,
+        ClientMsg::AccompanimentPlay { asset_id, variant_id, position_ms } => {
+            accompaniment::handle_accompaniment_play(ctx, state, asset_id, variant_id, position_ms).await
+        }
+        ClientMsg::AccompanimentPause { position_ms } => {
+            accompaniment::handle_accompaniment_pause(ctx, state, position_ms).await
+        }
+        ClientMsg::AccompanimentStop => {
+            accompaniment::handle_accompaniment_stop(ctx, state).await
+        }
     }
 }
 
@@ -785,6 +795,10 @@ async fn cleanup(state: &AppState, mut ctx: ConnContext, result: LoopExit) {
                     tracing::warn!(error = %e, "session_history close_event failed");
                 }
             }
+
+            // Revoke accompaniment tokens and broadcast cleared state before
+            // the room write lock below removes the session entry.
+            accompaniment::revoke_and_clear_accompaniment(&state, &room).await;
 
             // Collect up to two messages to send to the teacher after the
             // lock is released.

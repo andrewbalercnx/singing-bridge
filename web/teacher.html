@@ -4,7 +4,7 @@
   Purpose: Teacher-side landing page. The sb:debug placeholder is
            replaced server-side with a <meta name="sb-debug"> tag
            when config.dev is true (empty string otherwise).
-  Last updated: Sprint 9 (2026-04-19) -- self-check, chat-drawer script tags
+  Last updated: Sprint 14 (2026-04-23) -- accompaniment-drawer-root + score-view-root
 -->
 <html lang="en">
 <head>
@@ -44,6 +44,10 @@
 
       <!-- Session UI mounts here -->
       <div id="session-root"></div>
+
+      <!-- Accompaniment playback (Sprint 14) -->
+      <div id="accompaniment-drawer-root"></div>
+      <div id="score-view-root"></div>
 
       <!-- Recording controls (outside session-root — not part of the session UI) -->
       <div id="recording-controls" hidden>
@@ -88,6 +92,8 @@
     <script src="/assets/session-core.js"></script>
     <script src="/assets/signalling.js"></script>
     <script src="/assets/recorder.js"></script>
+    <script src="/assets/accompaniment-drawer.js"></script>
+    <script src="/assets/score-view.js"></script>
     <script src="/assets/teacher.js"></script>
   </main>
 </body>

@@ -5,17 +5,20 @@
 // Exports: ClientMsg, ServerMsg, PumpDirective, Role, Peer, EntryId,
 //          ErrorCode, LobbyEntryView, MAX_SIGNAL_PAYLOAD_BYTES, MAX_*_LEN,
 //          MAX_CHAT_CHARS, MAX_CHAT_BYTES
-// Depends: serde, uuid, bytes via axum
+// Depends: serde, uuid, bytes via axum, sidecar (BarCoord, BarTiming)
 // Invariants: ServerMsg.Signal.from is server-filled; clients cannot spoof.
 //             Signal.payload ≤ 16 KiB independent of the 64 KiB frame cap.
 //             LobbyReject.block_ttl_secs is clamped [0, 86400] server-side.
 //             Chat.text validated: non-empty, ≤ MAX_CHAT_BYTES then ≤ MAX_CHAT_CHARS.
-// Last updated: Sprint 9 (2026-04-19) -- HeadphonesConfirmed + headphones_confirmed in LobbyEntryView
+//             AccompanimentPlay/Pause/Stop are teacher-only; student receives Forbidden.
+// Last updated: Sprint 14 (2026-04-23) -- Forbidden + AccompanimentPlay/Pause/Stop + AccompanimentState
 
 use std::borrow::Cow;
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+
+pub use crate::sidecar::{BarCoord, BarTiming};
 
 pub const MAX_SIGNAL_PAYLOAD_BYTES: usize = 16 * 1024;
 pub const MAX_FRAME_BYTES: usize = 64 * 1024;
@@ -118,6 +121,7 @@ pub enum ErrorCode {
     RateLimited,
     RecordAlreadyActive,
     Internal,
+    Forbidden,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -174,6 +178,16 @@ pub enum ClientMsg {
         text: String,
     },
     HeadphonesConfirmed,
+    // Teacher-only accompaniment control messages.
+    AccompanimentPlay {
+        asset_id: i64,
+        variant_id: i64,
+        position_ms: u64,
+    },
+    AccompanimentPause {
+        position_ms: u64,
+    },
+    AccompanimentStop,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -221,6 +235,20 @@ pub enum ServerMsg {
     },
     LobbyMessage {
         text: String,
+    },
+    /// Full snapshot of accompaniment playback state.
+    /// Cleared state: asset_id=None, is_playing=false, position_ms=0, all urls/coords=None.
+    AccompanimentState {
+        asset_id: Option<i64>,
+        variant_id: Option<i64>,
+        is_playing: bool,
+        position_ms: u64,
+        tempo_pct: Option<i32>,
+        wav_url: Option<String>,
+        page_urls: Option<Vec<String>>,
+        bar_coords: Option<Vec<BarCoord>>,
+        bar_timings: Option<Vec<BarTiming>>,
+        server_time_ms: u64,
     },
 }
 

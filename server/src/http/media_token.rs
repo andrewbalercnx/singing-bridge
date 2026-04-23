@@ -7,7 +7,7 @@
 //             if still at cap, oldest entry is evicted (by expires_at).
 //             expired and unknown tokens both return None from get_blob_key (no oracle).
 //             Tokens are invalidated by blob_key on session teardown / asset deletion.
-// Last updated: Sprint 12a (2026-04-21) -- initial implementation
+// Last updated: Sprint 14 (2026-04-23) -- no_cache flag for accompaniment tokens
 
 use std::time::{Duration, Instant};
 
@@ -19,6 +19,7 @@ const TOKEN_CAP: usize = 1000;
 struct Entry {
     blob_key: String,
     expires_at: Instant,
+    no_cache: bool,
 }
 
 pub struct MediaTokenStore {
@@ -31,8 +32,9 @@ impl MediaTokenStore {
     }
 
     /// Issue a token for `blob_key` that expires after `ttl`.
+    /// Set `no_cache=true` for accompaniment tokens that must not be cached.
     /// Returns the token string (64 lowercase hex characters).
-    pub fn insert(&self, blob_key: String, ttl: Duration) -> String {
+    pub fn insert(&self, blob_key: String, ttl: Duration, no_cache: bool) -> String {
         let token = random_token();
         let expires_at = Instant::now() + ttl;
 
@@ -51,19 +53,25 @@ impl MediaTokenStore {
             }
         }
 
-        self.map.insert(token.clone(), Entry { blob_key, expires_at });
+        self.map.insert(token.clone(), Entry { blob_key, expires_at, no_cache });
         token
     }
 
     /// Look up the blob key for `token`. Returns `None` if the token is
     /// unknown or expired — callers must not distinguish the two cases.
     pub fn get_blob_key(&self, token: &str) -> Option<String> {
+        self.get_entry(token).map(|(key, _)| key)
+    }
+
+    /// Look up `(blob_key, no_cache)` for `token`. Returns `None` if the
+    /// token is unknown or expired.
+    pub fn get_entry(&self, token: &str) -> Option<(String, bool)> {
         // Opportunistic sweep on every access (non-blocking best-effort).
         self.sweep_expired();
 
         self.map.get(token).and_then(|e| {
             if e.expires_at >= Instant::now() {
-                Some(e.blob_key.clone())
+                Some((e.blob_key.clone(), e.no_cache))
             } else {
                 None
             }
@@ -113,14 +121,14 @@ mod tests {
     #[test]
     fn insert_and_retrieve() {
         let store = MediaTokenStore::new();
-        let tok = store.insert("blob-1".into(), Duration::from_secs(300));
+        let tok = store.insert("blob-1".into(), Duration::from_secs(300), false);
         assert_eq!(store.get_blob_key(&tok), Some("blob-1".into()));
     }
 
     #[test]
     fn expired_token_returns_none() {
         let store = MediaTokenStore::new();
-        let tok = store.insert("blob-2".into(), Duration::from_millis(1));
+        let tok = store.insert("blob-2".into(), Duration::from_millis(1), false);
         std::thread::sleep(Duration::from_millis(5));
         assert_eq!(store.get_blob_key(&tok), None);
     }
@@ -134,7 +142,7 @@ mod tests {
     #[test]
     fn invalidate_removes_matching_tokens() {
         let store = MediaTokenStore::new();
-        let tok = store.insert("wav-key".into(), Duration::from_secs(300));
+        let tok = store.insert("wav-key".into(), Duration::from_secs(300), false);
         store.invalidate_by_blob_keys(&["wav-key".into()]);
         assert_eq!(store.get_blob_key(&tok), None);
     }
@@ -142,7 +150,7 @@ mod tests {
     #[test]
     fn invalidate_does_not_remove_unrelated() {
         let store = MediaTokenStore::new();
-        let tok = store.insert("keep-this".into(), Duration::from_secs(300));
+        let tok = store.insert("keep-this".into(), Duration::from_secs(300), false);
         store.invalidate_by_blob_keys(&["other-key".into()]);
         assert!(store.get_blob_key(&tok).is_some());
     }
@@ -151,9 +159,9 @@ mod tests {
     fn cap_evicts_oldest_on_insert() {
         let store = MediaTokenStore::new();
         // Fill to cap.
-        let first_tok = store.insert("first".into(), Duration::from_secs(1));
+        let first_tok = store.insert("first".into(), Duration::from_secs(1), false);
         for i in 0..TOKEN_CAP {
-            store.insert(format!("blob-{i}"), Duration::from_secs(300));
+            store.insert(format!("blob-{i}"), Duration::from_secs(300), false);
         }
         // First token should have been evicted (it was the oldest/soonest expiring).
         // After cap: store has TOKEN_CAP entries, first one is gone.
@@ -166,9 +174,20 @@ mod tests {
     #[test]
     fn multi_use_within_ttl() {
         let store = MediaTokenStore::new();
-        let tok = store.insert("multi".into(), Duration::from_secs(300));
+        let tok = store.insert("multi".into(), Duration::from_secs(300), false);
         // Second and third access within TTL succeed.
         assert!(store.get_blob_key(&tok).is_some());
         assert!(store.get_blob_key(&tok).is_some());
+    }
+
+    #[test]
+    fn no_cache_flag_returned_by_get_entry() {
+        let store = MediaTokenStore::new();
+        let lib_tok = store.insert("lib-blob".into(), Duration::from_secs(300), false);
+        let acc_tok = store.insert("acc-blob".into(), Duration::from_secs(7200), true);
+        let (_, lib_no_cache) = store.get_entry(&lib_tok).unwrap();
+        let (_, acc_no_cache) = store.get_entry(&acc_tok).unwrap();
+        assert!(!lib_no_cache);
+        assert!(acc_no_cache);
     }
 }

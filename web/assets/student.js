@@ -1,7 +1,7 @@
 // File: web/assets/student.js
 // Purpose: Student join form + lobby/session UI driver. Sprint 8:
 //          replaced wireControls with sbSessionUI.mount into #session-root.
-// Last updated: Sprint 9 (2026-04-19) -- self-check, lobby toast, chat drawer via session-ui
+// Last updated: Sprint 14 (2026-04-23) -- accompaniment-drawer + score-view mounts + AccompanimentState handler
 
 'use strict';
 
@@ -87,6 +87,8 @@
     lobbyStatus.hidden = false;
 
     let sessionUiHandle = null;
+    let accompanimentHandle = null;
+    let scoreViewHandle = null;
     let handle = null;
 
     // Self-check while waiting in lobby.
@@ -132,10 +134,27 @@
       onRemoteStream(stream) {
         if (sessionUiHandle) sessionUiHandle.setRemoteStream(stream);
       },
+      onAccompanimentState(state) {
+        if (accompanimentHandle) accompanimentHandle.updateState(state);
+        if (scoreViewHandle) scoreViewHandle.updatePages(state.page_urls || null, state.bar_coords || null);
+      },
       onPeerConnected({ dataChannel, audioTrack, videoTrack, localStream, remoteStream }) {
         sessionSection.hidden = false;
         if (qualityBadge) qualityBadge.hidden = false;
         const sessionRoot = document.getElementById('session-root');
+        const drawerRoot = document.getElementById('accompaniment-drawer-root');
+        const scoreRoot = document.getElementById('score-view-root');
+        if (window.sbAccompanimentDrawer && drawerRoot) {
+          accompanimentHandle = window.sbAccompanimentDrawer.mount(drawerRoot, {
+            role: 'student',
+            slug,
+            sendWs() {}, // students cannot send accompaniment messages
+          });
+          if (window.sbScoreView && scoreRoot) {
+            scoreViewHandle = window.sbScoreView.mount(scoreRoot);
+            accompanimentHandle.setScoreView(scoreViewHandle);
+          }
+        }
         sessionUiHandle = window.sbSessionUI.mount(sessionRoot, {
           role: 'student',
           remoteName: 'Teacher',
@@ -164,6 +183,8 @@
       },
       onPeerDisconnected() {
         if (sessionUiHandle) { sessionUiHandle.teardown(); sessionUiHandle = null; }
+        if (accompanimentHandle) { accompanimentHandle.teardown(); accompanimentHandle = null; }
+        if (scoreViewHandle) { scoreViewHandle.teardown(); scoreViewHandle = null; }
         sessionSection.hidden = true;
         if (qualityBadge) qualityBadge.hidden = true;
         if (reconnectBanner) reconnectBanner.hidden = true;

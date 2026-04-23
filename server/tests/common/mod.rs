@@ -1,7 +1,7 @@
 // File: server/tests/common/mod.rs
 // Purpose: Shared test harness — spawn_app, dev-mail reader, WS client.
 // Role: Keep integration-test bodies short and behaviour-focused.
-// Last updated: Sprint 12a (2026-04-21) -- make_session_event helper
+// Last updated: Sprint 14 (2026-04-23) -- seed_accompaniment_asset helper
 
 #![allow(dead_code)]
 
@@ -419,6 +419,104 @@ pub async fn make_two_teachers(app: &TestApp) -> (TeacherFixture, TeacherFixture
             cookie: cookie_b,
         },
     )
+}
+
+/// Seed fixture data for WS accompaniment tests.
+pub struct AccompanimentFixture {
+    pub asset_id: i64,
+    pub variant_id: i64,
+    pub wav_blob_key: String,
+    pub page_blob_key: String,
+}
+
+/// Insert an accompaniment + variant into the DB and write stub blobs.
+/// Returns IDs and blob keys for use in WS tests.
+pub async fn seed_accompaniment_asset(app: &TestApp, teacher_id: i64) -> AccompanimentFixture {
+    let wav_blob_key = format!("wav-test-{teacher_id}");
+    let page_blob_key = format!("page-test-{teacher_id}");
+
+    // Write stub blobs so the media endpoint can serve them.
+    let wav_data: &'static [u8] = b"RIFF\x00\x00\x00\x00WAVEfake";
+    let page_data: &'static [u8] = b"PNG_FAKE";
+    app.state
+        .blob
+        .put(&wav_blob_key, Box::pin(std::io::Cursor::new(wav_data)))
+        .await
+        .expect("put wav blob");
+    app.state
+        .blob
+        .put(&page_blob_key, Box::pin(std::io::Cursor::new(page_data)))
+        .await
+        .expect("put page blob");
+
+    let page_blob_keys_json = serde_json::to_string(&[&page_blob_key]).unwrap();
+    let bar_coords_json = serde_json::to_string(&serde_json::json!([
+        {"bar": 1, "page": 0, "x_frac": 0.1, "y_frac": 0.2, "w_frac": 0.5, "h_frac": 0.1},
+        {"bar": 2, "page": 0, "x_frac": 0.1, "y_frac": 0.4, "w_frac": 0.5, "h_frac": 0.1},
+    ])).unwrap();
+    let bar_timings_json = serde_json::to_string(&serde_json::json!([
+        {"bar": 1, "time_s": 0.0},
+        {"bar": 2, "time_s": 2.0},
+    ])).unwrap();
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+
+    let (asset_id,): (i64,) = sqlx::query_as(
+        "INSERT INTO accompaniments (teacher_id, title, page_blob_keys_json, bar_coords_json, bar_timings_json, created_at)
+         VALUES (?, 'Test Asset', ?, ?, ?, ?) RETURNING id",
+    )
+    .bind(teacher_id)
+    .bind(&page_blob_keys_json)
+    .bind(&bar_coords_json)
+    .bind(&bar_timings_json)
+    .bind(now)
+    .fetch_one(&app.state.db)
+    .await
+    .expect("insert accompaniment");
+
+    let (variant_id,): (i64,) = sqlx::query_as(
+        "INSERT INTO accompaniment_variants (accompaniment_id, label, wav_blob_key, tempo_pct, transpose_semitones, respect_repeats, created_at)
+         VALUES (?, 'Normal', ?, 100, 0, 0, ?) RETURNING id",
+    )
+    .bind(asset_id)
+    .bind(&wav_blob_key)
+    .bind(now)
+    .fetch_one(&app.state.db)
+    .await
+    .expect("insert variant");
+
+    AccompanimentFixture { asset_id, variant_id, wav_blob_key, page_blob_key }
+}
+
+/// Establish a teacher+student session. Returns (teacher_ws, student_ws, teacher_id).
+pub async fn make_session(
+    app: &TestApp,
+    slug: &str,
+    cookie: &str,
+) -> (Ws, Ws) {
+    let mut teacher = app.open_ws(Some(cookie), None).await;
+    send_ws(&mut teacher, &serde_json::json!({"type":"lobby_watch","slug":slug})).await;
+    let _ = recv_json(&mut teacher).await;
+
+    let mut student = app.open_ws(None, None).await;
+    send_ws(&mut student, &serde_json::json!({
+        "type":"lobby_join","slug":slug,
+        "email":"s@test.example","browser":"F/1","device_class":"desktop"
+    })).await;
+
+    let update = recv_json(&mut teacher).await;
+    let entry_id = update["entries"][0]["id"].as_str().unwrap().to_string();
+    send_ws(&mut teacher, &serde_json::json!({"type":"lobby_admit","slug":slug,"entry_id":entry_id})).await;
+
+    let _admitted = recv_json(&mut student).await;
+    let _pc_student = recv_json(&mut student).await;
+    let _pc_teacher = recv_json(&mut teacher).await;
+    let _lobby_update = recv_json(&mut teacher).await;
+
+    (teacher, student)
 }
 
 pub async fn send_ws(ws: &mut Ws, msg: &serde_json::Value) {

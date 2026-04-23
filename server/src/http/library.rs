@@ -433,7 +433,7 @@ pub(crate) async fn get_asset(
         .unwrap_or_default();
     let page_tokens: Vec<String> = page_keys
         .iter()
-        .map(|k| state.media_tokens.insert(k.clone(), ttl))
+        .map(|k| state.media_tokens.insert(k.clone(), ttl, false))
         .collect();
 
     // Issue media tokens for WAV variants.
@@ -452,7 +452,7 @@ pub(crate) async fn get_asset(
     let variants: Vec<VariantView> = variants_db
         .into_iter()
         .map(|(vid, label, wav_key, tempo_pct, transpose, repeats, duration_s, vcreated)| {
-            let token = state.media_tokens.insert(wav_key, ttl);
+            let token = state.media_tokens.insert(wav_key, ttl, false);
             VariantView {
                 id: vid,
                 label,
@@ -889,9 +889,9 @@ pub(crate) async fn get_media(
     State(state): State<Arc<AppState>>,
     Path(token): Path<String>,
 ) -> Result<Response> {
-    let blob_key = state
+    let (blob_key, no_cache) = state
         .media_tokens
-        .get_blob_key(&token)
+        .get_entry(&token)
         .ok_or(AppError::NotFound)?;
 
     let data = state
@@ -901,6 +901,11 @@ pub(crate) async fn get_media(
         .map_err(|_| AppError::NotFound)?;
 
     let content_type = mime_for_key(&blob_key);
+    let cache_control: &'static str = if no_cache {
+        "no-store"
+    } else {
+        "private, max-age=300"
+    };
 
     Ok((
         StatusCode::OK,
@@ -911,7 +916,7 @@ pub(crate) async fn get_media(
             ),
             (
                 header::CACHE_CONTROL,
-                HeaderValue::from_static("private, max-age=300"),
+                HeaderValue::from_static(cache_control),
             ),
         ],
         Body::from(data),

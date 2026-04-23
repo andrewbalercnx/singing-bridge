@@ -4,7 +4,7 @@
   Purpose: Student join form + session UI. The sb:debug placeholder
            is replaced server-side with a <meta name="sb-debug"> tag
            when config.dev is true (empty string otherwise).
-  Last updated: Sprint 9 (2026-04-19) -- remove static chat/lobby-msg panels, add new script tags
+  Last updated: Sprint 14 (2026-04-23) -- accompaniment-drawer-root + score-view-root
 -->
 <html lang="en">
 <head>
@@ -69,6 +69,10 @@
       <!-- Session UI mounts here -->
       <div id="session-root"></div>
 
+      <!-- Accompaniment playback (Sprint 14) -->
+      <div id="accompaniment-drawer-root"></div>
+      <div id="score-view-root"></div>
+
       <span id="quality-badge" class="quality-badge good" hidden>good</span>
 
     </section>
@@ -103,6 +107,8 @@
     <script src="/assets/reconnect.js"></script>
     <script src="/assets/session-core.js"></script>
     <script src="/assets/signalling.js"></script>
+    <script src="/assets/accompaniment-drawer.js"></script>
+    <script src="/assets/score-view.js"></script>
     <script src="/assets/student.js"></script>
   </main>
 </body>

@@ -1,0 +1,648 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Singing Bridge — Design System Gallery</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,500;0,600;1,400;1,500&family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../theme.css">
+<style>
+  /* Gallery-only chrome (not part of the product). */
+  body { font-family: 'Poppins', system-ui, sans-serif; background: #ECE8DF; margin: 0; }
+  .gallery-topbar {
+    display: flex; align-items: center; gap: 20px;
+    padding: 14px 24px;
+    background: #fff; border-bottom: 1px solid rgba(15,23,32,0.08);
+    position: sticky; top: 0; z-index: 10;
+  }
+  .gallery-topbar h1 {
+    font-family: 'Fraunces', serif; font-weight: 500; font-size: 22px; margin: 0;
+    letter-spacing: -0.01em;
+  }
+  .gallery-topbar .dot { display: inline-block; width: 8px; height: 8px; border-radius: 999px; background: #E17F8B; margin-right: 10px; transform: translateY(-2px); }
+  .gallery-topbar .meta { font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: #6E7684; }
+  .gallery-sub {
+    padding: 18px 24px 8px;
+    font-family: 'Fraunces', serif; font-style: italic; font-size: 17px; color: #3F4651;
+    max-width: 720px;
+  }
+  .art-scroller {
+    padding: 32px 32px 120px;
+    overflow-x: auto;
+  }
+  .art-track {
+    display: flex; align-items: flex-start; gap: 48px;
+  }
+  .art {
+    flex: 0 0 auto;
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  .art__label {
+    font-size: 11px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase;
+    color: rgba(60,50,40,0.7);
+    padding: 4px 8px; background: rgba(255,255,255,0.5);
+    border-radius: 6px; width: fit-content;
+  }
+  .art__frame {
+    background: #FBF6EF; border-radius: 20px; overflow: hidden;
+    box-shadow: 0 1px 2px rgba(15,23,32,0.04), 0 30px 60px rgba(15,23,32,0.12);
+    position: relative;
+    isolation: isolate;
+  }
+  .art__note {
+    max-width: 320px;
+    font-size: 13px; color: rgba(60,50,40,0.75); line-height: 1.5;
+    padding: 10px 14px; background: #FEF4A8; border-radius: 8px;
+    font-family: 'Poppins', sans-serif;
+  }
+
+  .sb-section-title {
+    font-family: 'Fraunces', serif; font-weight: 500; font-size: 20px;
+    color: #1a1a1a;
+    padding: 36px 32px 0; margin: 0;
+  }
+  .sb-section-title:first-of-type { padding-top: 8px; }
+
+  /* Desktop artboard */
+  .art--desktop .art__frame { width: 1200px; height: 800px; }
+  /* Auth artboard */
+  .art--auth .art__frame    { width: 520px; height: 680px; }
+  /* Session artboard (pinned 16:9) */
+  .art--session .art__frame { width: 1200px; height: 675px; }
+  /* Mobile artboard */
+  .art--mobile .art__frame  { width: 375px; height: 700px; }
+
+  /* Inside iframes-in-divs — reset the frame root to behave like a page */
+  .art__page {
+    position: absolute; inset: 0;
+    overflow: hidden;
+  }
+</style>
+</head>
+<body>
+
+<div class="gallery-topbar">
+  <h1><span class="dot"></span>Singing Bridge — Design System</h1>
+  <span style="flex:1"></span>
+  <span class="meta">Sprint 15 · April 2026</span>
+</div>
+<p class="gallery-sub">The unified visual system. Every page below uses <code>theme.css</code> only — no per-page hard-coded colours, fonts, or spacings. Scroll →.</p>
+
+<!-- ===================== 1. AUTH ========================= -->
+<h2 class="sb-section-title">Auth — warm paper cards, centred</h2>
+<div class="art-scroller">
+  <div class="art-track">
+
+    <!-- Login -->
+    <div class="art art--auth">
+      <span class="art__label">01 · Login</span>
+      <div class="art__frame">
+        <div class="art__page sb-page" style="padding:40px; display:flex; align-items:center; justify-content:center;">
+          <div class="sb-card sb-card--paper" style="width:100%;">
+            <div style="font-family:var(--sb-font-display); font-weight:500; font-size:20px; letter-spacing:-0.01em; margin-bottom:4px;">
+              <span style="display:inline-block;width:8px;height:8px;border-radius:999px;background:var(--sb-rose);margin-right:10px;transform:translateY(-2px);"></span>Singing Bridge
+            </div>
+            <h1 class="sb-h1" style="font-size:28px; margin-top:24px;">Welcome back</h1>
+            <p class="sb-lede">Sign in to continue your lesson.</p>
+
+            <form class="sb-stack sb-mt-8" onsubmit="return false">
+              <div class="sb-field">
+                <label class="sb-label" for="lg-email">Email</label>
+                <input class="sb-input" id="lg-email" type="email" placeholder="you@email.com" value="alex@singingbridge.uk">
+              </div>
+              <div class="sb-field">
+                <label class="sb-label" for="lg-pass">Password</label>
+                <input class="sb-input" id="lg-pass" type="password" value="••••••••••">
+                <a href="#" class="sb-help" style="color:var(--sb-accent);">Forgot your password?</a>
+              </div>
+              <button class="sb-btn sb-btn--block sb-btn--lg sb-mt-2">Sign in</button>
+              <p class="sb-text-center sb-text-muted sb-mt-4" style="font-size:14px;">
+                New here? <a href="#">Create an account</a>
+              </p>
+            </form>
+          </div>
+        </div>
+      </div>
+      <div class="art__note">Single primary action. Rose dot mark in the brand header is the only accent. Field labels are small-caps tracked-out, like stave dynamics.</div>
+    </div>
+
+    <!-- Signup -->
+    <div class="art art--auth">
+      <span class="art__label">02 · Sign up</span>
+      <div class="art__frame">
+        <div class="art__page sb-page" style="padding:40px; display:flex; align-items:center; justify-content:center;">
+          <div class="sb-card sb-card--paper" style="width:100%; padding:32px;">
+            <div style="font-family:var(--sb-font-display); font-weight:500; font-size:20px; letter-spacing:-0.01em; margin-bottom:4px;">
+              <span style="display:inline-block;width:8px;height:8px;border-radius:999px;background:var(--sb-rose);margin-right:10px;transform:translateY(-2px);"></span>Singing Bridge
+            </div>
+            <h1 class="sb-h1" style="font-size:26px; margin-top:20px;">Join the studio</h1>
+            <p class="sb-text-muted" style="margin:0 0 24px;">For students and teachers. Invite-only beta.</p>
+
+            <div style="display:flex; gap:8px; margin-bottom:20px;">
+              <label class="sb-btn sb-btn--ghost" style="flex:1; cursor:pointer; background:var(--sb-bg-sunken);">
+                <input type="radio" name="role" style="display:none" checked> Student
+              </label>
+              <label class="sb-btn sb-btn--ghost" style="flex:1; cursor:pointer;">
+                <input type="radio" name="role" style="display:none"> Teacher
+              </label>
+            </div>
+
+            <form class="sb-stack" onsubmit="return false">
+              <div class="sb-field">
+                <label class="sb-label" for="su-name">Full name</label>
+                <input class="sb-input" id="su-name" type="text" value="Mira Okonkwo">
+              </div>
+              <div class="sb-field">
+                <label class="sb-label" for="su-email">Email</label>
+                <input class="sb-input" id="su-email" type="email" value="mira@email.com">
+              </div>
+              <div class="sb-field">
+                <label class="sb-label" for="su-invite">Invite code</label>
+                <input class="sb-input" id="su-invite" type="text" placeholder="SB-____">
+                <span class="sb-help">Received from your teacher by email.</span>
+              </div>
+              <label class="sb-check sb-mt-2">
+                <input type="checkbox" checked>
+                <span>I’ll bring headphones to every lesson.</span>
+              </label>
+              <button class="sb-btn sb-btn--block sb-btn--lg sb-mt-2">Create account</button>
+            </form>
+          </div>
+        </div>
+      </div>
+      <div class="art__note">Role toggle is a segmented pair of ghost buttons. The headphones commitment is part of the sign-up contract — this is what distinguishes a singing lesson from a video call.</div>
+    </div>
+
+    <!-- Pre-lesson lobby -->
+    <div class="art art--auth">
+      <span class="art__label">03 · Pre-lesson lobby</span>
+      <div class="art__frame">
+        <div class="art__page sb-page" style="padding:32px; display:flex; align-items:center; justify-content:center;">
+          <div class="sb-card sb-card--paper" style="width:100%; padding:28px;">
+            <span class="sb-eyebrow">Lesson begins in 2 min</span>
+            <h1 class="sb-h1" style="font-size:24px; margin-top:8px;">Check your kit</h1>
+
+            <div style="background:#000; border-radius:14px; height:160px; position:relative; overflow:hidden; margin:16px 0;">
+              <!-- fake self preview -->
+              <div style="position:absolute;inset:0;background:radial-gradient(ellipse at 55% 40%, #4a3a35, #1A1410 70%);"></div>
+              <div style="position:absolute;right:50%; top:30%; width:40px;height:40px; border-radius:999px; background:rgba(227,169,80,0.6);"></div>
+              <div style="position:absolute; left:10px; bottom:10px; font-size:10px; font-weight:600; letter-spacing:0.1em; background:rgba(15,23,32,0.7); color:#fff; padding:3px 8px; border-radius:999px;">YOU</div>
+            </div>
+
+            <ul class="sb-list sb-list--quiet" style="border-top:1px solid var(--sb-border); border-bottom:1px solid var(--sb-border);">
+              <li class="sb-list__item" style="border-radius:0;">
+                <span class="sb-list__title">Microphone</span>
+                <span class="sb-list__spacer"></span>
+                <span class="sb-chip sb-chip--success"><span class="sb-chip__dot"></span>Good</span>
+              </li>
+              <li class="sb-list__item" style="border-radius:0;">
+                <span class="sb-list__title">Camera</span>
+                <span class="sb-list__spacer"></span>
+                <span class="sb-chip sb-chip--success"><span class="sb-chip__dot"></span>Working</span>
+              </li>
+              <li class="sb-list__item" style="border-radius:0; border-bottom:none;">
+                <span class="sb-list__title">Headphones</span>
+                <span class="sb-list__spacer"></span>
+                <span class="sb-chip sb-chip--warning"><span class="sb-chip__dot"></span>Not confirmed</span>
+              </li>
+            </ul>
+
+            <label class="sb-check sb-mt-4">
+              <input type="checkbox">
+              <span>My headphones are in and working.</span>
+            </label>
+
+            <button class="sb-btn sb-btn--accent sb-btn--block sb-btn--lg sb-mt-4" disabled>Enter lesson</button>
+          </div>
+        </div>
+      </div>
+      <div class="art__note">CTA uses the rose accent (reserved for entering live). Disabled until headphones are confirmed — this is the only place the accent + disabled pairing appears.</div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ===================== 2. APP PAGES ========================= -->
+<h2 class="sb-section-title">App — topbar + warm paper body</h2>
+<div class="art-scroller">
+  <div class="art-track">
+
+    <!-- Teacher landing -->
+    <div class="art art--desktop">
+      <span class="art__label">04 · Teacher landing</span>
+      <div class="art__frame">
+        <div class="art__page sb-page">
+          <!-- topbar -->
+          <div class="sb-topbar">
+            <span class="sb-topbar__brand"><span class="sb-topbar__brand-dot"></span>Singing Bridge</span>
+            <nav class="sb-row" style="gap:20px; margin-left:20px; font-size:14px;">
+              <a href="#" style="color:var(--sb-fg); text-decoration:none; font-weight:500;">Today</a>
+              <a href="#" style="color:var(--sb-fg-muted); text-decoration:none;">Students</a>
+              <a href="#" style="color:var(--sb-fg-muted); text-decoration:none;">Library</a>
+              <a href="#" style="color:var(--sb-fg-muted); text-decoration:none;">Recordings</a>
+            </nav>
+            <span class="sb-topbar__spacer"></span>
+            <span class="sb-chip"><span class="sb-chip__dot" style="background:var(--sb-moss)"></span>Online</span>
+            <div style="width:36px;height:36px;border-radius:999px;background:var(--sb-paper-3);display:flex;align-items:center;justify-content:center;font-family:var(--sb-font-display);font-weight:500;font-size:14px;">ET</div>
+          </div>
+
+          <div class="sb-container" style="max-width:960px; padding-top:48px; padding-bottom:48px;">
+
+            <span class="sb-eyebrow">Thursday, 23 April</span>
+            <h1 class="sb-h1" style="font-size:36px; margin-top:8px;">Good afternoon, Elena.</h1>
+            <p class="sb-lede">Three lessons today. Alex is first, in 18 minutes.</p>
+
+            <!-- Today's lessons -->
+            <div class="sb-card" style="margin-top:32px; padding:0;">
+              <div style="padding:16px 24px; display:flex; align-items:baseline; border-bottom:1px solid var(--sb-border);">
+                <h3 class="sb-h3" style="margin:0;">Today’s lessons</h3>
+                <span class="sb-list__spacer" style="flex:1"></span>
+                <a href="#" style="font-size:13px;">View week →</a>
+              </div>
+              <ul class="sb-list">
+                <li class="sb-list__item">
+                  <div style="width:40px;height:40px;border-radius:999px;background:var(--sb-paper-2);display:flex;align-items:center;justify-content:center;font-family:var(--sb-font-display);font-weight:500;">AP</div>
+                  <div>
+                    <div class="sb-list__title">Alex Price · Lesson 7</div>
+                    <div class="sb-list__meta">2:30 PM · 45 min · Italian art song</div>
+                  </div>
+                  <span class="sb-list__spacer"></span>
+                  <span class="sb-chip sb-chip--live"><span class="sb-chip__dot" style="background:var(--sb-rose)"></span>Starts in 18 min</span>
+                  <button class="sb-btn sb-btn--accent sb-btn--sm">Open lesson</button>
+                </li>
+                <li class="sb-list__item">
+                  <div style="width:40px;height:40px;border-radius:999px;background:var(--sb-paper-2);display:flex;align-items:center;justify-content:center;font-family:var(--sb-font-display);font-weight:500;">MO</div>
+                  <div>
+                    <div class="sb-list__title">Mira Okonkwo · Lesson 2</div>
+                    <div class="sb-list__meta">3:30 PM · 30 min · Breath support</div>
+                  </div>
+                  <span class="sb-list__spacer"></span>
+                  <button class="sb-btn sb-btn--ghost sb-btn--sm">Prepare</button>
+                </li>
+                <li class="sb-list__item">
+                  <div style="width:40px;height:40px;border-radius:999px;background:var(--sb-paper-2);display:flex;align-items:center;justify-content:center;font-family:var(--sb-font-display);font-weight:500;">JB</div>
+                  <div>
+                    <div class="sb-list__title">Jamie Bennett · Lesson 14</div>
+                    <div class="sb-list__meta">5:00 PM · 45 min · Recital prep</div>
+                  </div>
+                  <span class="sb-list__spacer"></span>
+                  <button class="sb-btn sb-btn--ghost sb-btn--sm">Prepare</button>
+                </li>
+              </ul>
+            </div>
+
+            <!-- Two-up secondary cards -->
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:24px; margin-top:32px;">
+              <div class="sb-card">
+                <h3 class="sb-h3" style="margin-top:0;">Needs attention</h3>
+                <div class="sb-notice sb-notice--warning sb-mt-2">
+                  <span class="sb-notice__icon">◐</span>
+                  <div>
+                    <div style="font-weight:500;">2 students haven’t confirmed next week’s slot.</div>
+                    <a href="#" class="sb-help" style="font-size:13px;">Review invitations</a>
+                  </div>
+                </div>
+              </div>
+              <div class="sb-card sb-card--quiet">
+                <h3 class="sb-h3" style="margin-top:0;">Recent recordings</h3>
+                <ul class="sb-list sb-list--quiet" style="margin-top:12px;">
+                  <li class="sb-list__item" style="padding-left:0; padding-right:0;">
+                    <span class="sb-list__title" style="font-size:14px;">Alex — L6, Caccini</span>
+                    <span class="sb-list__spacer"></span>
+                    <span class="sb-list__meta">Mon</span>
+                  </li>
+                  <li class="sb-list__item" style="padding-left:0; padding-right:0;">
+                    <span class="sb-list__title" style="font-size:14px;">Jamie — L13, warmup</span>
+                    <span class="sb-list__spacer"></span>
+                    <span class="sb-list__meta">Fri</span>
+                  </li>
+                </ul>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </div>
+      <div class="art__note">Teacher home is the first thing a logged-in teacher sees. Italic Fraunces greeting sets the room’s tone; everything else is functional. The “live” chip uses rose only because the lesson is about to start.</div>
+    </div>
+
+    <!-- Library -->
+    <div class="art art--desktop">
+      <span class="art__label">05 · Library (sheet music + recordings)</span>
+      <div class="art__frame">
+        <div class="art__page sb-page">
+          <div class="sb-topbar">
+            <span class="sb-topbar__brand"><span class="sb-topbar__brand-dot"></span>Singing Bridge</span>
+            <nav class="sb-row" style="gap:20px; margin-left:20px; font-size:14px;">
+              <a href="#" style="color:var(--sb-fg-muted); text-decoration:none;">Today</a>
+              <a href="#" style="color:var(--sb-fg-muted); text-decoration:none;">Students</a>
+              <a href="#" style="color:var(--sb-fg); text-decoration:none; font-weight:500;">Library</a>
+              <a href="#" style="color:var(--sb-fg-muted); text-decoration:none;">Recordings</a>
+            </nav>
+            <span class="sb-topbar__spacer"></span>
+            <div style="width:36px;height:36px;border-radius:999px;background:var(--sb-paper-3);display:flex;align-items:center;justify-content:center;font-family:var(--sb-font-display);font-weight:500;font-size:14px;">ET</div>
+          </div>
+
+          <div class="sb-container" style="max-width:960px; padding-top:40px;">
+            <span class="sb-eyebrow">Your library</span>
+            <div class="sb-row sb-row--between" style="margin-top:6px;">
+              <h1 class="sb-h1" style="font-size:32px; margin:0;">Sheet music &amp; recordings</h1>
+              <button class="sb-btn">Upload score</button>
+            </div>
+
+            <!-- Tabs -->
+            <div class="sb-row" style="gap:0; margin-top:28px; border-bottom:1px solid var(--sb-border);">
+              <div style="padding:10px 16px; border-bottom:2px solid var(--sb-ink); font-weight:500; font-size:14px;">Scores (24)</div>
+              <div style="padding:10px 16px; color:var(--sb-fg-muted); font-size:14px;">Recordings (108)</div>
+              <div style="padding:10px 16px; color:var(--sb-fg-muted); font-size:14px;">Warmups (12)</div>
+            </div>
+
+            <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:20px; margin-top:24px;">
+              <!-- score card -->
+              <div class="sb-card" style="padding:14px;">
+                <div style="background:var(--sb-paper-2); border-radius:10px; height:160px; position:relative; overflow:hidden; margin-bottom:10px;">
+                  <!-- fake score lines -->
+                  <div style="position:absolute; inset:20px 14px; display:flex; flex-direction:column; gap:14px;">
+                    <div style="height:14px; background:linear-gradient(to bottom, transparent 20%, rgba(15,23,32,0.3) 20%, rgba(15,23,32,0.3) 22%, transparent 22%, transparent 40%, rgba(15,23,32,0.3) 40%, rgba(15,23,32,0.3) 42%, transparent 42%, transparent 60%, rgba(15,23,32,0.3) 60%, rgba(15,23,32,0.3) 62%, transparent 62%, transparent 80%, rgba(15,23,32,0.3) 80%, rgba(15,23,32,0.3) 82%, transparent 82%);"></div>
+                    <div style="height:14px; background:linear-gradient(to bottom, transparent 20%, rgba(15,23,32,0.3) 20%, rgba(15,23,32,0.3) 22%, transparent 22%, transparent 40%, rgba(15,23,32,0.3) 40%, rgba(15,23,32,0.3) 42%, transparent 42%, transparent 60%, rgba(15,23,32,0.3) 60%, rgba(15,23,32,0.3) 62%, transparent 62%, transparent 80%, rgba(15,23,32,0.3) 80%, rgba(15,23,32,0.3) 82%, transparent 82%);"></div>
+                    <div style="height:14px; background:linear-gradient(to bottom, transparent 20%, rgba(15,23,32,0.3) 20%, rgba(15,23,32,0.3) 22%, transparent 22%, transparent 40%, rgba(15,23,32,0.3) 40%, rgba(15,23,32,0.3) 42%, transparent 42%, transparent 60%, rgba(15,23,32,0.3) 60%, rgba(15,23,32,0.3) 62%, transparent 62%, transparent 80%, rgba(15,23,32,0.3) 80%, rgba(15,23,32,0.3) 82%, transparent 82%);"></div>
+                  </div>
+                </div>
+                <div style="font-family:var(--sb-font-display); font-weight:500; font-size:15px;">Amarilli, mia bella</div>
+                <div class="sb-list__meta">Caccini · 1602 · Key of C</div>
+              </div>
+
+              <div class="sb-card" style="padding:14px;">
+                <div style="background:var(--sb-paper-2); border-radius:10px; height:160px; position:relative; overflow:hidden; margin-bottom:10px;">
+                  <div style="position:absolute; inset:20px 14px; display:flex; flex-direction:column; gap:14px;">
+                    <div style="height:14px; background:linear-gradient(to bottom, transparent 30%, rgba(15,23,32,0.3) 30%, rgba(15,23,32,0.3) 32%, transparent 32%, transparent 50%, rgba(15,23,32,0.3) 50%, rgba(15,23,32,0.3) 52%, transparent 52%, transparent 70%, rgba(15,23,32,0.3) 70%, rgba(15,23,32,0.3) 72%, transparent 72%);"></div>
+                    <div style="height:14px; background:linear-gradient(to bottom, transparent 30%, rgba(15,23,32,0.3) 30%, rgba(15,23,32,0.3) 32%, transparent 32%, transparent 50%, rgba(15,23,32,0.3) 50%, rgba(15,23,32,0.3) 52%, transparent 52%, transparent 70%, rgba(15,23,32,0.3) 70%, rgba(15,23,32,0.3) 72%, transparent 72%);"></div>
+                  </div>
+                </div>
+                <div style="font-family:var(--sb-font-display); font-weight:500; font-size:15px;">Morgen!</div>
+                <div class="sb-list__meta">R. Strauss · 1894 · Key of G</div>
+              </div>
+
+              <!-- dropzone -->
+              <div class="sb-dropzone">
+                <div style="font-family:var(--sb-font-display); font-size:16px; margin-bottom:4px;">Drop a score</div>
+                <div style="font-size:13px;">PDF or MusicXML. Up to 25MB.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="art__note">Tabs are text with a 2px underline — no pill buttons. Score thumbnails are rendered on paper-2 to evoke sheet music even when the file is still a PDF.</div>
+    </div>
+
+    <!-- Student join -->
+    <div class="art art--desktop">
+      <span class="art__label">06 · Student join</span>
+      <div class="art__frame">
+        <div class="art__page sb-page" style="display:flex; align-items:center; justify-content:center; padding:40px;">
+          <div style="max-width:560px; width:100%; text-align:center;">
+            <span class="sb-eyebrow">Singing Bridge · Lesson with Elena Tavani</span>
+            <h1 class="sb-h1" style="font-size:40px; margin-top:12px;">Hello, Alex.</h1>
+            <p class="sb-lede" style="margin:0 auto; max-width:440px;">Your lesson is ready. Pop your headphones on and step into the warm room.</p>
+
+            <div style="background:#000; border-radius:20px; height:260px; position:relative; overflow:hidden; margin:32px 0; box-shadow:var(--sb-shadow-3);">
+              <div style="position:absolute;inset:0;background:radial-gradient(ellipse at 50% 45%, #52423D, #1A1410 70%);"></div>
+              <div style="position:absolute; left:20px; top:20px; background:rgba(15,23,32,0.55); backdrop-filter:blur(6px); padding:8px 14px; border-radius:10px;">
+                <div style="font-family:var(--sb-font-display); font-size:15px; color:#fff; font-weight:500;">You</div>
+                <div style="font-size:10px; color:#fff; opacity:0.7; letter-spacing:0.08em; text-transform:uppercase;">Camera preview</div>
+              </div>
+            </div>
+
+            <div class="sb-row" style="justify-content:center; gap:12px;">
+              <button class="sb-btn sb-btn--ghost">Test mic</button>
+              <button class="sb-btn sb-btn--accent sb-btn--lg">Enter the lesson</button>
+            </div>
+
+            <div class="sb-row" style="justify-content:center; gap:16px; margin-top:20px;">
+              <span class="sb-chip sb-chip--success"><span class="sb-chip__dot"></span>Headphones on</span>
+              <span class="sb-chip sb-chip--success"><span class="sb-chip__dot"></span>Mic good</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="art__note">Minimal UI by design — students arrive, see themselves, enter. No dashboard. Every dashboard element is deferred to after-lesson review.</div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ===================== 3. SESSION ========================= -->
+<h2 class="sb-section-title">Session — dark-theme scope</h2>
+<div class="art-scroller">
+  <div class="art-track">
+
+    <!-- Session — teacher view -->
+    <div class="art art--session">
+      <span class="art__label">07 · Session — teacher view (live)</span>
+      <div class="art__frame">
+        <div class="art__page sb-theme-dark" style="background:var(--sb-ink);">
+          <div class="sb-session">
+            <div class="sb-session__stage">
+              <!-- fake remote video -->
+              <div style="position:absolute;inset:0;background:radial-gradient(ellipse at 45% 40%, #6D4B48, #251714 75%);"></div>
+
+              <!-- breath ring (animated via inline style) -->
+              <div class="sb-breathring" style="box-shadow: inset 0 0 0 10px rgba(225,127,139,0.35);"></div>
+
+              <!-- name plate -->
+              <div class="sb-nameplate">
+                <div class="sb-nameplate__name">Alex Price</div>
+                <div class="sb-nameplate__meta">Student · Lesson 7</div>
+              </div>
+
+              <!-- headphones chip -->
+              <div style="position:absolute; right:16px; top:16px;">
+                <span class="sb-chip" style="background:rgba(111,154,122,0.9); color:#fff; border:none;"><span style="width:6px;height:6px;border-radius:999px;background:#fff;"></span>Headphones on</span>
+              </div>
+            </div>
+
+            <!-- Dotted baseline with meters -->
+            <div class="sb-session__baseline">
+              <div class="sb-row sb-row--between" style="flex-wrap:nowrap;">
+                <div class="sb-row" style="gap:10px; flex-shrink:0;">
+                  <span class="sb-meter__label">YOU</span>
+                  <div class="sb-meter">
+                    <!-- pips -->
+                    <div class="sb-meter__pip" data-on="true" style="height:7px;"></div>
+                    <div class="sb-meter__pip" data-on="true" style="height:9px;"></div>
+                    <div class="sb-meter__pip" data-on="true" style="height:10px;"></div>
+                    <div class="sb-meter__pip" data-on="true" style="height:12px;"></div>
+                    <div class="sb-meter__pip" data-on="true" style="height:13px;"></div>
+                    <div class="sb-meter__pip" data-on="true" style="height:14px;"></div>
+                    <div class="sb-meter__pip" data-on="true" style="height:16px;"></div>
+                    <div class="sb-meter__pip" data-on="true" data-zone="warn" style="height:18px;"></div>
+                    <div class="sb-meter__pip" data-zone="warn" style="height:19px;"></div>
+                    <div class="sb-meter__pip" data-zone="warn" style="height:20px;"></div>
+                    <div class="sb-meter__pip" data-zone="clip" style="height:21px;"></div>
+                    <div class="sb-meter__pip" data-zone="clip" style="height:22px;"></div>
+                    <div class="sb-meter__pip" data-zone="clip" style="height:23px;"></div>
+                    <div class="sb-meter__pip" data-zone="clip" style="height:24px;"></div>
+                  </div>
+                </div>
+                <span class="sb-meter__elapsed" style="flex-shrink:0;">12:44</span>
+                <div class="sb-row" style="gap:10px; flex-shrink:0;">
+                  <div class="sb-meter sb-meter--reverse">
+                    <div class="sb-meter__pip" data-on="true" style="height:7px;"></div>
+                    <div class="sb-meter__pip" data-on="true" style="height:9px;"></div>
+                    <div class="sb-meter__pip" data-on="true" style="height:10px;"></div>
+                    <div class="sb-meter__pip" data-on="true" style="height:12px;"></div>
+                    <div class="sb-meter__pip" data-on="true" style="height:13px;"></div>
+                    <div class="sb-meter__pip" data-on="true" style="height:14px;"></div>
+                    <div class="sb-meter__pip" data-on="true" style="height:16px;"></div>
+                    <div class="sb-meter__pip" data-on="true" data-zone="warn" style="height:18px;"></div>
+                    <div class="sb-meter__pip" data-on="true" data-zone="warn" style="height:19px;"></div>
+                    <div class="sb-meter__pip" data-zone="warn" style="height:20px;"></div>
+                    <div class="sb-meter__pip" data-zone="clip" style="height:21px;"></div>
+                    <div class="sb-meter__pip" data-zone="clip" style="height:22px;"></div>
+                    <div class="sb-meter__pip" data-zone="clip" style="height:23px;"></div>
+                    <div class="sb-meter__pip" data-zone="clip" style="height:24px;"></div>
+                  </div>
+                  <span class="sb-meter__label">ALEX</span>
+                </div>
+              </div>
+              <div class="sb-dotted" style="margin-top:8px;"></div>
+            </div>
+
+            <!-- Bottom controls -->
+            <div class="sb-row sb-row--between" style="align-items:flex-end; margin-top:12px;">
+              <div class="sb-row" style="gap:8px;">
+                <button class="sb-iconbtn" aria-label="Mic">
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v3"/></svg>
+                  <span>Muted</span>
+                </button>
+                <button class="sb-iconbtn" aria-pressed="true" aria-label="Video">
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="6" width="13" height="12" rx="2"/><path d="m16 10 5-3v10l-5-3z"/></svg>
+                  <span>Video</span>
+                </button>
+                <button class="sb-iconbtn" aria-label="Note">
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8 18V5l10-2v13"/><circle cx="6" cy="18" r="2.2"/><circle cx="16" cy="16" r="2.2"/></svg>
+                  <span>Note</span>
+                </button>
+                <button class="sb-iconbtn" aria-label="Say">
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 5h16v12H8l-4 4z"/></svg>
+                  <span>Say</span>
+                </button>
+                <button class="sb-iconbtn sb-iconbtn--danger" aria-label="End">
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M21 15.5V18a2 2 0 0 1-2.18 2A19 19 0 0 1 3.5 5.18 2 2 0 0 1 5.5 3H8l1.5 4L8 8.5a13 13 0 0 0 7.5 7.5L17 14.5z" transform="rotate(135 12 12)"/></svg>
+                  <span>End</span>
+                </button>
+              </div>
+              <div class="sb-selfcard">
+                <div style="position:absolute;inset:0;background:radial-gradient(ellipse at 50% 40%, #3F5060, #151D26 80%);"></div>
+                <span class="sb-selfcard__label">You</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="art__note">The in-lesson screen. Breath ring pulses with Alex's voice. The dotted baseline carries the two meters and the elapsed time — a quiet rhythm line across the middle of the screen.</div>
+    </div>
+
+    <!-- Session — network warning -->
+    <div class="art art--session">
+      <span class="art__label">08 · Session — network warning</span>
+      <div class="art__frame">
+        <div class="art__page sb-theme-dark" style="background:var(--sb-ink);">
+          <div class="sb-session">
+            <div class="reconnect-banner" style="margin-bottom:12px;">Connection wobbly — audio prioritised, reducing video quality. <a href="#" style="color:inherit;">Check your network</a></div>
+            <div class="sb-session__stage">
+              <div style="position:absolute;inset:0;background:radial-gradient(ellipse at 40% 45%, #6D4B48, #251714 75%); filter:blur(2px);"></div>
+              <div class="sb-breathring" style="box-shadow: inset 0 0 0 4px rgba(225,127,139,0.15);"></div>
+              <div class="sb-nameplate">
+                <div class="sb-nameplate__name">Alex Price</div>
+                <div class="sb-nameplate__meta">Reconnecting…</div>
+              </div>
+              <div style="position:absolute; right:16px; top:16px;">
+                <span class="quality-badge poor">Poor</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="art__note">Legacy classes (.reconnect-banner, .quality-badge) are aliased to the new tokens. A poor-network state degrades video but keeps the audio meter and breath ring alive.</div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ===================== 4. COMPONENTS (reference) ========================= -->
+<h2 class="sb-section-title">Component reference — for future pages</h2>
+<div class="art-scroller">
+  <div class="art-track">
+
+    <!-- Buttons -->
+    <div class="art" style="width:560px;">
+      <span class="art__label">09 · Buttons</span>
+      <div class="art__frame" style="width:560px; min-height:380px;">
+        <div class="art__page sb-page" style="padding:32px;">
+          <span class="sb-eyebrow">Primary / ghost / quiet / accent / danger</span>
+          <div class="sb-stack sb-mt-4" style="display:flex; flex-direction:column; gap:14px; align-items:flex-start;">
+            <div class="sb-row"><button class="sb-btn">Save changes</button><button class="sb-btn sb-btn--ghost">Cancel</button><button class="sb-btn sb-btn--quiet">Edit profile</button></div>
+            <div class="sb-row"><button class="sb-btn sb-btn--accent">Enter lesson</button><button class="sb-btn sb-btn--danger">End lesson</button></div>
+            <div class="sb-row"><button class="sb-btn sb-btn--sm">Small</button><button class="sb-btn">Default</button><button class="sb-btn sb-btn--lg">Large</button></div>
+            <button class="sb-btn sb-btn--block">Block width</button>
+            <div class="sb-row"><button class="sb-btn" disabled>Disabled</button></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Forms -->
+    <div class="art" style="width:460px;">
+      <span class="art__label">10 · Form fields</span>
+      <div class="art__frame" style="width:460px; min-height:380px;">
+        <div class="art__page sb-page" style="padding:32px;">
+          <div class="sb-field">
+            <label class="sb-label">Email</label>
+            <input class="sb-input" type="email" value="alex@singingbridge.uk">
+          </div>
+          <div class="sb-field">
+            <label class="sb-label">About</label>
+            <textarea class="sb-textarea">Mezzo-soprano studying Italian baroque.</textarea>
+          </div>
+          <div class="sb-field">
+            <label class="sb-label">Invite code</label>
+            <input class="sb-input" aria-invalid="true" value="SB-0000">
+            <span class="sb-help" style="color:var(--sb-danger);">That code has already been used.</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Chips + notices -->
+    <div class="art" style="width:480px;">
+      <span class="art__label">11 · Chips, notices, dotted baseline</span>
+      <div class="art__frame" style="width:480px; min-height:380px;">
+        <div class="art__page sb-page" style="padding:32px;">
+          <div class="sb-row" style="gap:8px; flex-wrap:wrap;">
+            <span class="sb-chip"><span class="sb-chip__dot"></span>Neutral</span>
+            <span class="sb-chip sb-chip--success"><span class="sb-chip__dot"></span>Headphones on</span>
+            <span class="sb-chip sb-chip--warning"><span class="sb-chip__dot"></span>Poor network</span>
+            <span class="sb-chip sb-chip--danger"><span class="sb-chip__dot"></span>Feedback</span>
+            <span class="sb-chip sb-chip--live"><span class="sb-chip__dot" style="background:var(--sb-rose)"></span>Live</span>
+          </div>
+          <div class="sb-notice sb-mt-4">
+            <span class="sb-notice__icon">◯</span>
+            <div><strong>Heads up.</strong> Your teacher isn’t here yet — their lesson starts in 3 minutes.</div>
+          </div>
+          <div class="sb-notice sb-notice--warning sb-mt-2">
+            <span class="sb-notice__icon">⚠</span>
+            <div><strong>No headphones detected.</strong> Plug them in before the lesson to prevent feedback.</div>
+          </div>
+          <div class="sb-dotted sb-mt-4"></div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+</body>
+</html>

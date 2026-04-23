@@ -7,11 +7,16 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Accompaniment Library — singing-bridge</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,500;0,600;1,400;1,500&family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/assets/styles.css">
+  <link rel="stylesheet" href="/assets/theme.css">
 </head>
-<body>
-  <div id="sidecar-banner" class="banner-error" hidden>
+<body class="sb-page">
+  <div id="sidecar-banner" class="sb-notice sb-notice--danger banner-error" hidden>
     Sheet music tools unavailable. Upload and delete still work.
     <button id="sidecar-banner-close" type="button">✕</button>
   </div>
@@ -21,19 +26,20 @@
     <nav><a id="back-link" href="#">← Back to room</a></nav>
 
     <section id="upload-section">
-      <div id="drop-zone" class="drop-zone" tabindex="0"
+      <div id="drop-zone" class="drop-zone sb-dropzone" tabindex="0"
            aria-label="Drop PDF, MIDI, or WAV file here">
         <p>Drop a PDF, MIDI, or WAV file here, or
            <label for="file-input">browse</label></p>
         <input type="file" id="file-input" accept=".pdf,.mid,.midi,.wav"
                aria-label="Choose file">
       </div>
-      <div id="title-row">
-        <label for="title-input">Title
-          <input type="text" id="title-input" maxlength="255"
+      <div id="title-row" class="sb-row sb-mt-4">
+        <div class="sb-field" style="flex:1;">
+          <label class="sb-label" for="title-input">Title</label>
+          <input class="sb-input" type="text" id="title-input" maxlength="255"
                  placeholder="e.g. Ave Maria (Schubert)" required>
-        </label>
-        <button id="upload-btn" type="button">Upload</button>
+        </div>
+        <button class="sb-btn" id="upload-btn" type="button" style="margin-top:22px;">Upload</button>
       </div>
       <p id="upload-error" class="error" hidden></p>
       <p id="upload-progress" hidden>Uploading…</p>
@@ -42,19 +48,21 @@
     <section id="midi-record-section" hidden>
       <h2>Record from keyboard</h2>
       <div id="midi-device-row" hidden>
-        <label for="midi-device-select">Keyboard
-          <select id="midi-device-select"></select>
-        </label>
+        <div class="sb-field">
+          <label class="sb-label" for="midi-device-select">Keyboard</label>
+          <select class="sb-select" id="midi-device-select"></select>
+        </div>
       </div>
-      <div id="midi-title-row">
-        <label for="midi-title-input">Title
-          <input type="text" id="midi-title-input" maxlength="255"
+      <div id="midi-title-row" class="sb-mt-4">
+        <div class="sb-field">
+          <label class="sb-label" for="midi-title-input">Title</label>
+          <input class="sb-input" type="text" id="midi-title-input" maxlength="255"
                  placeholder="e.g. Ave Maria (improvised)">
-        </label>
+        </div>
       </div>
-      <div id="midi-controls">
-        <button id="midi-record-btn" type="button">Start recording</button>
-        <button id="midi-stop-btn" type="button" hidden>Stop</button>
+      <div id="midi-controls" class="sb-row sb-mt-4">
+        <button class="sb-btn sb-btn--accent" id="midi-record-btn" type="button">Start recording</button>
+        <button class="sb-btn sb-btn--ghost" id="midi-stop-btn" type="button" hidden>Stop</button>
       </div>
       <p id="midi-note-display" aria-live="polite" hidden></p>
       <p id="midi-upload-progress" hidden>Uploading…</p>

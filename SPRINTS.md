@@ -547,7 +547,43 @@ Recommendation to evaluate during planning: **Option B (Turso)** for lowest migr
 
 ---
 
-## Open items (noted, not blocking MVP)
+## Sprint 17: Teacher dashboard + session UI redesign
+
+**Goal:** Replace the confusing single-page teacher UI with a clear dashboard hub and a properly laid-out session view, so the teacher can access all their assets at a glance and run a lesson without UI friction.
+
+**Deliverables:**
+
+_Teacher dashboard (`GET /teach/<slug>/dashboard`)_
+- New server route and `dashboard.html` page served only to the authenticated room owner
+- Dashboard shows three asset panels: **Lobby** (students waiting, with admit/reject/message), **Recordings** (list of past recordings, send/delete), **Library** (accompaniment assets, upload/synthesise shortcuts)
+- Prominent **"Go Live"** button that navigates to the session room
+- Lobby panel is live (WebSocket-backed) — shows waiting students in real time with admit/reject actions
+- Dashboard is the new default landing for the teacher (teacher arriving at `/teach/<slug>` while authenticated is redirected to `/teach/<slug>/dashboard`)
+- Unauthenticated visitors at `/teach/<slug>` continue to see `student.html` (no change)
+
+_Session UI layout (laptop-first)_
+- **Three-zone layout:** other-view (large, left ~65% width, full height), accompaniment panel (right ~30%, collapsible), self-view PiP overlay (small, bottom-left of other-view, ~20% of that panel width)
+- **Icon-only control bar** at the bottom of the session: mic mute, camera mute, leave call, accompaniment toggle; teacher-only icons shown only for the teacher role; all icons use SVG with `aria-label`
+- Accompaniment panel slides in from the right when toggled; when closed, other-view expands to fill
+- Self-view is a fixed-position PiP overlay within the other-view panel, not a separate tile
+
+_Accompaniment panel (teacher-only)_
+- Position slider (seek within track)
+- Pause / Resume button
+- Toggle score viewer (show/hide the sheet music pane)
+- Current track name displayed
+- Panel state (open/closed) persisted in `sessionStorage` so it survives soft reloads
+
+**Exit criteria:**
+- Teacher at `/teach/<slug>` is redirected to dashboard; unauthenticated visitor sees student join form (no regression)
+- Dashboard lobby updates in real time when a student joins or leaves
+- Teacher can admit a student from the dashboard lobby; session view opens
+- Session view: other-view fills the majority of the screen, self-view is a small PiP overlay, accompaniment panel opens/closes via icon
+- Accompaniment panel: seek slider, pause/resume, score-viewer toggle all functional
+- Layout tested at 1280×800 and 1440×900 (typical laptop); no horizontal scroll; no overlapping elements
+- All existing lobby admit/reject/message actions still work
+
+**Status:** IN PROGRESS
 
 - Persistent "my students" list for the teacher — deliberately out of MVP; addressed partially by Sprint 11 history
 - Multi-participant sessions — MVP is strictly 2 peers

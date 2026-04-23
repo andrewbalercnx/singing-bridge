@@ -7,7 +7,10 @@
 
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
+
+static DB_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 use dashmap::DashMap;
 use futures_util::{SinkExt, StreamExt};
@@ -109,7 +112,11 @@ pub async fn spawn_app_with(opts: TestOpts) -> TestApp {
     let mut config = Config::dev_default();
     config.bind = addr;
     config.base_url = base_url.clone();
-    config.db_url = "sqlite::memory:".into();
+    // Use a named shared-cache in-memory URI so all pool connections (up to
+    // max_connections=4) share the same database. Each test gets a unique name
+    // to prevent cross-test contamination.
+    let n = DB_COUNTER.fetch_add(1, Ordering::Relaxed);
+    config.db_url = format!("sqlite:file:testmem{n}?mode=memory&cache=shared");
     config.dev_mail_dir = mail_dir.path().to_path_buf();
     config.static_dir = opts.static_dir.unwrap_or_else(locate_web_dir);
     config.lobby_cap_per_room = opts.lobby_cap_per_room;

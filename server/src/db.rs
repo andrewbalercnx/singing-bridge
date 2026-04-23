@@ -22,9 +22,17 @@ pub async fn init_pool(db_url: &str) -> Result<SqlitePool> {
         .max_connections(4)
         .after_connect(|conn, _| {
             Box::pin(async move {
-                sqlx::query("PRAGMA journal_mode=WAL")
-                    .execute(&mut *conn)
+                // Verify WAL is applied. In-memory databases return "memory"
+                // (WAL is unsupported there); that is acceptable for tests.
+                // Any other mode means the filesystem cannot support WAL — fail fast.
+                let (mode,): (String,) = sqlx::query_as("PRAGMA journal_mode=WAL")
+                    .fetch_one(&mut *conn)
                     .await?;
+                if mode != "wal" && mode != "memory" {
+                    return Err(sqlx::Error::Configuration(
+                        format!("journal_mode=WAL could not be set; got '{mode}'").into(),
+                    ));
+                }
                 sqlx::query("PRAGMA synchronous=NORMAL")
                     .execute(&mut *conn)
                     .await?;

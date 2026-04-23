@@ -11,6 +11,8 @@ param backupImageName string = 'singing-bridge-backup:latest'
 // Container Apps Environment ID — must be the same environment as the main app
 // so the NFS volume binding is accessible.
 param caEnvId string
+// ACA subnet ID from vnet.bicep — required to allow backup job egress to blob storage.
+param acaSubnetId string
 // Backup destination blob storage account.
 param backupStorageAccountName string = 'sbbackup${uniqueString(resourceGroup().id)}'
 
@@ -24,6 +26,19 @@ resource backupStorageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' = {
     minimumTlsVersion: 'TLS1_2'
     supportsHttpsTrafficOnly: true
     allowBlobPublicAccess: false
+    networkAcls: {
+      defaultAction: 'Deny'
+      // Allow traffic from the Container Apps environment subnet so the backup
+      // job can upload without exposing the account to the public internet.
+      virtualNetworkRules: [
+        {
+          id: acaSubnetId
+          action: 'Allow'
+        }
+      ]
+      // Azure services bypass allows ARM deployments and portal access.
+      bypass: 'AzureServices'
+    }
   }
 }
 
@@ -40,7 +55,9 @@ resource backupContainer 'Microsoft.Storage/storageAccounts/blobServices/contain
 
 // ---- Backup Container App Job ----
 // Triggered manually: az containerapp job start --name sb-backup-job --resource-group sb-prod-rg
-// The job uses system-assigned managed identity for blob upload — no shared keys.
+// Uses system-assigned managed identity for blob upload — no shared keys.
+// Pin the image by digest before first production deploy:
+//   az acr manifest list-metadata --name singing-bridge-backup --registry sbprodacr
 resource backupJob 'Microsoft.App/jobs@2024-03-01' = {
   name: jobName
   location: location
@@ -62,8 +79,6 @@ resource backupJob 'Microsoft.App/jobs@2024-03-01' = {
       containers: [
         {
           name: 'backup'
-          // Pin by digest before first production deploy:
-          // docker pull <acr>/singing-bridge-backup:latest && docker inspect --format='{{index .RepoDigests 0}}'
           image: '${acrLoginServer}/${backupImageName}'
           env: [
             { name: 'BACKUP_STORAGE_ACCOUNT', value: backupStorageAccount.name }
@@ -92,12 +107,12 @@ resource backupJob 'Microsoft.App/jobs@2024-03-01' = {
   }
 }
 
-// Grant backup job managed identity the Storage Blob Data Contributor role
-// on the backup container so it can upload without a shared key.
+// Scope the role to the backup container specifically, not the whole storage account.
+// Storage Blob Data Contributor on the container is sufficient for upload.
 var storageBlobDataContributorRoleId = 'ba92f5b4-2d11-453d-a403-e96b0029c9fe'
 resource backupRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(backupStorageAccount.id, backupJob.id, storageBlobDataContributorRoleId)
-  scope: backupStorageAccount
+  name: guid(backupContainer.id, backupJob.id, storageBlobDataContributorRoleId)
+  scope: backupContainer
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', storageBlobDataContributorRoleId)
     principalId: backupJob.identity.principalId

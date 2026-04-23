@@ -68,9 +68,13 @@ resource nfsFileShare 'Microsoft.Storage/storageAccounts/fileServices/shares@202
   properties: {
     shareQuota: 32
     enabledProtocols: 'NFS'
-    // RootSquash: root in container maps to nobody on NFS server.
-    // UID 65532 in the container maps to UID 65532 on the server (owner after init).
-    rootSquash: 'RootSquash'
+    // NoRootSquash is safe here because the server container runs as UID 65532
+    // (not root), enforced by both the Dockerfile USER directive and the
+    // securityContext below. An init container chowning /data is unnecessary and
+    // would fail under RootSquash anyway (root → nobody cannot chown). On first
+    // mount the NFS directory is world-writable, and SQLite creates the DB file
+    // as UID 65532. On subsequent mounts UID 65532 reads and writes its own file.
+    rootSquash: 'NoRootSquash'
   }
 }
 
@@ -175,21 +179,6 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
           name: 'sb-data'
           storageType: 'NfsAzureFile'
           storageName: 'sb-nfs-storage'
-        }
-      ]
-      // Init container runs once before the server starts on each pod creation.
-      // Ensures /data is owned by UID 65532 on first mount (NFS share arrives owned by root).
-      // Pin the image by digest at deploy time to avoid supply-chain risk on a root-capable container.
-      // To resolve: docker pull alpine:3.19 --platform linux/amd64 && docker inspect --format='{{index .RepoDigests 0}}'
-      initContainers: [
-        {
-          name: 'init-chown-data'
-          image: 'alpine:3.19'  // TODO: pin by digest before first production deploy
-          command: ['/bin/sh', '-c', 'chown -R 65532:65532 /data']
-          volumeMounts: [
-            { volumeName: 'sb-data', mountPath: '/data' }
-          ]
-          resources: { cpu: json('0.25'), memory: '0.5Gi' }
         }
       ]
       containers: [

@@ -747,28 +747,77 @@ def gather_plan_materials(sprint: str, repo_root: Path) -> str:
 
 
 def _generate_codegraph_context(source_files: list[str], repo_root: Path) -> str | None:
-    """Generate codebase structure context from the semantic index DB.
+    """Generate codebase structure context by querying the codegraph DB directly.
 
-    Calls scripts/index-codebase.py --context-for with the changed file list.
-    Returns a markdown section, or None if the DB doesn't exist or the call fails.
+    Mirrors the logic of the MCP codegraph_context_for tool — symbols, endpoints,
+    and file header (purpose/role) per changed file. Avoids the subprocess overhead
+    and schema-guessing of the old --context-for bash path, and returns structured
+    output for all indexed file types including JS/TS.
+
+    Returns a markdown section, or None if the DB doesn't exist or no files match.
     """
+    import sqlite3 as _sqlite3
+
     db_path = repo_root / ".claude" / "codebase.db"
     if not db_path.exists() or not source_files:
         return None
 
     try:
-        import subprocess
-        result = subprocess.run(
-            ["python3", str(repo_root / "scripts" / "index-codebase.py"),
-             "--context-for"] + source_files,
-            capture_output=True, text=True, timeout=15, cwd=str(repo_root)
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            return result.stdout.strip()
-    except Exception:
-        pass
+        conn = _sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        conn.row_factory = _sqlite3.Row
+        sections: list[str] = []
+        indexed = 0
+        try:
+            for path in source_files:
+                file_row = conn.execute(
+                    "SELECT id, path, module, lines FROM files WHERE path = ?",
+                    (path,),
+                ).fetchone()
+                if file_row is None:
+                    continue
+                indexed += 1
+                file_id = file_row["id"]
+                lines: list[str] = [f"**{path}** ({file_row['lines']} lines)"]
+                hdr = conn.execute(
+                    "SELECT purpose, role FROM file_headers WHERE file_id = ?",
+                    (file_id,),
+                ).fetchone()
+                if hdr and hdr["purpose"]:
+                    lines.append(f"  Purpose: {hdr['purpose']}")
+                if hdr and hdr["role"]:
+                    lines.append(f"  Role: {hdr['role']}")
+                sym_rows = conn.execute(
+                    "SELECT name, kind, line FROM symbols WHERE file_id = ? "
+                    "ORDER BY line LIMIT 50",
+                    (file_id,),
+                ).fetchall()
+                if sym_rows:
+                    sym_parts = ", ".join(
+                        f"{r['name']} ({r['kind']}:{r['line']})" for r in sym_rows
+                    )
+                    lines.append(f"  Symbols: {sym_parts}")
+                ep_rows = conn.execute(
+                    "SELECT method, path AS ep_path, handler FROM endpoints "
+                    "WHERE file_id = ? ORDER BY method, ep_path",
+                    (file_id,),
+                ).fetchall()
+                if ep_rows:
+                    ep_parts = ", ".join(
+                        f"{r['method']} {r['ep_path']}" for r in ep_rows
+                    )
+                    lines.append(f"  Endpoints: {ep_parts}")
+                sections.append("\n".join(lines))
+        finally:
+            conn.close()
 
-    return None
+        if not sections:
+            return None
+        header = (
+            f"## Codebase Structure Context ({indexed}/{len(source_files)} files indexed)\n"
+        )
+        return header + "\n\n".join(sections)
+    except Exception:
+        return None
 
 
 def _filename_is_safe(rel: str) -> bool:

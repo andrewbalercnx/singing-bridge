@@ -1,8 +1,9 @@
 // File: web/assets/tests/library.test.js
 // Purpose: Unit tests for library.js helpers: upload flow, OMR multi-step,
 //          synthesise validation, delete confirmation, 503 banner, rasterise,
-//          expandAsset, loadAssets.
-// Last updated: Sprint 13 (2026-04-22) -- initial implementation
+//          expandAsset, loadAssets, MIDI recording (encodeVlq, serializeMidi,
+//          handleMidiMessage, initMidiRecording, stopMidiCapture).
+// Last updated: Sprint 15 (2026-04-23) -- MIDI recording tests
 
 'use strict';
 
@@ -1485,4 +1486,153 @@ test('startUpload_no_onSuccess_completes_without_error', async function () {
   assert.equal(loadCalled, true);
   assert.equal(errorEl.hidden, true);
   delete globalThis.fetch;
+});
+
+// ---------------------------------------------------------------------------
+// serializeMidi — multi-event relative delta encoding
+// ---------------------------------------------------------------------------
+
+test('serializeMidi_multi_event_uses_relative_delta_ticks', function () {
+  // Two events at 500ms and 1000ms with 120 BPM, 480 tpb.
+  // Event 0: absolute tick = 480, delta = 480
+  // Event 1: absolute tick = 960, delta = 480 (relative to event 0)
+  // VLQ for 480: [0x83, 0x60]
+  var events = [
+    { elapsedMs: 500, type: 'note_on', channel: 0, data1: 60, data2: 80 },
+    { elapsedMs: 1000, type: 'note_off', channel: 0, data1: 60, data2: 0 },
+  ];
+  var buf = lib.serializeMidi(events, { bpm: 120, ticksPerBeat: 480 });
+  // Note track data starts at byte 41 (14 header + 8 MTrk + 11 tempo = 33; + 8 MTrk = 41)
+  var noteDataStart = 41;
+  // Event 0: VLQ(480) = [0x83, 0x60], status 0x90, note 60, vel 80
+  assert.equal(buf[noteDataStart + 0], 0x83);
+  assert.equal(buf[noteDataStart + 1], 0x60);
+  assert.equal(buf[noteDataStart + 2], 0x90);
+  // Event 1: VLQ(480) = [0x83, 0x60] (relative, not 960), status 0x80, note 60, vel 0
+  assert.equal(buf[noteDataStart + 5], 0x83);
+  assert.equal(buf[noteDataStart + 6], 0x60);
+  assert.equal(buf[noteDataStart + 7], 0x80);
+});
+
+// ---------------------------------------------------------------------------
+// initMidiRecording — onstatechange hotplug
+// ---------------------------------------------------------------------------
+
+test('initMidiRecording_onstatechange_reveals_section_when_port_appears', async function () {
+  var sectionEl = makeEl(); sectionEl.hidden = true;
+  var savedGetEl = globalThis.document.getElementById;
+  globalThis.document.getElementById = function (id) {
+    if (id === 'midi-record-section') return sectionEl;
+    if (id === 'midi-device-row') return null;
+    if (id === 'midi-device-select') return null;
+    return null;
+  };
+
+  var capturedStateChange = null;
+  var mockPort = { id: 'p1', name: 'Piano', onmidimessage: null };
+  var mockInputsEmpty = new Map();
+  var mockInputsWithPort = new Map([['p1', mockPort]]);
+  var currentInputs = mockInputsEmpty;
+
+  var mockAccess = {
+    get inputs() { return currentInputs; },
+    set onstatechange(fn) { capturedStateChange = fn; },
+  };
+
+  var provider = function () { return Promise.resolve(mockAccess); };
+  lib.initMidiRecording(null, provider);
+  await new Promise(function (r) { setTimeout(r, 20); });
+
+  // Section still hidden — no ports yet
+  assert.equal(sectionEl.hidden, true);
+
+  // Device plugged in: update inputs and fire onstatechange
+  currentInputs = mockInputsWithPort;
+  if (capturedStateChange) capturedStateChange({});
+  assert.equal(sectionEl.hidden, false);
+
+  globalThis.document.getElementById = savedGetEl;
+});
+
+// ---------------------------------------------------------------------------
+// renderSummary — pendingAutoExpandId auto-expand
+// ---------------------------------------------------------------------------
+
+test('renderSummary_auto_expands_when_pendingAutoExpandId_matches', async function () {
+  var expandFetchCalled = false;
+  globalThis.fetch = function (url) {
+    if (url.indexOf('/42') !== -1) {
+      expandFetchCalled = true;
+      return Promise.resolve({ ok: false, status: 404, json: function () { return Promise.resolve({ message: 'nf' }); } });
+    }
+    return Promise.resolve({ ok: true, status: 200, json: function () { return Promise.resolve([]); } });
+  };
+
+  lib._setPendingAutoExpandId(42);
+  var asset = { id: 42, title: 'Test', has_pdf: false, has_midi: true, variant_count: 0, created_at: 0 };
+  var li = lib.renderSummary(asset, '/base', makeBannerEl());
+
+  // The detail element should be shown (auto-expanded)
+  var header = li.children[0];
+  var expandBtn = header.children[0];
+  assert.equal(expandBtn._attrs['aria-expanded'], 'true');
+  assert.equal(li.children[1].hidden, false);
+
+  await new Promise(function (r) { setTimeout(r, 20); });
+  assert.equal(expandFetchCalled, true);
+
+  // pendingAutoExpandId should be cleared
+  // A second renderSummary for same id should NOT auto-expand
+  var li2 = lib.renderSummary(asset, '/base', makeBannerEl());
+  var header2 = li2.children[0];
+  var expandBtn2 = header2.children[0];
+  assert.equal(expandBtn2._attrs['aria-expanded'], 'false');
+
+  delete globalThis.fetch;
+});
+
+test('renderSummary_does_not_auto_expand_non_matching_id', function () {
+  lib._setPendingAutoExpandId(99);
+  var asset = { id: 42, title: 'T', has_pdf: false, has_midi: true, variant_count: 0, created_at: 0 };
+  var li = lib.renderSummary(asset, '/base', makeBannerEl());
+  var expandBtn = li.children[0].children[0];
+  assert.equal(expandBtn._attrs['aria-expanded'], 'false');
+  assert.equal(li.children[1].hidden, true);
+  lib._setPendingAutoExpandId(null); // cleanup
+});
+
+// ---------------------------------------------------------------------------
+// Session state isolation — second recording starts clean
+// ---------------------------------------------------------------------------
+
+test('handleMidiMessage_second_session_state_is_independent', function () {
+  // First session: press C4, hold it
+  var state1 = {
+    recording: true, captureStart: 0, events: [], heldNotes: {},
+    port: { onmidimessage: null }, noteDisplayEl: null, statusEl: null,
+  };
+  lib.handleMidiMessage(state1, midiEvt([0x90, 60, 80]));
+  assert.equal(state1.events.length, 1);
+  assert.equal(state1.heldNotes[60], true);
+
+  // Second session: fresh state — no bleed-through from first session
+  var state2 = {
+    recording: true, captureStart: 0, events: [], heldNotes: {},
+    port: { onmidimessage: null }, noteDisplayEl: null, statusEl: null,
+  };
+  lib.handleMidiMessage(state2, midiEvt([0x90, 62, 80]));
+  assert.equal(state2.events.length, 1);
+  assert.equal(state2.events[0].data1, 62);
+  assert.equal(state2.heldNotes[62], true);
+  assert.equal(state2.heldNotes[60], undefined); // no bleed from session 1
+  assert.equal(state1.events.length, 1); // session 1 unchanged
+});
+
+test('stopMidiCapture_returns_events_and_clears_module_state', function () {
+  // stopMidiCapture calls document.getElementById for UI elements; mock it safely.
+  var savedGetEl = globalThis.document.getElementById;
+  globalThis.document.getElementById = function () { return null; };
+  var events = lib.stopMidiCapture(); // idempotent when not recording
+  assert.ok(Array.isArray(events));
+  globalThis.document.getElementById = savedGetEl;
 });

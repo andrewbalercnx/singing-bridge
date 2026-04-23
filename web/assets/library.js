@@ -995,5 +995,8 @@
     serializeMidi: serializeMidi,
     handleMidiMessage: handleMidiMessage,
     initMidiRecording: initMidiRecording,
+    stopMidiCapture: stopMidiCapture,
+    // Test-only hook: set _pendingAutoExpandId without triggering DOM/upload.
+    _setPendingAutoExpandId: function (id) { _pendingAutoExpandId = id; },
   };
 });

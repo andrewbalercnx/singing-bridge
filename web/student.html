@@ -11,21 +11,24 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>singing-bridge — join</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,500;0,600;1,400;1,500&family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/assets/styles.css">
   <link rel="stylesheet" href="/assets/theme.css">
   <!-- sb:debug -->
 </head>
-<body>
+<body class="sb-page">
   <main class="student">
     <h1>Join your lesson</h1>
 
-    <section id="block-notice" hidden>
+    <section id="block-notice" class="sb-notice sb-notice--danger" hidden>
       <h2>This browser can't run the lesson tool</h2>
       <p id="block-reason"></p>
       <p>Open the link in Chrome, Firefox, Safari, or Edge.</p>
     </section>
 
-    <section id="degraded-notice" hidden class="degraded">
+    <section id="degraded-notice" class="degraded sb-notice sb-notice--warning" hidden>
       <p id="degraded-reason"></p>
     </section>
 
@@ -38,11 +41,12 @@
           back into your microphone.
         </details>
       </p>
-      <form id="join-form">
-        <label>Your email
-          <input type="email" name="email" autocomplete="email" required>
-        </label>
-        <button type="submit">Enter lobby</button>
+      <form id="join-form" class="sb-stack">
+        <div class="sb-field">
+          <label class="sb-label" for="join-email">Your email</label>
+          <input class="sb-input" id="join-email" type="email" name="email" autocomplete="email" required>
+        </div>
+        <button class="sb-btn sb-btn--accent sb-btn--block sb-btn--lg" type="submit">Enter lobby</button>
       </form>
     </section>
 
@@ -67,7 +71,7 @@
       <span id="rec-indicator" class="rec-indicator" hidden aria-label="Recording active">REC</span>
 
       <!-- Session UI mounts here -->
-      <div id="session-root"></div>
+      <div id="session-root" class="sb-theme-dark"></div>
 
       <!-- Accompaniment playback (Sprint 14) -->
       <div id="accompaniment-drawer-root"></div>

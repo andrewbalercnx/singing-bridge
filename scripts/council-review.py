@@ -2456,23 +2456,91 @@ def main():
     tracker_file = repo_root / f"FINDINGS_Sprint{sprint}.md"
     tracker_content = tracker_file.read_text() if tracker_file.exists() else None
 
+    # Warn when JS/TS files are in the diff but codegraph looks stale.
+    # S13: 21 codegraph tokens (effectively empty) because library.js / library.html
+    # were not indexed before council ran — reviewers had no structured context.
+    # We check the materials token estimate rather than running a live DB query so
+    # there is no extra subprocess cost.
+    if review_type == "code":
+        all_changed = get_changed_files(sprint=sprint, repo_root=repo_root)
+        has_js_ts = any(
+            f.endswith((".js", ".ts", ".jsx", ".tsx", ".html")) for f in all_changed
+        )
+        if has_js_ts:
+            db_path = repo_root / ".claude" / "codebase.db"
+            cg_token_est = 0
+            if db_path.exists():
+                try:
+                    import sqlite3 as _sqlite3
+                    with _sqlite3.connect(str(db_path)) as _conn:
+                        row = _conn.execute(
+                            "SELECT COUNT(*) FROM symbols WHERE file_path LIKE '%.js' "
+                            "OR file_path LIKE '%.ts' OR file_path LIKE '%.html'"
+                        ).fetchone()
+                        cg_token_est = row[0] if row else 0
+                except Exception:
+                    pass
+            if cg_token_est < 10:
+                print(file=sys.stderr)
+                print("  WARNING: JS/TS/HTML files are in the diff but the codegraph",
+                      file=sys.stderr)
+                print("  has <10 indexed JS/TS symbols. Reviewers will have no",
+                      file=sys.stderr)
+                print("  structured codebase context for these files.", file=sys.stderr)
+                print("  Run: python3 scripts/index-codebase.py --incremental",
+                      file=sys.stderr)
+                print("  then re-run this review for full codegraph coverage.",
+                      file=sys.stderr)
+                print(file=sys.stderr)
+
     # Block R2+ when the tracker shows zero resolutions from the prior round.
     # An all-OPEN tracker defeats deduplication and compact representation, and
     # is a reliable signal that the editor addressed findings in code but never
     # updated the tracker. Three consecutive sprints (S8, S9, S11) archived
     # with 0% resolved while reviewers kept re-flagging the same issues.
     # Use --skip-tracker-check only when no findings were actionable last round.
+    #
+    # Per-round gap fix (S13): also block when every finding raised in round
+    # N-1 is still OPEN, even if earlier rounds had resolutions. S13 had 11
+    # R1 resolutions keeping the cumulative count > 0, but R2–R7 (63 findings)
+    # were never touched, allowing the loop to continue unchecked.
     if review_type == "code" and tracker_content and round_num > 1:
         prior_findings = _read_tracker(tracker_file)
         if prior_findings:
             open_count = sum(1 for f in prior_findings if f.get("status", "OPEN") == "OPEN")
             resolved_count = len(prior_findings) - open_count
-            if resolved_count == 0 and not ns.skip_tracker_check:
+
+            # Per-round check: findings raised in the immediately preceding round
+            prev_round_findings = [
+                f for f in prior_findings if f.get("round") == round_num - 1
+            ]
+            prev_round_all_open = (
+                bool(prev_round_findings)
+                and all(f.get("status", "OPEN") == "OPEN" for f in prev_round_findings)
+            )
+
+            should_block = (
+                (resolved_count == 0 or prev_round_all_open)
+                and not ns.skip_tracker_check
+            )
+            if should_block:
                 print(file=sys.stderr)
-                print("  BLOCKED: tracker has 0 resolved findings from prior rounds.",
-                      file=sys.stderr)
-                print(f"  {open_count} findings are all OPEN in "
-                      f"FINDINGS_Sprint{sprint}.md", file=sys.stderr)
+                if prev_round_all_open and resolved_count > 0:
+                    print(
+                        f"  BLOCKED: all {len(prev_round_findings)} finding(s) from "
+                        f"R{round_num - 1} are still OPEN.",
+                        file=sys.stderr,
+                    )
+                    print(
+                        f"  (Earlier rounds have {resolved_count} resolved — "
+                        f"but nothing from last round was addressed.)",
+                        file=sys.stderr,
+                    )
+                else:
+                    print("  BLOCKED: tracker has 0 resolved findings from prior rounds.",
+                          file=sys.stderr)
+                    print(f"  {open_count} findings are all OPEN in "
+                          f"FINDINGS_Sprint{sprint}.md", file=sys.stderr)
                 print(file=sys.stderr)
                 print("  Before running this round:", file=sys.stderr)
                 print("  1. Open FINDINGS_Sprint" + sprint + ".md", file=sys.stderr)

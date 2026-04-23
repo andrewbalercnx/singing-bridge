@@ -167,6 +167,13 @@ state machine and the `RECURRING` auto-demotion rule.
   specifically want to silence a noisy lens for one round. Never
   omit `security` on code; the override requires `--allow-no-security`
   and is recorded as `security_bypassed: true` in metrics.
+- **UI-only sprints (JS/HTML, no test infrastructure yet):** use
+  `--lenses security,code_quality,domain` for the first code review.
+  test_quality findings on a sprint with no existing test scaffolding
+  are aspirational — they identify a missing test layer, not bugs in
+  existing tests. Collect them as a backlog item for a dedicated test
+  sprint rather than blocking the current sprint. Re-introduce
+  test_quality once test scaffolding exists.
 - `python3 scripts/council-metrics-digest.py` — advisory digest of
   rounds-to-convergence, lens activity, reviewer success rate,
   security-bypass count. Run before deciding whether a lens is

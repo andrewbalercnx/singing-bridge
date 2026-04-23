@@ -7,20 +7,26 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>singing-bridge — recording</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,500;0,600;1,400;1,500&family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/assets/styles.css">
+  <link rel="stylesheet" href="/assets/theme.css">
 </head>
-<body>
+<body class="sb-page">
   <main class="recording-gate">
     <h1>Access your recording</h1>
 
     <section id="gate-section">
       <p>Enter the email address this link was sent to.</p>
-      <form id="gate-form">
-        <label>Email address
-          <input type="email" id="gate-email" name="email" autocomplete="email" required>
-        </label>
-        <button type="submit" id="gate-submit">Access recording</button>
+      <form id="gate-form" class="sb-stack">
+        <div class="sb-field">
+          <label class="sb-label" for="gate-email">Email address</label>
+          <input class="sb-input" type="email" id="gate-email" name="email" autocomplete="email" required>
+        </div>
+        <button class="sb-btn sb-btn--lg" type="submit" id="gate-submit">Access recording</button>
       </form>
       <p id="gate-error" class="error" hidden></p>
     </section>

@@ -43,8 +43,8 @@ SPRINT_NUM="$1"
 shift
 TITLE="$*"
 
-if ! [[ "$SPRINT_NUM" =~ ^[0-9]+$ ]]; then
-    echo "Error: sprint number must be numeric, got: $SPRINT_NUM" >&2
+if ! [[ "$SPRINT_NUM" =~ ^[0-9]+[A-Za-z]?$ ]]; then
+    echo "Error: sprint number must be numeric (optionally with a letter suffix), got: $SPRINT_NUM" >&2
     exit 2
 fi
 

@@ -50,6 +50,11 @@
           <input type="range" id="tempo-input" min="20" max="200" value="100" step="5">
           <span class="tempo-hint">of original speed</span>
         </div>
+        <div class="tempo-row">
+          <label for="transpose-input">Pitch: <span id="transpose-display">0</span> st</label>
+          <input type="range" id="transpose-input" min="-12" max="12" value="0" step="1">
+          <span class="tempo-hint">semitones</span>
+        </div>
         <div class="render-actions">
           <button type="button" id="render-btn" disabled>Render audio</button>
           <button type="button" id="reselect-btn" class="secondary">Change selection</button>
@@ -57,9 +62,11 @@
         <p class="status" id="render-status"></p>
         <audio id="audio-player" controls hidden></audio>
         <p class="downloads" id="downloads"></p>
+        <div id="pdf-panel" hidden></div>
       </li>
     </ol>
   </main>
+  <footer class="version">v{{ version }}</footer>
   <script src="{{ url_for('static', filename='app.js') }}"></script>
 </body>
 </html>

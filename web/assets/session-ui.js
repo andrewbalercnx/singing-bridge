@@ -12,7 +12,7 @@
 //          window.sbChatDrawer (buildChatDrawer, optional)
 // Invariants: peer-supplied strings (remoteName, remoteRoleLabel) rendered via .textContent only;
 //             exactly one RAF loop per mount; teardown is idempotent;
-//             mount is an orchestrator only (≤40 lines of own logic);
+//             mount is an orchestrator only (no audio/DOM logic beyond named builders);
 //             accmpPanel open-state persisted in sessionStorage (sb-accmp-open).
 // Last updated: Sprint 17 (2026-04-23) -- v2 layout: sb-session-v2 grid, buildSelfPip, buildIconBar, buildAccmpPanel
 
@@ -122,16 +122,6 @@
       },
       setLabel: function (text) { labelEl.textContent = text; },
     };
-  }
-
-  function buildSelfPreview(stream) {
-    var wrap = el('div', 'sb-self-preview');
-    var vid = document.createElement('video');
-    vid.autoplay = true; vid.playsInline = true; vid.muted = true;
-    if (stream) { vid.srcObject = stream; vid.play().catch(function () {}); }
-    var lbl = el('div', 'sb-self-label'); lbl.textContent = 'You';
-    wrap.append(vid, lbl);
-    return { node: wrap };
   }
 
   function buildMutedBanner() {

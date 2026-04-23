@@ -36,6 +36,7 @@ import os
 import secrets
 import shutil
 import tempfile
+import threading
 from pathlib import Path
 
 from flask import Flask, abort, jsonify, render_template, request, send_from_directory, url_for
@@ -43,12 +44,17 @@ from flask import Flask, abort, jsonify, render_template, request, send_from_dir
 from .pipeline import (
     AudiverisMissing,
     FluidSynthMissing,
+    compute_bar_timings,
+    extract_measure_coords,
     extract_parts_midi,
     extract_parts_musicxml,
     list_parts,
     midi_to_wav,
     pdf_to_musicxml,
+    rasterize_pdf_for_display,
 )
+
+VERSION = "0.1.0"
 
 HERE = Path(__file__).parent
 FIXTURE = HERE / "fixtures" / "two_part.musicxml"
@@ -78,6 +84,21 @@ def _session_dir(session_id: str) -> Path:
     return path
 
 
+def _find_omr(scratch: Path) -> Path | None:
+    """Return the most-relevant Audiveris .omr file in the session's omr/ dir."""
+    omr_dir = scratch / "omr"
+    if not omr_dir.is_dir():
+        return None
+    # Prefer the resampled variant (it ran successfully on oversized PDFs).
+    for name in ("input_resampled.omr", "input.omr"):
+        p = omr_dir / name
+        if p.is_file():
+            return p
+    # Fallback: largest .omr (most likely the complete one).
+    candidates = sorted(omr_dir.glob("*.omr"), key=lambda p: p.stat().st_size, reverse=True)
+    return candidates[0] if candidates else None
+
+
 def _new_session() -> tuple[str, Path]:
     session_id = secrets.token_urlsafe(12)
     path = SCRATCH_ROOT / session_id
@@ -87,7 +108,7 @@ def _new_session() -> tuple[str, Path]:
 
 @app.get("/")
 def index():
-    return render_template("index.html")
+    return render_template("index.html", version=VERSION)
 
 
 @app.get("/healthz")
@@ -144,6 +165,17 @@ def run_omr(session_id: str):
         shutil.copy(produced, score_path)
 
     parts = [p.to_dict() for p in list_parts(score_path)]
+
+    # Pre-rasterise the original PDF for the display panel in the background
+    # so pages are ready by the time the user reaches render.
+    if pdf_path.is_file():
+        def _bg():
+            try:
+                rasterize_pdf_for_display(pdf_path, scratch / "display_pages")
+            except Exception:
+                pass
+        threading.Thread(target=_bg, daemon=True).start()
+
     return jsonify({"parts": parts})
 
 
@@ -173,9 +205,25 @@ def select(session_id: str):
     except Exception as exc:
         app.logger.warning("MusicXML export failed (notation will be skipped): %s", exc)
 
+    try:
+        bar_timings = compute_bar_timings(score_path)
+    except Exception as exc:
+        app.logger.warning("Bar timing computation failed (tracking will be disabled): %s", exc)
+        bar_timings = []
+
+    bar_coords: list[dict] = []
+    omr_file = _find_omr(scratch)
+    if omr_file:
+        try:
+            bar_coords = extract_measure_coords(omr_file)
+        except Exception as exc:
+            app.logger.warning("OMR coordinate extraction failed: %s", exc)
+
     return jsonify({
         "midi_url": url_for("serve_file", session_id=session_id, name="piano.mid"),
         "score_url": score_url,
+        "bar_timings": bar_timings,
+        "bar_coords": bar_coords,
         "part_indices": part_indices,
     })
 
@@ -196,11 +244,19 @@ def render(session_id: str):
     except (TypeError, ValueError):
         abort(400, "tempo must be an integer between 20 and 300")
 
+    raw_transpose = body.get("transpose", 0)
+    try:
+        transpose = int(raw_transpose)
+        if not (-24 <= transpose <= 24):
+            raise ValueError
+    except (TypeError, ValueError):
+        abort(400, "transpose must be an integer between -24 and 24")
+
     sf2 = Path(os.environ.get("PIANO_SF2", "/usr/share/sounds/sf2/FluidR3_GM.sf2"))
     wav_path = scratch / "piano.wav"
 
     try:
-        midi_to_wav(midi_path, wav_path, sf2, tempo=tempo)
+        midi_to_wav(midi_path, wav_path, sf2, tempo=tempo, transpose=transpose)
     except FluidSynthMissing as exc:
         return jsonify({"error": "fluidsynth_missing", "detail": str(exc)}), 503
     except Exception as exc:
@@ -209,6 +265,56 @@ def render(session_id: str):
     return jsonify({
         "audio_url": url_for("serve_file", session_id=session_id, name="piano.wav"),
     })
+
+
+@app.get("/<session_id>/midi-notes")
+def midi_notes(session_id: str):
+    """Diagnostic: return all note_on events from this session's piano.mid."""
+    import mido
+    scratch = _session_dir(session_id)
+    midi_path = scratch / "piano.mid"
+    if not midi_path.is_file():
+        abort(404, "no piano.mid in this session")
+    mid = mido.MidiFile(str(midi_path))
+    flat = ['C','Db','D','Eb','E','F','Gb','Ab','G','A','Bb','B']
+    tpb = mid.ticks_per_beat
+    notes = []
+    for ti, track in enumerate(mid.tracks):
+        abs_tick = 0
+        for msg in track:
+            abs_tick += msg.time
+            if msg.type == 'note_on' and msg.velocity > 0:
+                bar = abs_tick // (tpb * 2) + 1  # assumes 2/4
+                name = flat[msg.note % 12] + str(msg.note // 12 - 1)
+                notes.append({"track": ti, "tick": abs_tick, "bar": bar,
+                               "pitch": msg.note, "name": name})
+    return jsonify({"tpb": tpb, "tracks": len(mid.tracks), "notes": notes})
+
+
+@app.get("/<session_id>/pages")
+def pages_info(session_id: str):
+    scratch = _session_dir(session_id)
+    pdf_path = scratch / "input.pdf"
+    if not pdf_path.is_file():
+        return jsonify({"count": 0})
+    pages_dir = scratch / "display_pages"
+    if not list(pages_dir.glob("page_*.png")):
+        try:
+            rasterize_pdf_for_display(pdf_path, pages_dir)
+        except Exception as exc:
+            return jsonify({"error": str(exc), "count": 0}), 500
+    count = len(list(pages_dir.glob("page_*.png")))
+    return jsonify({"count": count})
+
+
+@app.get("/<session_id>/pages/<int:n>")
+def serve_page(session_id: str, n: int):
+    scratch = _session_dir(session_id)
+    pages_dir = scratch / "display_pages"
+    name = f"page_{n:04d}.png"
+    if not (pages_dir / name).is_file():
+        abort(404)
+    return send_from_directory(pages_dir, name)
 
 
 @app.get("/<session_id>/files/<name>")

@@ -44,6 +44,7 @@
       vid:      '<rect x="3" y="6" width="13" height="12" rx="2"/><path d="M16 10l5-3v10l-5-3z"/>',
       'vid-off':'<rect x="3" y="6" width="13" height="12" rx="2" opacity=".4"/><path d="M16 10l5-3v10l-5-3z" opacity=".4"/><line x1="4" y1="4" x2="20" y2="20"/>',
       music:    '<path d="M9 18V5l10-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="16" cy="16" r="3"/>',
+      score:    '<rect x="4" y="2" width="16" height="20" rx="2"/><line x1="8" y1="7" x2="16" y2="7"/><line x1="8" y1="11" x2="16" y2="11"/><line x1="8" y1="15" x2="13" y2="15"/>',
       chat:     '<path d="M4 5h16v11H8l-4 4z"/>',
       end:      '<path d="M3 13a13 13 0 0118 0l-2 3-4-1-1-3a10 10 0 00-4 0l-1 3-4 1z"/>',
     };
@@ -130,15 +131,7 @@
     scoreBtn.type = 'button';
     scoreBtn.setAttribute('aria-label', 'Toggle score viewer');
     scoreBtn.setAttribute('aria-pressed', 'false');
-
-    // Use a simple document-style icon (lines)
-    var scoreIcon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    scoreIcon.setAttribute('width', '20'); scoreIcon.setAttribute('height', '20');
-    scoreIcon.setAttribute('viewBox', '0 0 24 24'); scoreIcon.setAttribute('fill', 'none');
-    scoreIcon.setAttribute('stroke', 'currentColor'); scoreIcon.setAttribute('stroke-width', '1.6');
-    scoreIcon.setAttribute('aria-hidden', 'true');
-    scoreIcon.innerHTML = '<rect x="4" y="2" width="16" height="20" rx="2"/><line x1="8" y1="7" x2="16" y2="7"/><line x1="8" y1="11" x2="16" y2="11"/><line x1="8" y1="15" x2="13" y2="15"/>';
-    scoreBtn.appendChild(scoreIcon);
+    scoreBtn.appendChild(svgIcon('score'));
 
     var btnRow = el('div', 'sb-accmp-btn-row');
     btnRow.append(pauseBtn, scoreBtn);

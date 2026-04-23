@@ -100,3 +100,40 @@ input[type=file] { color: var(--ink-dim); margin-right: .5rem; }
 #audio-player { width: 100%; margin-top: .8rem; }
 .downloads { font-size: .85rem; }
 .downloads a { color: var(--accent); }
+
+#pdf-panel {
+  position: relative;
+  margin-top: 1.2rem;
+  max-height: 70vh;
+  overflow-y: auto;
+  background: #fff;
+  border-radius: 8px;
+  padding: .5rem;
+  scroll-behavior: smooth;
+}
+#bar-highlight {
+  position: absolute;
+  background: rgba(255, 220, 50, 0.30);
+  border: 2px solid rgba(255, 170, 0, 0.75);
+  border-radius: 3px;
+  pointer-events: none;
+  display: none;
+  transition: top 0.08s ease, left 0.08s ease, width 0.08s ease, height 0.08s ease;
+}
+#pdf-panel img {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin-bottom: .4rem;
+  border-radius: 4px;
+}
+#pdf-panel img:last-child { margin-bottom: 0; }
+#pdf-panel .pdf-loading { color: var(--ink-dim); font-size: .9rem; padding: .5rem; }
+
+.version {
+  text-align: center;
+  color: var(--ink-dim);
+  font-size: .75rem;
+  padding: .5rem 0 1.5rem;
+  opacity: .5;
+}

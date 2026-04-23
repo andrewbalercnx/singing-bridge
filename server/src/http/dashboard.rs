@@ -5,8 +5,9 @@
 // Exports: get_dashboard
 // Depends: axum, tokio::fs, teach (shared helpers)
 // Invariants: All responses carry Cache-Control: private, no-store and Vary: Cookie.
-//             Non-owner callers (unauthenticated or wrong account) are redirected to
-//             /teach/<slug> without revealing whether the slug exists to non-owners.
+//             Unknown slug → 404 (slug existence is not hidden, consistent with /teach/:slug).
+//             Known slug, non-owner → 302 /teach/<slug>.
+//             Known slug, owner → 200 dashboard.html.
 // Last updated: Sprint 17 (2026-04-23) -- initial
 
 use std::sync::Arc;

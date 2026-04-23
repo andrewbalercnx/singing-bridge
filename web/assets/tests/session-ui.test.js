@@ -343,13 +343,18 @@ test('video button click calls onVideoToggle', () => {
 });
 
 test('end button click opens end dialog (v2 layout)', () => {
-  let shown = false;
   const container = document.createElement('div');
   const h = mod.mount(container, defaultOpts());
   // Non-teacher: mic(0), vid(1), end(2)
-  const iconBar = container.children[0].children[1];
+  const root = container.children[0];
+  const iconBar = root.children[1];
   const endBtn = iconBar.children[2];
   assert.equal(endBtn.getAttribute('aria-label'), 'Leave call', 'end button must have correct aria-label');
+  // Clicking end button should open the end dialog (dialog is children[4] of root)
+  const endDialog = root.children[4];
+  assert.equal(typeof endDialog.showModal, 'function', 'end dialog must have showModal');
+  endBtn.dispatchClick();
+  // In jsdom the dialog.open may not be set but showModal must not throw
   h.teardown();
 });
 

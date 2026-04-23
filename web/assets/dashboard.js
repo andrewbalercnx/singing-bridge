@@ -76,7 +76,7 @@
     recordingsList.replaceChildren(p);
   }
 
-  fetch('/api/recordings')
+  fetch('/api/recordings', { credentials: 'include' })
     .then(function (r) {
       if (!r.ok) throw new Error('recordings ' + r.status);
       return r.json();
@@ -136,7 +136,7 @@
   }
 
   if (slug) {
-    fetch('/teach/' + slug + '/library/assets')
+    fetch('/teach/' + slug + '/library/assets', { credentials: 'include' })
       .then(function (r) {
         if (!r.ok) throw new Error('library ' + r.status);
         return r.json();

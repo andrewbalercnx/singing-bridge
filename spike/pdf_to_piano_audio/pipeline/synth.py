@@ -71,11 +71,30 @@ def _scale_midi_tempo(midi_path: Path, scale: float) -> Path:
     return Path(tmp.name)
 
 
+def _transpose_midi(midi_path: Path, semitones: int) -> Path:
+    """Return a temp file with all note pitches shifted by `semitones`."""
+    mid = mido.MidiFile(str(midi_path))
+    result = mido.MidiFile(type=mid.type, ticks_per_beat=mid.ticks_per_beat)
+    for track in mid.tracks:
+        new_track = mido.MidiTrack()
+        for msg in track:
+            if msg.type in ("note_on", "note_off"):
+                new_pitch = max(0, min(127, msg.note + semitones))
+                new_track.append(msg.copy(note=new_pitch))
+            else:
+                new_track.append(msg)
+        result.tracks.append(new_track)
+    tmp = tempfile.NamedTemporaryFile(suffix=".mid", delete=False)
+    result.save(tmp.name)
+    return Path(tmp.name)
+
+
 def midi_to_wav(
     midi_path: Path,
     out_path: Path,
     soundfont_path: Path,
     tempo: int = 100,
+    transpose: int = 0,
 ) -> Path:
     midi_path = Path(midi_path)
     out_path = Path(out_path)
@@ -87,13 +106,18 @@ def midi_to_wav(
             "(e.g. FluidR3_GM.sf2) and point PIANO_SF2 at it."
         )
 
-    scaled_path = None
+    tmp_paths: list[Path] = []
     render_midi = midi_path
-    if tempo != 100:
-        scaled_path = _scale_midi_tempo(midi_path, tempo / 100)
-        render_midi = scaled_path
-
     try:
+        if tempo != 100:
+            p = _scale_midi_tempo(render_midi, tempo / 100)
+            tmp_paths.append(p)
+            render_midi = p
+        if transpose != 0:
+            p = _transpose_midi(render_midi, transpose)
+            tmp_paths.append(p)
+            render_midi = p
+
         cmd = _find_fluidsynth()
         out_path.parent.mkdir(parents=True, exist_ok=True)
         subprocess.run(
@@ -107,7 +131,8 @@ def midi_to_wav(
             text=True,
         )
     finally:
-        if scaled_path and scaled_path.exists():
-            scaled_path.unlink()
+        for p in tmp_paths:
+            if p.exists():
+                p.unlink()
 
     return out_path

@@ -21,6 +21,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         fluidsynth fluid-soundfont-gm \
         tesseract-ocr tesseract-ocr-eng \
         libfreetype6 \
+        ghostscript \
     && rm -rf /var/lib/apt/lists/*
 
 # ---- Audiveris -----------------------------------------------------------

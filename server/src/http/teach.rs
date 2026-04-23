@@ -3,7 +3,8 @@
 //          student.html to unauthenticated visitors. GET /teach/<slug>/session —
 //          serves teacher.html (session + lobby) to authenticated owner.
 // Role: Entry point for all /teach/<slug> traffic; slug auth gating.
-// Exports: get_teach, get_session
+// Exports: get_teach, get_session, ensure_slug_exists, is_owner, serve_html,
+//          private_redirect, set_private_headers, inject_debug_marker
 // Depends: axum, tokio::fs
 // Invariants: failing to read the session cookie does NOT differ observably
 //             from a missing cookie — both fall through to student view / redirect.

@@ -14,10 +14,7 @@ services:
     ports:
       - "5173:8080"
     environment:
-      # Override if you want a different SoundFont mounted in (see volumes).
-      PIANO_SF2: /usr/share/sounds/sf2/FluidR3_GM.sf2
-    # Uncomment to try a nicer piano SF2 from your host:
-    # volumes:
-    #   - /path/to/SalamanderGrandPiano.sf2:/opt/sf2/piano.sf2:ro
-    # and set PIANO_SF2=/opt/sf2/piano.sf2 above.
+      PIANO_SF2: /opt/sf2/piano.sf2
+    volumes:
+      - /Users/andrewbale/Downloads/SalamanderGrandPiano-V3+20200602.sf2:/opt/sf2/piano.sf2:ro
     restart: unless-stopped

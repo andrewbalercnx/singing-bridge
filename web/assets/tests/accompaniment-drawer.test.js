@@ -1,7 +1,8 @@
 // File: web/assets/tests/accompaniment-drawer.test.js
 // Purpose: Unit tests for accompaniment-drawer.js: audio lifecycle, rAF bar-advancement,
-//          clock skew clamping, teacher/student roles, validation, and edge cases.
-// Last updated: Sprint 14 (2026-04-23) -- initial implementation
+//          clock skew clamping, teacher/student roles, validation, edge cases, and
+//          panelEl path (Sprint 17 v2 layout).
+// Last updated: Sprint 17 (2026-04-23) -- panelEl coverage added
 
 'use strict';
 
@@ -507,4 +508,141 @@ test('tempo_pct boundary values: 1 and 400 accepted; 0 and 401 rejected', functi
   var h4 = setup('teacher').handle;
   h4.updateState(Object.assign({}, base, { tempo_pct: 401 }));
   assert.strictEqual(lastAudio, null, 'tempo_pct=401 rejected');
+});
+
+// ---------------------------------------------------------------------------
+// panelEl path (Sprint 17 — inline accmpPanel integration)
+// ---------------------------------------------------------------------------
+
+function makePanelEl() {
+  var positionMs = 0;
+  var durationMs = 0;
+  var trackName = 'No track selected';
+  var pausedState = true;
+  var pauseClickListeners = [];
+  var pauseBtn = {
+    addEventListener: function (ev, fn) { if (ev === 'click') pauseClickListeners.push(fn); },
+    firePauseClick: function () { pauseClickListeners.forEach(function (f) { f(); }); },
+  };
+  return {
+    pauseBtn: pauseBtn,
+    scoreToggleBtn: { addEventListener: function () {} },
+    setTrackName: function (name) { trackName = name; },
+    setPosition: function (ms) { positionMs = ms; },
+    setDuration: function (ms) { durationMs = ms; },
+    setPaused: function (v) { pausedState = v; },
+    getSlider: function () { return { addEventListener: function () {}, value: '0', max: '0' }; },
+    _get: function () { return { positionMs: positionMs, durationMs: durationMs, trackName: trackName, pausedState: pausedState }; },
+  };
+}
+
+function setupPanelEl() {
+  lastAudio = null;
+  rafCallbacks = [];
+  fakeNow = 1_000_000;
+  var ws = makeSendWs();
+  var panelEl = makePanelEl();
+  var handle = drawer.mount(null, { role: 'teacher', panelEl: panelEl, sendWs: ws.fn });
+  return { handle: handle, ws: ws, panelEl: panelEl };
+}
+
+test('panelEl: updateState playing sets panelEl track name and unpauses', function () {
+  var { handle, panelEl } = setupPanelEl();
+  handle.updateState({
+    asset_id: 1, variant_id: 1, is_playing: true,
+    position_ms: 5000, tempo_pct: 100,
+    wav_url: 'http://example.com/a.wav',
+    server_time_ms: fakeNow,
+  });
+  var state = panelEl._get();
+  assert.equal(state.pausedState, false, 'panelEl must show playing (paused=false)');
+  assert.equal(state.positionMs, 5000, 'panelEl position must match server position');
+});
+
+test('panelEl: updateState paused sets pausedState=true', function () {
+  var { handle, panelEl } = setupPanelEl();
+  handle.updateState({
+    asset_id: 1, variant_id: 1, is_playing: false,
+    position_ms: 2000, tempo_pct: 100,
+    wav_url: 'http://example.com/a.wav',
+    server_time_ms: fakeNow,
+  });
+  assert.equal(panelEl._get().pausedState, true, 'panelEl must show paused');
+});
+
+test('panelEl: cleared state resets track name', function () {
+  var { handle, panelEl } = setupPanelEl();
+  handle.updateState({
+    asset_id: 1, variant_id: 1, is_playing: true,
+    position_ms: 0, tempo_pct: 100, wav_url: 'http://example.com/a.wav', server_time_ms: fakeNow,
+  });
+  handle.updateState({ asset_id: null, is_playing: false, position_ms: 0, server_time_ms: fakeNow });
+  assert.equal(panelEl._get().trackName, null, 'track name cleared to null on stop');
+});
+
+test('panelEl: pauseBtn click while playing sends accompaniment_pause', function () {
+  var { handle, ws, panelEl } = setupPanelEl();
+  handle.updateState({
+    asset_id: 1, variant_id: 2, is_playing: true,
+    position_ms: 0, tempo_pct: 100,
+    wav_url: 'http://example.com/a.wav',
+    server_time_ms: fakeNow,
+  });
+  panelEl.pauseBtn.firePauseClick();
+  assert.ok(ws.sent.some(function (m) { return m.type === 'accompaniment_pause'; }), 'pause WS message sent');
+});
+
+test('panelEl: pauseBtn click while paused sends accompaniment_play', function () {
+  var { handle, ws, panelEl } = setupPanelEl();
+  handle.updateState({
+    asset_id: 3, variant_id: 4, is_playing: false,
+    position_ms: 1000, tempo_pct: 100,
+    wav_url: 'http://example.com/a.wav',
+    server_time_ms: fakeNow,
+  });
+  panelEl.pauseBtn.firePauseClick();
+  var playMsg = ws.sent.find(function (m) { return m.type === 'accompaniment_play'; });
+  assert.ok(playMsg, 'play WS message sent on resume');
+  assert.equal(playMsg.asset_id, 3);
+  assert.equal(playMsg.variant_id, 4);
+});
+
+test('panelEl: rAF tick updates panelEl position', function () {
+  var { handle, panelEl } = setupPanelEl();
+  handle.updateState({
+    asset_id: 1, variant_id: 1, is_playing: true,
+    position_ms: 10000, tempo_pct: 100,
+    wav_url: 'http://example.com/a.wav',
+    server_time_ms: fakeNow,
+  });
+  // Advance time by 500ms and fire one rAF tick
+  fakeNow += 500;
+  drainRaf();
+  var pos = panelEl._get().positionMs;
+  assert.ok(pos >= 10000, 'panelEl position must advance with time');
+});
+
+test('panelEl: no UI root built — container null does not throw', function () {
+  assert.doesNotThrow(function () {
+    var handle = drawer.mount(null, {
+      role: 'teacher',
+      panelEl: makePanelEl(),
+      sendWs: function () {},
+    });
+    handle.teardown();
+  });
+});
+
+test('panelEl: loadedmetadata fires setDuration', function () {
+  var { handle, panelEl } = setupPanelEl();
+  handle.updateState({
+    asset_id: 1, variant_id: 1, is_playing: true,
+    position_ms: 0, tempo_pct: 100,
+    wav_url: 'http://example.com/a.wav',
+    server_time_ms: fakeNow,
+  });
+  // Simulate audio loadedmetadata
+  lastAudio.duration = 120;
+  lastAudio._fire('loadedmetadata');
+  assert.equal(panelEl._get().durationMs, 120000, 'setDuration called with ms from audio.duration');
 });

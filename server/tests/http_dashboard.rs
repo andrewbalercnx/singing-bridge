@@ -105,6 +105,24 @@ async fn teach_slug_unauthenticated_serves_student_html() {
 }
 
 #[tokio::test]
+async fn session_route_redirects_wrong_owner() {
+    let app = spawn_app().await;
+    app.signup_teacher("owner@example.com", "myroom").await;
+    let other_cookie = app.signup_teacher("other@example.com", "otherroom").await;
+    let (status, headers, _body) = app.get_html("/teach/myroom/session", Some(&other_cookie)).await;
+    assert_eq!(status, reqwest::StatusCode::FOUND);
+    assert_eq!(
+        headers.get("location").and_then(|v| v.to_str().ok()),
+        Some("/teach/myroom")
+    );
+    assert_eq!(
+        headers.get("cache-control").and_then(|v| v.to_str().ok()),
+        Some("private, no-store")
+    );
+    app.shutdown().await;
+}
+
+#[tokio::test]
 async fn session_route_serves_teacher_html_to_owner() {
     let app = spawn_app().await;
     let cookie = app.signup_teacher("teacher@example.com", "myroom").await;

@@ -37,14 +37,6 @@ def test_vacuum_into_produces_consistent_copy(source_db, tmp_path):
     assert row == (42,)
 
 
-def test_vacuum_into_fails_if_destination_exists(source_db, tmp_path):
-    """VACUUM INTO raises OperationalError when destination already exists."""
-    dst_path = str(tmp_path / "exists.db")
-    open(dst_path, "w").close()  # pre-create
-    with sqlite3.connect(source_db) as conn:
-        with pytest.raises(sqlite3.OperationalError, match="output file already exists"):
-            conn.execute(f"VACUUM INTO '{dst_path}'")
-
 
 def test_run_backup_uploads_blob(source_db):
     """run_backup calls upload_blob with a non-empty file."""

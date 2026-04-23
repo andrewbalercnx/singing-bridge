@@ -1408,12 +1408,16 @@ def run_council_member(
                 review_mode=review_mode,
             )
             elapsed = time.monotonic() - start
-            return role, review, elapsed
+            return role, review, elapsed, {}
         except Exception as err:
             primary_err = err
             primary_type = type(err).__name__
             if attempt == 0:
-                print(f"  [debug] {member['label']} attempt 1 failed ({primary_type}), retrying in {retry_delay}s...", file=sys.stderr)
+                print(
+                    f"  [debug] {member['label']} attempt 1 failed "
+                    f"({primary_type}): {err}, retrying in {retry_delay}s...",
+                    file=sys.stderr,
+                )
                 time.sleep(retry_delay)
             else:
                 print(f"  [debug] {member['label']} attempt 2 failed ({primary_type}): {err}", file=sys.stderr)
@@ -1422,6 +1426,7 @@ def run_council_member(
     fb_key_env = fallback.get("api_key_env") if fallback else None
     fb_available = fallback and (fallback.get("platform") == "codex" or fb_key_env in api_keys)
     primary_type = type(primary_err).__name__
+    primary_msg = str(primary_err)
 
     if fb_available:
         fb_platform = fallback["platform"]
@@ -1440,13 +1445,15 @@ def run_council_member(
                 review_mode=review_mode,
             )
             elapsed = time.monotonic() - start
-            return role, review, elapsed
+            # Succeeded via fallback — surface the primary error in the return
+            # so member_stats can record that a retry/fallback was needed.
+            return role, review, elapsed, {"retried": True, "error": f"{primary_type}: {primary_msg}"}
         except Exception as fb_err:
             fb_type = type(fb_err).__name__
             print(f"  [debug] {member['label']} fallback error: {fb_type}: {fb_err}", file=sys.stderr)
-            opaque_msg = f"{primary_type} (primary) / {fb_type} (fallback)"
+            opaque_msg = f"{primary_type}: {primary_msg} (primary) / {fb_type}: {fb_err} (fallback)"
     else:
-        opaque_msg = f"{primary_type}"
+        opaque_msg = f"{primary_type}: {primary_msg}"
 
     elapsed = time.monotonic() - start
     placeholder = (
@@ -1455,7 +1462,7 @@ def run_council_member(
         f"**Error:** ({opaque_msg})\n\n"
         f"This expert was unable to complete their review."
     )
-    return role, placeholder, elapsed
+    return role, placeholder, elapsed, {"retried": True, "error": opaque_msg, "unavailable": True}
 
 
 def run_consolidator(
@@ -2171,36 +2178,42 @@ def _run_parallel_council(
             member = futures[future]
             role = member["role"]
             try:
-                role, review_text, elapsed = future.result(timeout=parallel_timeout + 30)
+                role, review_text, elapsed, err_meta = future.result(timeout=parallel_timeout + 30)
                 council_reviews[role] = review_text
                 (council_dir / f"{role}.md").write_text(review_text)
                 unavailable = "UNAVAILABLE" in review_text
-                member_stats[role] = {
+                stat: dict = {
                     "elapsed_s": round(elapsed, 2),
                     "output_tokens_est": len(review_text) // 4,
                     "unavailable": unavailable,
                 }
+                if err_meta.get("retried"):
+                    stat["retried"] = True
+                    stat["retry_error"] = err_meta.get("error", "")
+                member_stats[role] = stat
                 status = "UNAVAILABLE" if unavailable else "done"
-                if verbose or unavailable:
-                    print(f"    {member['label']:25s} {status:12s} ({elapsed:.1f}s)")
+                retry_note = " [retried]" if err_meta.get("retried") else ""
+                if verbose or unavailable or err_meta.get("retried"):
+                    print(f"    {member['label']:25s} {status:12s} ({elapsed:.1f}s){retry_note}")
             except Exception as e:  # noqa: BLE001
+                err_str = f"{type(e).__name__}: {e}"
                 print(
-                    f"  [debug] {member['label']} future error: "
-                    f"{type(e).__name__}: {e}",
+                    f"  [debug] {member['label']} future error: {err_str}",
                     file=sys.stderr,
                 )
                 council_reviews[role] = (
                     f"### {role} Review: Sprint {sprint} (R{round_num})\n\n"
                     f"**Status:** UNAVAILABLE\n"
-                    f"**Error:** ({type(e).__name__})\n\n"
+                    f"**Error:** ({type(e).__name__}: {e})\n\n"
                     f"This expert was unable to complete their review."
                 )
                 member_stats[role] = {
                     "elapsed_s": None,
                     "output_tokens_est": 0,
                     "unavailable": True,
+                    "retry_error": err_str,
                 }
-                print(f"    {member['label']:25s} FAILED       ({type(e).__name__})")
+                print(f"    {member['label']:25s} FAILED       ({err_str})")
 
     successful = sum(1 for r in council_reviews.values() if "UNAVAILABLE" not in r)
     print()

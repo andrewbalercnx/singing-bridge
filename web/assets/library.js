@@ -28,9 +28,7 @@
   // ---------------------------------------------------------------------------
 
   function show503Banner(bannerEl) {
-    if (bannerEl && bannerEl.hidden !== false) {
-      bannerEl.hidden = false;
-    }
+    if (bannerEl) bannerEl.hidden = false;
   }
 
   function hide503Banner(bannerEl) {
@@ -444,38 +442,22 @@
   // Delete
   // ---------------------------------------------------------------------------
 
-  function confirmDelete(assetId, title, li, base, confirmFn, alertFn) {
-    if (!confirmFn('Delete "' + title + '"? This cannot be undone.')) return;
-    fetch(base + '/' + assetId, { method: 'DELETE' })
+  function doDelete(url, li, confirmFn, prompt, alertFn) {
+    if (!confirmFn(prompt)) return;
+    fetch(url, { method: 'DELETE' })
       .then(function (r) {
-        if (r.status === 204) {
-          li.remove();
-          return;
-        }
-        return r.json().then(function (d) {
-          alertFn((d && d.message) || 'Delete failed');
-        });
+        if (r.status === 204) { li.remove(); return; }
+        return r.json().then(function (d) { alertFn((d && d.message) || 'Delete failed'); });
       })
-      .catch(function (err) {
-        alertFn('Delete failed: ' + err.message);
-      });
+      .catch(function (err) { alertFn('Delete failed: ' + err.message); });
+  }
+
+  function confirmDelete(assetId, title, li, base, confirmFn, alertFn) {
+    doDelete(base + '/' + assetId, li, confirmFn, 'Delete "' + title + '"? This cannot be undone.', alertFn);
   }
 
   function confirmDeleteVariant(assetId, variantId, variantLi, base, confirmFn, alertFn) {
-    if (!confirmFn('Delete this variant?')) return;
-    fetch(base + '/' + assetId + '/variants/' + variantId, { method: 'DELETE' })
-      .then(function (r) {
-        if (r.status === 204) {
-          variantLi.remove();
-          return;
-        }
-        return r.json().then(function (d) {
-          alertFn((d && d.message) || 'Delete failed');
-        });
-      })
-      .catch(function (err) {
-        alertFn('Delete failed: ' + err.message);
-      });
+    doDelete(base + '/' + assetId + '/variants/' + variantId, variantLi, confirmFn, 'Delete this variant?', alertFn);
   }
 
   // ---------------------------------------------------------------------------

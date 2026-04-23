@@ -74,6 +74,98 @@ async fn library_page_returns_403_for_wrong_slug() {
     app.shutdown().await;
 }
 
+#[tokio::test]
+async fn library_page_returns_404_for_invalid_slug() {
+    let app = common::spawn_app().await;
+    let cookie = app.signup_teacher("t@test.com", "room-a").await;
+    let r = app.client
+        .get(app.url("/teach/INVALID!/library"))
+        .header("cookie", format!("sb_session={cookie}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 404);
+    app.shutdown().await;
+}
+
+// ---------------------------------------------------------------------------
+// Slug ownership enforcement on all asset routes
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn wrong_slug_rejects_all_asset_routes() {
+    let app = common::spawn_app().await;
+    // Teacher A owns room-a. All room-b asset route requests should be 403.
+    let cookie = app.signup_teacher("a@test.com", "room-a").await;
+
+    let r = app.client
+        .get(app.url("/teach/room-b/library/assets"))
+        .header("cookie", format!("sb_session={cookie}"))
+        .send().await.unwrap();
+    assert_eq!(r.status(), 403, "GET /assets");
+
+    let r = app.client
+        .post(app.url("/teach/room-b/library/assets"))
+        .header("cookie", format!("sb_session={cookie}"))
+        .header("x-title", "T")
+        .body(PDF_HEADER.to_vec())
+        .send().await.unwrap();
+    assert_eq!(r.status(), 403, "POST /assets");
+
+    let cases: &[(&str, &str, &str)] = &[
+        ("GET",    "/teach/room-b/library/assets/1",             ""),
+        ("DELETE", "/teach/room-b/library/assets/1",             ""),
+        ("POST",   "/teach/room-b/library/assets/1/parts",       ""),
+        ("POST",   "/teach/room-b/library/assets/1/midi",        r#"{"part_indices":[0]}"#),
+        ("POST",   "/teach/room-b/library/assets/1/rasterise",   ""),
+        ("POST",   "/teach/room-b/library/assets/1/variants",    r#"{"label":"L","tempo_pct":100,"transpose_semitones":0}"#),
+        ("DELETE", "/teach/room-b/library/assets/1/variants/1",  ""),
+    ];
+    for (method, path, body) in cases {
+        let builder = match *method {
+            "POST" => app.client.post(app.url(path))
+                .header("content-type", "application/json").body(body.to_string()),
+            "DELETE" => app.client.delete(app.url(path)).body(""),
+            _ => app.client.get(app.url(path)).body(""),
+        };
+        let r = builder
+            .header("cookie", format!("sb_session={cookie}"))
+            .send().await.unwrap();
+        assert_eq!(r.status(), 403, "{method} {path}");
+    }
+
+    app.shutdown().await;
+}
+
+// ---------------------------------------------------------------------------
+// WAV asset detail capability flags
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn get_wav_asset_detail_shows_correct_flags() {
+    let app = common::spawn_app().await;
+    let cookie = app.signup_teacher("t@test.com", "room-a").await;
+    let r = app.client
+        .post(app.url("/teach/room-a/library/assets"))
+        .header("cookie", format!("sb_session={cookie}"))
+        .header("x-title", "WAV Asset")
+        .header("content-type", "audio/wav")
+        .body(WAV_HEADER.to_vec())
+        .send().await.unwrap();
+    assert_eq!(r.status(), 201);
+    let id = r.json::<serde_json::Value>().await.unwrap()["id"].as_i64().unwrap();
+
+    let detail = app.client
+        .get(app.url(&format!("/teach/room-a/library/assets/{id}")))
+        .header("cookie", format!("sb_session={cookie}"))
+        .send().await.unwrap()
+        .json::<serde_json::Value>().await.unwrap();
+    assert_eq!(detail["has_pdf"], false);
+    assert_eq!(detail["has_midi"], false);
+    assert_eq!(detail["variants"].as_array().unwrap().len(), 1);
+    app.shutdown().await;
+}
+
 // ---------------------------------------------------------------------------
 // Asset list / detail — auth
 // ---------------------------------------------------------------------------

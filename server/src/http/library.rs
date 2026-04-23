@@ -126,15 +126,24 @@ pub(crate) async fn get_library_page(
 
 pub(crate) async fn list_assets(
     State(state): State<Arc<AppState>>,
+    Path((slug,)): Path<(String,)>,
     headers: HeaderMap,
 ) -> Result<Response> {
     let teacher_id = require_auth(&state, &headers).await?;
+    require_slug_owner(&state, teacher_id, &slug).await?;
 
-    let rows: Vec<(i64, String, Option<String>, Option<String>, Option<String>, Option<String>, i64)> =
+    let rows: Vec<(i64, String, Option<String>, Option<String>, Option<String>, Option<String>, i64, i64)> =
         sqlx::query_as(
             "SELECT a.id, a.title, a.pdf_blob_key, a.midi_blob_key,
-                    a.page_blob_keys_json, a.bar_timings_json, a.created_at
+                    a.page_blob_keys_json, a.bar_timings_json, a.created_at,
+                    COALESCE(vc.cnt, 0)
              FROM accompaniments a
+             LEFT JOIN (
+                 SELECT accompaniment_id, COUNT(*) AS cnt
+                 FROM accompaniment_variants
+                 WHERE deleted_at IS NULL
+                 GROUP BY accompaniment_id
+             ) vc ON vc.accompaniment_id = a.id
              WHERE a.teacher_id = ? AND a.deleted_at IS NULL
              ORDER BY a.created_at DESC",
         )
@@ -142,27 +151,21 @@ pub(crate) async fn list_assets(
         .fetch_all(&state.db)
         .await?;
 
-    let mut summaries = Vec::with_capacity(rows.len());
-    for (id, title, pdf_key, midi_key, pages_json, timings_json, created_at) in rows {
-        let variant_count: (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM accompaniment_variants
-             WHERE accompaniment_id = ? AND deleted_at IS NULL",
-        )
-        .bind(id)
-        .fetch_one(&state.db)
-        .await?;
-
-        summaries.push(AssetSummary {
-            id,
-            title,
-            has_pdf: pdf_key.is_some(),
-            has_midi: midi_key.is_some(),
-            has_pages: pages_json.as_deref().map(|s| s != "[]").unwrap_or(false),
-            has_bar_data: timings_json.is_some(),
-            variant_count: variant_count.0,
-            created_at,
-        });
-    }
+    let summaries: Vec<AssetSummary> = rows
+        .into_iter()
+        .map(|(id, title, pdf_key, midi_key, pages_json, timings_json, created_at, variant_count)| {
+            AssetSummary {
+                id,
+                title,
+                has_pdf: pdf_key.is_some(),
+                has_midi: midi_key.is_some(),
+                has_pages: pages_json.as_deref().map(|s| s != "[]").unwrap_or(false),
+                has_bar_data: timings_json.is_some(),
+                variant_count,
+                created_at,
+            }
+        })
+        .collect();
 
     Ok(Json(summaries).into_response())
 }
@@ -254,25 +257,15 @@ async fn db_insert_accompaniment(
     now: i64,
 ) -> Result<(i64, Option<i64>)> {
     match kind {
-        FileKind::Pdf => {
-            let r: std::result::Result<(i64,), sqlx::Error> = sqlx::query_as(
-                "INSERT INTO accompaniments (teacher_id, title, pdf_blob_key, created_at)
-                 VALUES (?, ?, ?, ?) RETURNING id",
-            )
-            .bind(teacher_id).bind(title).bind(blob_key).bind(now)
-            .fetch_one(db).await;
-            match r {
-                Ok((id,)) => Ok((id, None)),
-                Err(e) => { let _ = blob.delete(blob_key).await; Err(AppError::Sqlx(e)) }
-            }
-        }
-        FileKind::Midi => {
-            let r: std::result::Result<(i64,), sqlx::Error> = sqlx::query_as(
-                "INSERT INTO accompaniments (teacher_id, title, midi_blob_key, created_at)
-                 VALUES (?, ?, ?, ?) RETURNING id",
-            )
-            .bind(teacher_id).bind(title).bind(blob_key).bind(now)
-            .fetch_one(db).await;
+        FileKind::Pdf | FileKind::Midi => {
+            let sql = match kind {
+                FileKind::Pdf => "INSERT INTO accompaniments (teacher_id, title, pdf_blob_key, created_at) VALUES (?, ?, ?, ?) RETURNING id",
+                FileKind::Midi => "INSERT INTO accompaniments (teacher_id, title, midi_blob_key, created_at) VALUES (?, ?, ?, ?) RETURNING id",
+                FileKind::Wav => unreachable!(),
+            };
+            let r: std::result::Result<(i64,), sqlx::Error> = sqlx::query_as(sql)
+                .bind(teacher_id).bind(title).bind(blob_key).bind(now)
+                .fetch_one(db).await;
             match r {
                 Ok((id,)) => Ok((id, None)),
                 Err(e) => { let _ = blob.delete(blob_key).await; Err(AppError::Sqlx(e)) }
@@ -325,6 +318,7 @@ async fn db_insert_accompaniment(
 /// Body: raw file bytes. Content-Length > 50 MB → 413 before any body read.
 pub(crate) async fn post_asset(
     State(state): State<Arc<AppState>>,
+    Path((slug,)): Path<(String,)>,
     headers: HeaderMap,
     body: Body,
 ) -> Result<Response> {
@@ -333,6 +327,7 @@ pub(crate) async fn post_asset(
     use tokio_util::io::StreamReader;
 
     let teacher_id = require_auth(&state, &headers).await?;
+    require_slug_owner(&state, teacher_id, &slug).await?;
 
     // Step 1: Parse and validate title (header only — no body read yet).
     let title = headers
@@ -409,10 +404,11 @@ pub(crate) async fn post_asset(
 
 pub(crate) async fn get_asset(
     State(state): State<Arc<AppState>>,
-    Path((_slug, asset_id)): Path<(String, i64)>,
+    Path((slug, asset_id)): Path<(String, i64)>,
     headers: HeaderMap,
 ) -> Result<Response> {
     let teacher_id = require_auth(&state, &headers).await?;
+    require_slug_owner(&state, teacher_id, &slug).await?;
     let ttl = Duration::from_secs(state.config.media_token_ttl_secs);
 
     let row: Option<(i64, String, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, i64)> =
@@ -499,10 +495,11 @@ pub(crate) async fn get_asset(
 
 pub(crate) async fn delete_asset(
     State(state): State<Arc<AppState>>,
-    Path((_slug, asset_id)): Path<(String, i64)>,
+    Path((slug, asset_id)): Path<(String, i64)>,
     headers: HeaderMap,
 ) -> Result<Response> {
     let teacher_id = require_auth(&state, &headers).await?;
+    require_slug_owner(&state, teacher_id, &slug).await?;
     let now = time::OffsetDateTime::now_utc().unix_timestamp();
 
     // Collect blob keys for token invalidation before soft-deleting.
@@ -564,10 +561,11 @@ pub(crate) async fn delete_asset(
 
 pub(crate) async fn post_parts(
     State(state): State<Arc<AppState>>,
-    Path((_slug, asset_id)): Path<(String, i64)>,
+    Path((slug, asset_id)): Path<(String, i64)>,
     headers: HeaderMap,
 ) -> Result<Response> {
     let teacher_id = require_auth(&state, &headers).await?;
+    require_slug_owner(&state, teacher_id, &slug).await?;
 
     let pdf_key = require_pdf_key(&state, asset_id, teacher_id).await?;
     let pdf = state
@@ -593,11 +591,12 @@ pub(crate) struct MidiRequest {
 
 pub(crate) async fn post_midi(
     State(state): State<Arc<AppState>>,
-    Path((_slug, asset_id)): Path<(String, i64)>,
+    Path((slug, asset_id)): Path<(String, i64)>,
     headers: HeaderMap,
     Json(req): Json<MidiRequest>,
 ) -> Result<Response> {
     let teacher_id = require_auth(&state, &headers).await?;
+    require_slug_owner(&state, teacher_id, &slug).await?;
 
     let pdf_key = require_pdf_key(&state, asset_id, teacher_id).await?;
     let pdf = state
@@ -667,10 +666,11 @@ pub(crate) async fn post_midi(
 
 pub(crate) async fn post_rasterise(
     State(state): State<Arc<AppState>>,
-    Path((_slug, asset_id)): Path<(String, i64)>,
+    Path((slug, asset_id)): Path<(String, i64)>,
     headers: HeaderMap,
 ) -> Result<Response> {
     let teacher_id = require_auth(&state, &headers).await?;
+    require_slug_owner(&state, teacher_id, &slug).await?;
 
     let pdf_key = require_pdf_key(&state, asset_id, teacher_id).await?;
     let pdf = state
@@ -767,11 +767,12 @@ pub(crate) struct VariantRequest {
 
 pub(crate) async fn post_variant(
     State(state): State<Arc<AppState>>,
-    Path((_slug, asset_id)): Path<(String, i64)>,
+    Path((slug, asset_id)): Path<(String, i64)>,
     headers: HeaderMap,
     Json(req): Json<VariantRequest>,
 ) -> Result<Response> {
     let teacher_id = require_auth(&state, &headers).await?;
+    require_slug_owner(&state, teacher_id, &slug).await?;
 
     if req.label.trim().is_empty() {
         return Err(AppError::BadRequest("label must not be empty".into()));
@@ -842,10 +843,11 @@ pub(crate) async fn post_variant(
 
 pub(crate) async fn delete_variant(
     State(state): State<Arc<AppState>>,
-    Path((_slug, asset_id, variant_id)): Path<(String, i64, i64)>,
+    Path((slug, asset_id, variant_id)): Path<(String, i64, i64)>,
     headers: HeaderMap,
 ) -> Result<Response> {
     let teacher_id = require_auth(&state, &headers).await?;
+    require_slug_owner(&state, teacher_id, &slug).await?;
     let now = time::OffsetDateTime::now_utc().unix_timestamp();
 
     // Confirm asset ownership, then find variant.
@@ -925,6 +927,21 @@ async fn require_auth(state: &AppState, headers: &HeaderMap) -> Result<i64> {
     resolve_teacher_from_cookie(&state.db, headers)
         .await
         .ok_or(AppError::Unauthorized)
+}
+
+async fn require_slug_owner(state: &AppState, teacher_id: i64, raw_slug: &str) -> Result<()> {
+    let slug = validate(raw_slug).map_err(|_| AppError::NotFound)?;
+    let (owned,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM teachers WHERE id = ? AND slug = ?",
+    )
+    .bind(teacher_id)
+    .bind(&slug)
+    .fetch_one(&state.db)
+    .await?;
+    if owned == 0 {
+        return Err(AppError::Forbidden);
+    }
+    Ok(())
 }
 
 async fn require_pdf_key(state: &AppState, asset_id: i64, teacher_id: i64) -> Result<String> {

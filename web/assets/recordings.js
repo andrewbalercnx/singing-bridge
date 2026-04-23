@@ -2,7 +2,7 @@
 // Purpose: Teacher recording library page — load, sort, send link, delete.
 // Exports: (none — immediately invoked)
 // Depends: fetch API
-// Last updated: Sprint 6 (2026-04-18) -- initial implementation
+// Last updated: Sprint 15 (2026-04-23) -- design system migration: classList.toggle for sort buttons
 
 'use strict';
 

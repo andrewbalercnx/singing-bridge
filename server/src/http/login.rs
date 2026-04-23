@@ -7,7 +7,7 @@
 //             regardless of whether the email is known, making timing
 //             indistinguishable across all failure paths.
 //             peer_ip always derived from ConnectInfo<SocketAddr>.
-// Last updated: Sprint 10 (2026-04-21) -- initial implementation
+// Last updated: Sprint 15 (2026-04-23) -- design system migration: login/signup HTML rewrite
 
 use std::net::SocketAddr;
 use std::sync::Arc;

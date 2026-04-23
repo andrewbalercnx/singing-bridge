@@ -307,34 +307,89 @@ fn set_session_cookie_header(resp: &mut Response, state: &AppState, cookie: &str
 
 // ── HTML ──────────────────────────────────────────────────────────────────────
 
-const LOGIN_HTML: &str = r#"<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><title>Log in — singing-bridge</title>
-<link rel="stylesheet" href="/assets/styles.css"></head>
-<body><main>
-<h1>Teacher log in</h1>
-<form id="f">
-  <label>Email <input type="email" name="email" required></label>
-  <label>Password <input type="password" name="password" required></label>
-  <button type="submit">Log in</button>
-</form>
-<p id="status"></p>
-<p><a href="/signup">Create account</a></p>
+const LOGIN_HTML: &str = r##"<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Log in — Singing Bridge</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,500;0,600;1,400;1,500&family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/assets/styles.css">
+<link rel="stylesheet" href="/assets/theme.css">
+</head>
+<body class="sb-page" style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:40px;">
+<div class="sb-card sb-card--paper" style="width:100%;max-width:440px;">
+  <div style="font-family:var(--sb-font-display);font-weight:500;font-size:20px;letter-spacing:-0.01em;margin-bottom:4px;">
+    <span style="display:inline-block;width:8px;height:8px;border-radius:999px;background:var(--sb-rose);margin-right:10px;transform:translateY(-2px);"></span>Singing Bridge
+  </div>
+  <h1 style="font-size:28px;margin-top:24px;">Welcome back</h1>
+  <p class="sb-lede">Sign in to your teacher account.</p>
+  <form id="f" class="sb-stack sb-mt-8">
+    <div class="sb-field">
+      <label class="sb-label" for="f-email">Email</label>
+      <input class="sb-input" id="f-email" type="email" name="email" required placeholder="you@email.com" autocomplete="email">
+    </div>
+    <div class="sb-field">
+      <label class="sb-label" for="f-pass">Password</label>
+      <input class="sb-input" id="f-pass" type="password" name="password" required>
+    </div>
+    <button class="sb-btn sb-btn--block sb-btn--lg sb-mt-2" type="submit">Sign in</button>
+    <p class="sb-text-center sb-text-muted sb-mt-4" style="font-size:14px;">
+      New here? <a href="/signup">Create an account</a>
+    </p>
+  </form>
+  <p id="status" class="sb-text-muted" style="font-size:14px;margin-top:12px;"></p>
+</div>
 <script src="/assets/login.js"></script>
-</main></body></html>"#;
+</body>
+</html>"##;
 
-const SIGNUP_HTML: &str = r#"<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><title>Sign up — singing-bridge</title>
-<link rel="stylesheet" href="/assets/styles.css"></head>
-<body><main>
-<h1>Teacher sign up</h1>
-<form id="f">
-  <label>Email <input type="email" name="email" required></label>
-  <label>Room slug <input type="text" name="slug" required pattern="[a-z][a-z0-9\-]{1,30}[a-z0-9]"></label>
-  <label>Password <input type="password" name="password" required minlength="12" maxlength="128"></label>
-  <label>Confirm password <input type="password" name="confirm" required></label>
-  <button type="submit">Create account</button>
-</form>
-<p id="status"></p>
-<p><a href="/auth/login">Already have an account? Log in</a></p>
+const SIGNUP_HTML: &str = r##"<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Create account — Singing Bridge</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,500;0,600;1,400;1,500&family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/assets/styles.css">
+<link rel="stylesheet" href="/assets/theme.css">
+</head>
+<body class="sb-page" style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:40px;">
+<div class="sb-card sb-card--paper" style="width:100%;max-width:440px;">
+  <div style="font-family:var(--sb-font-display);font-weight:500;font-size:20px;letter-spacing:-0.01em;margin-bottom:4px;">
+    <span style="display:inline-block;width:8px;height:8px;border-radius:999px;background:var(--sb-rose);margin-right:10px;transform:translateY(-2px);"></span>Singing Bridge
+  </div>
+  <h1 style="font-size:26px;margin-top:20px;">Join the studio</h1>
+  <p class="sb-text-muted" style="margin:0 0 24px;font-size:14px;">Teacher accounts only.</p>
+  <form id="f" class="sb-stack">
+    <div class="sb-field">
+      <label class="sb-label" for="f-email">Email</label>
+      <input class="sb-input" id="f-email" type="email" name="email" required autocomplete="email">
+    </div>
+    <div class="sb-field">
+      <label class="sb-label" for="f-slug">Room slug</label>
+      <input class="sb-input" id="f-slug" type="text" name="slug" required pattern="[a-z][a-z0-9\-]{1,30}[a-z0-9]">
+      <span class="sb-help">Appears in your lesson URL, e.g. /teach/your-name</span>
+    </div>
+    <div class="sb-field">
+      <label class="sb-label" for="f-pass">Password</label>
+      <input class="sb-input" id="f-pass" type="password" name="password" required minlength="12" maxlength="128">
+    </div>
+    <div class="sb-field">
+      <label class="sb-label" for="f-confirm">Confirm password</label>
+      <input class="sb-input" id="f-confirm" type="password" name="confirm" required>
+    </div>
+    <button class="sb-btn sb-btn--block sb-btn--lg sb-mt-2" type="submit">Create account</button>
+    <p class="sb-text-center sb-text-muted sb-mt-4" style="font-size:14px;">
+      Already have an account? <a href="/auth/login">Sign in</a>
+    </p>
+  </form>
+  <p id="status" class="sb-text-muted" style="font-size:14px;margin-top:12px;"></p>
+</div>
 <script src="/assets/signup.js"></script>
-</main></body></html>"#;
+</body>
+</html>"##;

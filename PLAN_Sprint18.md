@@ -158,19 +158,37 @@ fi
 
 Two roles per project: **`sbmigrate`** (DDL for migrations) and **`sbapp`** (DML for the running application). The application never holds DDL capability.
 
+**Generate passwords before running the SQL block** — use a method that avoids shell-history leakage:
+
+```bash
+# Generate 32-char alphanumeric passwords (no shell-special chars that break connection strings)
+openssl rand -base64 48 | tr -dc 'A-Za-z0-9' | head -c 32
+# Run twice: once for PW_A (sbmigrate), once for PW_B (sbapp).
+# Store in a local password manager immediately — never write to shell history.
+# To avoid history exposure: prefix the assignment with a space, or use `read -rs PW_A`.
+```
+
 ```sql
 -- Run as vvpadmin on the postgres maintenance database
 
 CREATE DATABASE singing_bridge;
 
--- Migration role
-CREATE ROLE sbmigrate LOGIN PASSWORD '<generated-strong-password-A>';
+-- Enforce per-database isolation.
+-- PostgreSQL grants CONNECT to PUBLIC by default. Revoke it from all shared databases
+-- so only explicitly named roles can connect to their own database.
+REVOKE CONNECT ON DATABASE singing_bridge FROM PUBLIC;
+REVOKE CONNECT ON DATABASE vvpissuer FROM PUBLIC;
+REVOKE CONNECT ON DATABASE pistis FROM PUBLIC;
+-- Note: vvpadmin holds azure_pg_admin which bypasses CONNECT restrictions —
+-- the revoke does not affect administrative access.
+
+-- Migration role (DDL)
+CREATE ROLE sbmigrate LOGIN PASSWORD '<pw-A>';
 GRANT CONNECT ON DATABASE singing_bridge TO sbmigrate;
 
--- Runtime role
-CREATE ROLE sbapp LOGIN PASSWORD '<generated-strong-password-B>';
+-- Runtime role (DML only)
+CREATE ROLE sbapp LOGIN PASSWORD '<pw-B>';
 GRANT CONNECT ON DATABASE singing_bridge TO sbapp;
-GRANT USAGE ON SCHEMA public TO sbapp;
 ```
 
 Connect to `singing_bridge` as `vvpadmin`:
@@ -181,6 +199,9 @@ Connect to `singing_bridge` as `vvpadmin`:
 -- sbmigrate owns the schema and creates all objects
 GRANT CREATE ON SCHEMA public TO sbmigrate;
 GRANT USAGE ON SCHEMA public TO sbmigrate;
+
+-- sbapp needs schema USAGE explicitly (not relying on PUBLIC default)
+GRANT USAGE ON SCHEMA public TO sbapp;
 
 -- Install citext (requires superuser; done here as vvpadmin)
 CREATE EXTENSION IF NOT EXISTS citext;
@@ -199,7 +220,7 @@ SQL
 
 This ensures every table and sequence that Sprint 19 migrations create will be immediately accessible to `sbapp` without additional grants.
 
-**Role isolation** (enforced at the PostgreSQL engine level): `sbmigrate` and `sbapp` receive no CONNECT grant on `vvpissuer` or `pistis`. Any connection attempt returns `FATAL: permission denied for database`.
+**Role isolation** (enforced at the PostgreSQL engine level): The `REVOKE CONNECT FROM PUBLIC` statements above ensure `sbmigrate` and `sbapp` cannot connect to `vvpissuer` or `pistis`, and no unenumerated role can connect to `singing_bridge`. Any unauthorised connection attempt returns `FATAL: permission denied for database`.
 
 ### Phase 5 — TLS posture
 
@@ -242,24 +263,32 @@ az keyvault secret set --vault-name rcnx-shared-kv \
 
 **RBAC grants:**
 
+The runtime Container App identity receives access to `sb-database-url` only. The migration credential (`sb-migrate-url`) must not be readable by the runtime identity — granting it would defeat the privilege split between the runtime application and the DDL-capable migration role.
+
 ```bash
 KV_ID=$(az keyvault show --name rcnx-shared-kv --query id -o tsv)
 SB_IDENTITY=$(az containerapp show --name sb-server --resource-group sb-prod-rg \
   --query "identity.principalId" -o tsv)
+OPERATOR_ID=$(az ad signed-in-user show --query id -o tsv)
 
-# Admin password: platform-only (replace with your platform principal)
+# Admin password: operator only
 az role assignment create \
   --role "Key Vault Secrets Officer" \
-  --assignee <platform-principal-id> \
+  --assignee "$OPERATOR_ID" \
   --scope "$KV_ID/secrets/pg-admin-password"
 
-# singing-bridge identity reads both sb secrets
-for secret in sb-database-url sb-migrate-url; do
-  az role assignment create \
-    --role "Key Vault Secrets User" \
-    --assignee "$SB_IDENTITY" \
-    --scope "$KV_ID/secrets/$secret"
-done
+# Runtime identity reads the app connection string only
+az role assignment create \
+  --role "Key Vault Secrets User" \
+  --assignee "$SB_IDENTITY" \
+  --scope "$KV_ID/secrets/sb-database-url"
+
+# Migration URL: operator identity only (for running Sprint 19 sqlx migrations)
+# A dedicated migration job identity may be added in Sprint 19 if automation is required.
+az role assignment create \
+  --role "Key Vault Secrets User" \
+  --assignee "$OPERATOR_ID" \
+  --scope "$KV_ID/secrets/sb-migrate-url"
 ```
 
 **Enable diagnostic logging:**
@@ -338,7 +367,7 @@ resource fwAllowAzure 'Microsoft.DBforPostgreSQL/flexibleServers/firewallRules@2
   properties: { startIpAddress: '0.0.0.0', endIpAddress: '0.0.0.0' }
 }
 
-resource citextParam 'Microsoft.DBforPostgreSQL/flexibleServers/configurations@2023-12-01' = {
+resource azureExtensionsParam 'Microsoft.DBforPostgreSQL/flexibleServers/configurations@2023-12-01' = {
   name: 'azure.extensions'
   parent: pgServer
   // WARNING: this overwrites the full list. Pre-flight (Phase 0) records existing value.
@@ -517,17 +546,25 @@ psql "postgres://sbmigrate:<pw-A>@${PG_HOST}/singing_bridge?sslmode=require" \
   -c "CREATE TABLE _sprint18_probe (id int); DROP TABLE _sprint18_probe;"
 # PASS: no error
 
-# sbapp can SELECT table created by sbmigrate (default privileges working) ✓
+# sbapp can SELECT, INSERT, DELETE on table created by sbmigrate (default privileges) ✓
 psql "postgres://sbmigrate:<pw-A>@${PG_HOST}/singing_bridge?sslmode=require" \
   -c "CREATE TABLE _priv_probe (id int);"
-psql "postgres://sbapp:<pw-B>@${PG_HOST}/singing_bridge?sslmode=require" \
-  -c "SELECT * FROM _priv_probe;"
+psql "postgres://sbapp:<pw-B>@${PG_HOST}/singing_bridge?sslmode=require" <<'SQL'
+SELECT * FROM _priv_probe;
+INSERT INTO _priv_probe VALUES (1);
+DELETE FROM _priv_probe WHERE id = 1;
+SQL
 psql "postgres://sbmigrate:<pw-A>@${PG_HOST}/singing_bridge?sslmode=require" \
   -c "DROP TABLE _priv_probe;"
-# PASS: sbapp SELECT succeeds with 0 rows
+# PASS: all three statements succeed; DROP succeeds (cleanup)
 
 # sbapp cannot connect to vvpissuer ✗ (expected failure)
 psql "postgres://sbapp:<pw-B>@${PG_HOST}/vvpissuer?sslmode=require" \
+  -c "SELECT 1;" 2>&1 | grep -i "permission denied\|FATAL"
+# PASS: error message contains permission denied
+
+# sbapp cannot connect to pistis ✗ (expected failure)
+psql "postgres://sbapp:<pw-B>@${PG_HOST}/pistis?sslmode=require" \
   -c "SELECT 1;" 2>&1 | grep -i "permission denied\|FATAL"
 # PASS: error message contains permission denied
 
@@ -535,29 +572,45 @@ psql "postgres://sbapp:<pw-B>@${PG_HOST}/vvpissuer?sslmode=require" \
 psql "postgres://sbmigrate:<pw-A>@${PG_HOST}/vvpissuer?sslmode=require" \
   -c "SELECT 1;" 2>&1 | grep -i "permission denied\|FATAL"
 # PASS: error message contains permission denied
+
+# sbmigrate cannot connect to pistis ✗ (expected failure)
+psql "postgres://sbmigrate:<pw-A>@${PG_HOST}/pistis?sslmode=require" \
+  -c "SELECT 1;" 2>&1 | grep -i "permission denied\|FATAL"
+# PASS: error message contains permission denied
 ```
 
-### Step 6 — Key Vault secret readability
+### Step 6 — Key Vault secret readability and access boundaries
 
 ```bash
 KV_ID=$(az keyvault show --name rcnx-shared-kv --query id -o tsv)
 SB_IDENTITY=$(az containerapp show --name sb-server --resource-group sb-prod-rg \
   --query "identity.principalId" -o tsv)
 
-for secret in sb-database-url sb-migrate-url; do
-  echo "=== $secret ==="
-  # RBAC assignment exists
-  az role assignment list \
-    --assignee "$SB_IDENTITY" \
-    --scope "$KV_ID/secrets/$secret" \
-    --role "Key Vault Secrets User" \
-    --query "[0].principalId" -o tsv
-  # PASS: returns SB_IDENTITY value
+# --- Positive: runtime identity can read sb-database-url ---
+az role assignment list \
+  --assignee "$SB_IDENTITY" \
+  --scope "$KV_ID/secrets/sb-database-url" \
+  --role "Key Vault Secrets User" \
+  --query "[0].principalId" -o tsv
+# PASS: returns SB_IDENTITY
 
-  # Secret is readable (under current dev identity as proxy)
-  az keyvault secret show --vault-name rcnx-shared-kv --name "$secret" \
-    --query "value" -o tsv | grep -q "postgres://" && echo "PASS: $secret readable" || echo "FAIL: $secret"
-done
+az keyvault secret show --vault-name rcnx-shared-kv --name sb-database-url \
+  --query "value" -o tsv | grep -q "postgres://" && echo "PASS: sb-database-url readable" || echo "FAIL"
+
+# --- Negative: runtime identity has NO assignment on sb-migrate-url ---
+MIGRATE_ASSIGNMENTS=$(az role assignment list \
+  --assignee "$SB_IDENTITY" \
+  --scope "$KV_ID/secrets/sb-migrate-url" \
+  --role "Key Vault Secrets User" \
+  --query "length(@)" -o tsv)
+[ "$MIGRATE_ASSIGNMENTS" = "0" ] \
+  && echo "PASS: runtime identity has no access to sb-migrate-url" \
+  || echo "FAIL: runtime identity must not hold sb-migrate-url assignment"
+
+# --- sb-migrate-url readable by operator (under current CLI identity) ---
+az keyvault secret show --vault-name rcnx-shared-kv --name sb-migrate-url \
+  --query "value" -o tsv | grep -q "postgres://sbmigrate" \
+  && echo "PASS: sb-migrate-url readable by operator" || echo "FAIL"
 ```
 
 ### Step 7 — Container App revision health after Bicep deploy
@@ -629,10 +682,11 @@ az deployment group create --resource-group rcnx-shared-rg \
 - `rcnx-shared-rg` exists; `vvp-postgres` is in it; private endpoint status `Approved`
 - `AllowAzureServices` firewall rule confirmed; storage auto-grow enabled
 - `azure.extensions` contains `citext`; extension installed in `singing_bridge`; citext smoke test passes (Step 4)
-- `sbmigrate` and `sbapp` roles exist with correct grants; all Step 5 isolation checks pass
-- `rcnx-shared-kv` exists with purge protection, diagnostics; RBAC grants confirmed for both `sb-database-url` and `sb-migrate-url` (Step 6)
+- `sbmigrate` and `sbapp` roles exist with correct grants; all Step 5 isolation checks pass (including negative access to both `vvpissuer` and `pistis`)
+- `rcnx-shared-kv` exists with purge protection, diagnostics; runtime identity RBAC confirmed for `sb-database-url`; runtime identity confirmed to have NO access to `sb-migrate-url` (Step 6)
 - `SB_DATABASE_URL` KV reference declared in `container-app.bicep`; new revision `Healthy` (Step 7)
 - VVP `vvp-issuer /healthz` → 200 and `pistis-backend` revision `Healthy` throughout (Steps 1, 3)
 - `knowledge/decisions/0002-shared-postgres-platform.md` committed
 - Both Bicep templates idempotent (Step 8)
-- Sprint 19 prerequisite documented: sqlx `tls` feature flag for `verify-full` application TLS
+- **Accepted residual risk (Sprint 18):** Application connection strings use `sslmode=require`, which encrypts traffic but does not validate the server certificate chain. This is the limit of what sqlx supports without the `tls-rustls` or `tls-native-tls` Cargo feature enabled.
+- **Sprint 19 mandatory entry condition:** The `tls-rustls` (or `tls-native-tls`) feature must be added to the `sqlx` dependency in `server/Cargo.toml` alongside `postgres` before claiming `verify-full` application TLS enforcement. This sprint does not claim that enforcement.

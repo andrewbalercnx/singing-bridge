@@ -30,6 +30,10 @@ resource azureExtensionsParam 'Microsoft.DBforPostgreSQL/flexibleServers/configu
   properties: { value: 'citext', source: 'user-override' }
 }
 
+// OPERATOR NOTE: If this database resource is ever deleted and recreated by Bicep,
+// the one-time isolation SQL from PLAN_Sprint18.md Phase 4 (REVOKE CONNECT FROM PUBLIC,
+// role grants, ALTER DEFAULT PRIVILEGES) must be re-applied manually — Bicep does not
+// manage those PostgreSQL-internal grants.
 resource sbDatabase 'Microsoft.DBforPostgreSQL/flexibleServers/databases@2023-12-01' = {
   name: 'singing_bridge'
   parent: pgServer

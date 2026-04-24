@@ -18,8 +18,18 @@ resource kv 'Microsoft.KeyVault/vaults@2023-07-01' = {
     tenantId: subscription().tenantId
     enableRbacAuthorization: true
     enablePurgeProtection: true
-    softDeleteRetentionInDays: 7
+    softDeleteRetentionInDays: 90
+    // Public access is required: sb-env is a consumption-only ACA environment with no fixed
+    // egress IP and no VNet integration, so IP-based network ACLs cannot be used.
+    // Accepted risk: unauthenticated callers can reach the KV endpoint over the internet.
+    // Controls: RBAC authorization (all secrets require role assignment); per-secret scope;
+    // AuditEvent logging; purge protection prevents deletion.
+    // Reviewed and accepted in ADR 0002 (knowledge/decisions/0002-shared-postgres-platform.md).
     publicNetworkAccess: 'Enabled'
+    networkAcls: {
+      bypass: 'AzureServices'
+      defaultAction: 'Allow'
+    }
   }
 }
 

@@ -32,11 +32,41 @@ Promote `vvp-postgres` to a **shared, governed, multi-project PostgreSQL asset**
 - Credentials stored in `rcnx-shared-kv` (Azure Key Vault, RBAC mode)
 - Runtime Container Apps read their own app-role secret only; DDL credentials accessible to operators
 
-**Adding a new project:**
-1. Create a database and two roles on the shared server following the Phase 4 pattern in `PLAN_Sprint18.md`
-2. Store credentials in `rcnx-shared-kv`
-3. Grant `Key Vault Secrets User` on the app secret to the new project's Container App identity
-4. Declare the KV reference in the project's Bicep `secrets` array
+**Database isolation scope:** Per-database `REVOKE CONNECT FROM PUBLIC` enforces isolation between project databases (`singing_bridge`, `vvpissuer`, `pistis`). The `postgres` maintenance database is additionally revoked for application roles (`sbmigrate`, `sbapp`). Administrative access via `vvpadmin` (which holds `azure_pg_admin`) is unaffected by `CONNECT` revokes.
+
+**Adding a new project (self-contained procedure):**
+
+```sql
+-- Run as vvpadmin on the postgres maintenance database
+-- Precondition: database must first be created by Bicep (shared-postgres.bicep pattern)
+CREATE ROLE <project>migrate LOGIN PASSWORD '<strong-password-A>';
+GRANT CONNECT ON DATABASE <project_db> TO <project>migrate;
+REVOKE CONNECT ON DATABASE postgres FROM <project>migrate;
+
+CREATE ROLE <project>app LOGIN PASSWORD '<strong-password-B>';
+GRANT CONNECT ON DATABASE <project_db> TO <project>app;
+REVOKE CONNECT ON DATABASE postgres FROM <project>app;
+REVOKE CONNECT ON DATABASE <project_db> FROM PUBLIC;
+```
+
+```bash
+# Connect to <project_db> as <project>migrate and set default privileges
+psql "postgres://<project>migrate:<pw-A>@vvp-postgres.postgres.database.azure.com/<project_db>?sslmode=require" <<'SQL'
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO <project>app;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO <project>app;
+SQL
+
+# Store in Key Vault
+az keyvault secret set --vault-name rcnx-shared-kv \
+  --name <project>-migrate-url --value 'postgres://<project>migrate:<pw-A>@...'
+az keyvault secret set --vault-name rcnx-shared-kv \
+  --name <project>-database-url --value 'postgres://<project>app:<pw-B>@...'
+
+# Grant runtime identity access to app credential only
+az role assignment create --role "Key Vault Secrets User" \
+  --assignee <container-app-principal-id> \
+  --scope "$(az keyvault show --name rcnx-shared-kv --query id -o tsv)/secrets/<project>-database-url"
+```
 
 ---
 
@@ -52,6 +82,7 @@ Promote `vvp-postgres` to a **shared, governed, multi-project PostgreSQL asset**
 - Single server is a shared failure domain. Mitigated by: storage auto-grow enabled; B1ms suitable for current load; server can be scaled up independently
 - Public access enabled for singing-bridge connectivity (no VNet peering possible). Mitigated by: `AllowAzureServices` firewall rule; credential + TLS controls; server-side TLS enforced always
 - Application TLS currently at `sslmode=require` (encrypts traffic, no cert validation). **Sprint 19 prerequisite:** enable `tls-rustls` or `tls-native-tls` sqlx feature for `verify-full` enforcement
+- **Accepted risk — Key Vault public network access:** `rcnx-shared-kv` uses `publicNetworkAccess: Enabled` because `sb-env` is a consumption-only ACA environment with no fixed egress IP and no VNet integration. IP-based network ACLs cannot be scoped to the Container App's egress. Unauthenticated callers can reach the KV endpoint over the internet. This is mitigated by RBAC authorization (all operations require role assignment), per-secret scope (runtime identity scoped to its own credential only), AuditEvent logging to Log Analytics, and purge protection. If VNet integration becomes available in a future sprint, private endpoint access should be added and `publicNetworkAccess` disabled.
 
 **Migration path:**
 - Sprint 18 (this sprint): infra — shared RG, RG move, public access, CITEXT, per-project roles, Key Vault, Container App wiring

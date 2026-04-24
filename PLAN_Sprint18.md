@@ -169,9 +169,11 @@ openssl rand -base64 48 | tr -dc 'A-Za-z0-9' | head -c 32
 ```
 
 ```sql
--- Run as vvpadmin on the postgres maintenance database
-
-CREATE DATABASE singing_bridge;
+-- Run as vvpadmin on the postgres maintenance database.
+-- Precondition: singing_bridge database must already exist (created by Bicep deploy).
+-- Verify before continuing:
+-- SELECT datname FROM pg_database WHERE datname = 'singing_bridge';
+-- STOP if the row is absent — deploy shared-postgres.bicep first.
 
 -- Enforce per-database isolation.
 -- PostgreSQL grants CONNECT to PUBLIC by default. Revoke it from all shared databases
@@ -185,10 +187,14 @@ REVOKE CONNECT ON DATABASE pistis FROM PUBLIC;
 -- Migration role (DDL)
 CREATE ROLE sbmigrate LOGIN PASSWORD '<pw-A>';
 GRANT CONNECT ON DATABASE singing_bridge TO sbmigrate;
+-- Explicitly deny access to the postgres maintenance database
+REVOKE CONNECT ON DATABASE postgres FROM sbmigrate;
 
 -- Runtime role (DML only)
 CREATE ROLE sbapp LOGIN PASSWORD '<pw-B>';
 GRANT CONNECT ON DATABASE singing_bridge TO sbapp;
+-- Explicitly deny access to the postgres maintenance database
+REVOKE CONNECT ON DATABASE postgres FROM sbapp;
 ```
 
 Connect to `singing_bridge` as `vvpadmin`:

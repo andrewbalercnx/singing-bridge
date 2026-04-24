@@ -202,6 +202,12 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'SB_DATABASE_URL', secretRef: 'sb-db-url' }
           ]
           resources: { cpu: json('0.5'), memory: '1Gi' }
+          // NFS share requires NoRootSquash; every container mounting sb-data MUST run as
+          // UID 65532 (non-root). Root-capable containers would have unrestricted NFS access.
+          securityContext: {
+            runAsNonRoot: true
+            runAsUser: 65532
+          }
           volumeMounts: [
             { volumeName: 'sb-data', mountPath: '/data' }
           ]

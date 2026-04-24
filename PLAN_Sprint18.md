@@ -30,6 +30,7 @@ Verified from deployed Azure resources (2026-04-24):
 | Private DNS zone | `privatelink.postgres.database.azure.com` linked to `vvp-vnet` only |
 | Existing databases | `vvpissuer`, `pistis` (plus system DBs) |
 | Admin login | `vvpadmin` |
+| VVP app connectivity | `vvp-issuer` and `pistis-backend` reference postgres by **FQDN** (`vvp-postgres.postgres.database.azure.com`) in plain env vars — FQDN is unchanged by resource-group move, so **no VVP configuration changes are needed** |
 | `sb-env` | Consumption-only Container Apps environment — `vnet: null`, `workloadProfiles: null` — confirmed **no VNet integration**, no fixed outbound IP |
 | `sb-vnet` | 10.0.0.0/16 — **overlaps** `vvp-vnet` (10.0.0.0/16); VNet peering blocked without re-addressing |
 | `sb-server` identity | `SystemAssigned` managed identity (from `container-app.bicep`) |
@@ -50,17 +51,32 @@ This sprint changes the persistence architecture recorded in `knowledge/decision
 
 ## Proposed Solution
 
-### Phase 0 — Pre-flight: verify current private endpoint state
+### Phase 0 — Pre-flight
 
-Before any resource group move, confirm the private endpoint connection is in `Approved` state and the VVP applications are healthy:
+Record the current `azure.extensions` value for rollback, and confirm VVP health and private endpoint state before any changes.
 
 ```bash
+# Record current azure.extensions value (append-safe update in Phase 3)
+CURRENT_EXT=$(az postgres flexible-server parameter show \
+  --name vvp-postgres --resource-group VVP \
+  --parameter-name azure.extensions --query "value" -o tsv)
+echo "Current azure.extensions: $CURRENT_EXT"  # record for rollback
+
+# Private endpoint approved
 az postgres flexible-server show --name vvp-postgres --resource-group VVP \
   --query "privateEndpointConnections[0].privateLinkServiceConnectionState.status" -o tsv
-# Must return: Approved
-```
+# PASS: Approved
 
-**Pass condition:** `Approved`. If any other value, stop and investigate before proceeding.
+# VVP issuer healthy
+curl -sf --max-time 10 \
+  https://vvp-issuer.livelyglacier-e85ccac4.uksouth.azurecontainerapps.io/healthz
+# PASS: HTTP 200
+
+# pistis-backend revision healthy
+az containerapp revision list --name pistis-backend --resource-group VVP \
+  --query "[0].{state:properties.runningState,health:properties.healthState}" -o json
+# PASS: state=Running, health=Healthy
+```
 
 ### Phase 1 — Governance: move server to shared resource group
 
@@ -73,23 +89,31 @@ az resource move \
     --name vvp-postgres --resource-group VVP --query id -o tsv)
 ```
 
-After the move, re-check private endpoint approval state — resource ID changes can require re-approval:
+After the move, verify the private endpoint connection state. Resource-group moves change the server's resource ID, which can require re-approval:
 
 ```bash
-az postgres flexible-server show --name vvp-postgres --resource-group rcnx-shared-rg \
-  --query "privateEndpointConnections[0].privateLinkServiceConnectionState.status" -o tsv
-# Must still return: Approved
+STATUS=$(az postgres flexible-server show --name vvp-postgres \
+  --resource-group rcnx-shared-rg \
+  --query "privateEndpointConnections[0].privateLinkServiceConnectionState.status" -o tsv)
+echo "PE status: $STATUS"
 
 # If Pending, re-approve:
-az network private-endpoint-connection approve \
-  --name <connection-name> \
-  --resource-group rcnx-shared-rg \
-  --resource-name vvp-postgres \
-  --type Microsoft.DBforPostgreSQL/flexibleServers \
-  --description "Re-approved after RG move"
+if [ "$STATUS" = "Pending" ]; then
+  CONN_NAME=$(az postgres flexible-server show --name vvp-postgres \
+    --resource-group rcnx-shared-rg \
+    --query "privateEndpointConnections[0].name" -o tsv)
+  az network private-endpoint-connection approve \
+    --name "$CONN_NAME" \
+    --resource-group rcnx-shared-rg \
+    --resource-name vvp-postgres \
+    --type Microsoft.DBforPostgreSQL/flexibleServers \
+    --description "Re-approved after RG move"
+fi
 ```
 
-**VVP FQDN is unchanged** (`vvp-postgres.postgres.database.azure.com`) — no VVP application configuration changes required.
+VVP applications use the FQDN `vvp-postgres.postgres.database.azure.com` which is **unchanged** by this move. No VVP configuration changes are needed.
+
+**Rollback:** `az resource move --destination-group VVP --ids $(az postgres flexible-server show --name vvp-postgres --resource-group rcnx-shared-rg --query id -o tsv)`
 
 ### Phase 2 — Networking: enable public access + storage auto-grow
 
@@ -98,11 +122,7 @@ az postgres flexible-server update \
   --name vvp-postgres --resource-group rcnx-shared-rg \
   --public-access Enabled \
   --storage-auto-grow Enabled
-```
 
-Add the `AllowAzureServices` firewall rule (start/end 0.0.0.0 covers all Azure-hosted egress, including ACA consumption-plan dynamic IPs):
-
-```bash
 az postgres flexible-server firewall-rule create \
   --name vvp-postgres --resource-group rcnx-shared-rg \
   --rule-name AllowAzureServices \
@@ -111,82 +131,93 @@ az postgres flexible-server firewall-rule create \
 
 The private endpoint to `vvp-vnet` is **not affected** — both access paths coexist.
 
-### Phase 3 — CITEXT extension enablement
+### Phase 3 — CITEXT extension: additive allowlist update
 
-Azure Flexible Server requires `citext` to be allowlisted at the server level before `CREATE EXTENSION` can succeed. This must be done before Sprint 19 migrations run.
+The `azure.extensions` parameter is a comma-separated allowlist. Overwriting it blindly would remove extensions already allowlisted for other databases. The update must **append** `citext` only if absent:
 
 ```bash
-az postgres flexible-server parameter set \
+CURRENT_EXT=$(az postgres flexible-server parameter show \
   --name vvp-postgres --resource-group rcnx-shared-rg \
-  --parameter-name azure.extensions \
-  --value citext
+  --parameter-name azure.extensions --query "value" -o tsv)
+
+# Append citext only if not already present
+if echo "$CURRENT_EXT" | grep -qiw "citext"; then
+  echo "citext already in azure.extensions — no change needed"
+else
+  NEW_EXT="${CURRENT_EXT:+${CURRENT_EXT},}citext"
+  az postgres flexible-server parameter set \
+    --name vvp-postgres --resource-group rcnx-shared-rg \
+    --parameter-name azure.extensions \
+    --value "$NEW_EXT"
+fi
 ```
 
-Then connect as `vvpadmin` and install the extension in the `singing_bridge` database (done as part of Phase 4 SQL):
-
-```sql
-\c singing_bridge
-CREATE EXTENSION IF NOT EXISTS citext;
--- Verify:
-SELECT extname, extversion FROM pg_extension WHERE extname = 'citext';
--- Must return one row: citext | <version>
-```
+**Rollback:** `az postgres flexible-server parameter set --value "$CURRENT_EXT"` (using value recorded in Phase 0).
 
 ### Phase 4 — Per-project isolation: database and roles
 
-Two roles per project: a **runtime role** (`sbapp`) with DML only, and a **migration role** (`sbmigrate`) with DDL. The application connects as `sbapp` at runtime. Sprint 19's migration runner connects as `sbmigrate`. This follows the principle of least privilege: a compromised application credential cannot drop tables.
+Two roles per project: **`sbmigrate`** (DDL for migrations) and **`sbapp`** (DML for the running application). The application never holds DDL capability.
 
 ```sql
--- Run as vvpadmin
+-- Run as vvpadmin on the postgres maintenance database
 
 CREATE DATABASE singing_bridge;
 
--- Migration role: DDL on public schema, needed to run sqlx migrations
+-- Migration role
 CREATE ROLE sbmigrate LOGIN PASSWORD '<generated-strong-password-A>';
 GRANT CONNECT ON DATABASE singing_bridge TO sbmigrate;
 
--- Runtime role: DML only
+-- Runtime role
 CREATE ROLE sbapp LOGIN PASSWORD '<generated-strong-password-B>';
 GRANT CONNECT ON DATABASE singing_bridge TO sbapp;
+GRANT USAGE ON SCHEMA public TO sbapp;
+```
 
+Connect to `singing_bridge` as `vvpadmin`:
+
+```sql
 \c singing_bridge
 
--- Grant sbmigrate full DDL on public schema
+-- sbmigrate owns the schema and creates all objects
 GRANT CREATE ON SCHEMA public TO sbmigrate;
--- Also grant usage so it can reference objects
 GRANT USAGE ON SCHEMA public TO sbmigrate;
-
--- Grant sbapp DML only; tables created by migrations are owned by sbmigrate,
--- so we grant explicit DML after migrations run via ALTER DEFAULT PRIVILEGES:
-ALTER DEFAULT PRIVILEGES FOR ROLE sbmigrate IN SCHEMA public
-  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO sbapp;
-ALTER DEFAULT PRIVILEGES FOR ROLE sbmigrate IN SCHEMA public
-  GRANT USAGE, SELECT ON SEQUENCES TO sbapp;
 
 -- Install citext (requires superuser; done here as vvpadmin)
 CREATE EXTENSION IF NOT EXISTS citext;
-
--- Verify role isolation: sbmigrate cannot touch VVP databases (enforced at engine level
--- by absence of CONNECT grant on vvpissuer/pistis)
 ```
 
-**Negative isolation verified** (see Test Strategy): `sbapp` and `sbmigrate` receive no CONNECT grant on `vvpissuer` or `pistis`.
+**`ALTER DEFAULT PRIVILEGES` must be run as `sbmigrate`**, not as `vvpadmin`, because default privileges apply to objects created by the role executing the statement. Connect as `sbmigrate`:
+
+```bash
+psql "postgres://sbmigrate:<pw-A>@vvp-postgres.postgres.database.azure.com/singing_bridge?sslmode=require" <<'SQL'
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO sbapp;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+  GRANT USAGE, SELECT ON SEQUENCES TO sbapp;
+SQL
+```
+
+This ensures every table and sequence that Sprint 19 migrations create will be immediately accessible to `sbapp` without additional grants.
+
+**Role isolation** (enforced at the PostgreSQL engine level): `sbmigrate` and `sbapp` receive no CONNECT grant on `vvpissuer` or `pistis`. Any connection attempt returns `FATAL: permission denied for database`.
 
 ### Phase 5 — TLS posture
 
-All connection strings use `sslmode=verify-full` to validate the server certificate, not just encrypt the channel. Azure PostgreSQL Flexible Server uses the **DigiCert Global Root G2** CA. This CA is present in the standard system CA bundle (`ca-certificates`) on Debian/Ubuntu container images, which the singing-bridge Docker image is based on.
+All connection strings use `sslmode=require`, which encrypts traffic. Azure PostgreSQL Flexible Server enforces TLS for all connections regardless of client setting.
 
-Connection string format:
-
+**Management commands** (psql CLI, this sprint): may additionally use `sslrootcert=system` to verify the server certificate chain:
 ```
-postgres://sbapp:<pw>@vvp-postgres.postgres.database.azure.com/singing_bridge?sslmode=verify-full&sslrootcert=system
+postgres://vvpadmin:<pw>@vvp-postgres.postgres.database.azure.com/singing_bridge?sslmode=verify-full&sslrootcert=system
 ```
 
-`sslrootcert=system` instructs libpq to use the OS-level CA bundle (`/etc/ssl/certs/ca-certificates.crt`) rather than a downloaded certificate file. This avoids certificate pinning maintenance while retaining full chain validation.
+**Application connection strings** stored in Key Vault use `sslmode=require` only, which is what sqlx supports natively. `sslrootcert=system` is a libpq-specific parameter not honoured by sqlx. Full certificate validation from the application side (`verify-full` equivalent in sqlx) requires enabling the `tls-rustls` or `tls-native-tls` feature alongside `postgres` in sqlx — this is a **Sprint 19 prerequisite**, documented in `PLAN_Sprint19.md` under Cargo feature flags.
 
-### Phase 6 — Credential storage (Key Vault + KV reference injection)
+Connection string stored in Key Vault:
+```
+postgres://sbapp:<pw-B>@vvp-postgres.postgres.database.azure.com/singing_bridge?sslmode=require
+```
 
-**Create shared Key Vault with purge protection and diagnostics:**
+### Phase 6 — Credential storage (Key Vault)
 
 ```bash
 az keyvault create \
@@ -196,93 +227,85 @@ az keyvault create \
   --enable-rbac-authorization true \
   --enable-purge-protection true \
   --retention-days 7
-```
 
-**Store secrets:**
-
-```bash
-# Admin password (platform-only access enforced via RBAC below)
 az keyvault secret set --vault-name rcnx-shared-kv \
   --name pg-admin-password --value '<vvpadmin-password>'
 
-# Per-project connection strings
 az keyvault secret set --vault-name rcnx-shared-kv \
   --name sb-migrate-url \
-  --value 'postgres://sbmigrate:<pw-A>@vvp-postgres.postgres.database.azure.com/singing_bridge?sslmode=verify-full&sslrootcert=system'
+  --value 'postgres://sbmigrate:<pw-A>@vvp-postgres.postgres.database.azure.com/singing_bridge?sslmode=require'
 
 az keyvault secret set --vault-name rcnx-shared-kv \
   --name sb-database-url \
-  --value 'postgres://sbapp:<pw-B>@vvp-postgres.postgres.database.azure.com/singing_bridge?sslmode=verify-full&sslrootcert=system'
+  --value 'postgres://sbapp:<pw-B>@vvp-postgres.postgres.database.azure.com/singing_bridge?sslmode=require'
 ```
 
 **RBAC grants:**
 
 ```bash
-# Platform-only access to admin password
+KV_ID=$(az keyvault show --name rcnx-shared-kv --query id -o tsv)
+SB_IDENTITY=$(az containerapp show --name sb-server --resource-group sb-prod-rg \
+  --query "identity.principalId" -o tsv)
+
+# Admin password: platform-only (replace with your platform principal)
 az role assignment create \
   --role "Key Vault Secrets Officer" \
   --assignee <platform-principal-id> \
-  --scope "$(az keyvault show --name rcnx-shared-kv --query id -o tsv)/secrets/pg-admin-password"
+  --scope "$KV_ID/secrets/pg-admin-password"
 
-# singing-bridge managed identity reads sb-database-url and sb-migrate-url
-SB_IDENTITY=$(az containerapp show --name sb-server --resource-group sb-prod-rg \
-  --query "identity.principalId" -o tsv)
-KV_ID=$(az keyvault show --name rcnx-shared-kv --query id -o tsv)
-
-az role assignment create \
-  --role "Key Vault Secrets User" \
-  --assignee "$SB_IDENTITY" \
-  --scope "$KV_ID/secrets/sb-database-url"
-
-az role assignment create \
-  --role "Key Vault Secrets User" \
-  --assignee "$SB_IDENTITY" \
-  --scope "$KV_ID/secrets/sb-migrate-url"
+# singing-bridge identity reads both sb secrets
+for secret in sb-database-url sb-migrate-url; do
+  az role assignment create \
+    --role "Key Vault Secrets User" \
+    --assignee "$SB_IDENTITY" \
+    --scope "$KV_ID/secrets/$secret"
+done
 ```
 
-**Enable diagnostic logging on the Key Vault** (audit all secret accesses):
+**Enable diagnostic logging:**
 
 ```bash
 az monitor diagnostic-settings create \
   --name kv-audit \
-  --resource "$(az keyvault show --name rcnx-shared-kv --query id -o tsv)" \
+  --resource "$KV_ID" \
   --logs '[{"category":"AuditEvent","enabled":true}]' \
-  --workspace "$(az monitor log-analytics workspace list --resource-group sb-prod-rg \
-    --query '[0].id' -o tsv)"
+  --workspace "$(az monitor log-analytics workspace list \
+    --resource-group sb-prod-rg --query '[0].id' -o tsv)"
 ```
 
-### Phase 7 — Wire singing-bridge Container App via KV reference
+### Phase 7 — Wire singing-bridge Container App (Bicep-authoritative)
 
-Use a Key Vault reference (not a raw secret value in Bicep parameters) so the connection string never appears in deployment history:
+The `sb-db-url` secret is declared in `infra/bicep/container-app.bicep` using a Key Vault reference, so a fresh Bicep redeploy preserves it without CLI repair. The raw value never appears in deployment history.
 
-```bash
-KV_URI=$(az keyvault show --name rcnx-shared-kv \
-  --query "properties.vaultUri" -o tsv)
+In `container-app.bicep`, add to the `secrets` array (see Files Changing section for full Bicep snippet) and add to the `env` array of the server container:
 
-az containerapp secret set \
-  --name sb-server --resource-group sb-prod-rg \
-  --secrets "sb-db-url=keyvaultref:${KV_URI}secrets/sb-database-url,identityref:system"
+```bicep
+// In secrets array:
+{ name: 'sb-db-url', keyVaultUrl: '${sharedKvUri}secrets/sb-database-url', identity: 'system' }
 
-az containerapp update \
-  --name sb-server --resource-group sb-prod-rg \
-  --set-env-vars "SB_DATABASE_URL=secretref:sb-db-url"
+// In server container env array:
+{ name: 'SB_DATABASE_URL', secretRef: 'sb-db-url' }
 ```
 
-The application still boots on SQLite/`/tmp` (Sprint 19 changes the code). The env var is pre-positioned.
+`sharedKvUri` is a new non-secret parameter: `param sharedKvUri string = 'https://rcnx-shared-kv.vault.azure.net/'`.
 
-**Verify the revision starts healthy after secret injection:**
+For the Bicep KV reference to succeed, the Container App's system-assigned identity needs `Key Vault Secrets User` on the secret — granted in Phase 6. The Bicep deployment must be run after the RBAC grant propagates (~30 seconds).
+
+After deploying the updated Bicep, verify the new revision is healthy:
 
 ```bash
 NEW_REV=$(az containerapp show --name sb-server --resource-group sb-prod-rg \
   --query "properties.latestRevisionName" -o tsv)
 
 until [ "$(az containerapp revision show --name sb-server --resource-group sb-prod-rg \
-  --revision "$NEW_REV" --query "properties.runningState" -o tsv)" != "Activating" ]
-do sleep 5; done
+  --revision "$NEW_REV" --query "properties.runningState" -o tsv 2>/dev/null)" \
+  != "Activating" ]; do sleep 5; done
 
 az containerapp revision show --name sb-server --resource-group sb-prod-rg \
-  --revision "$NEW_REV" --query "{state:properties.runningState,health:properties.healthState}" -o json
-# Required: state=RunningAtMaxScale, health=Healthy
+  --revision "$NEW_REV" \
+  --query "{state:properties.runningState,health:properties.healthState}" -o json
+# REQUIRED: state=RunningAtMaxScale, health=Healthy
+# If Failed: az containerapp logs show --name sb-server --resource-group sb-prod-rg --tail 30
 ```
 
 ---
@@ -291,22 +314,22 @@ az containerapp revision show --name sb-server --resource-group sb-prod-rg \
 
 ### `infra/bicep/shared-postgres.bicep` (new)
 
-Idempotent template covering public access, firewall rule, storage auto-grow, CITEXT server parameter, and `singing_bridge` database. Uses stable API version `2023-12-01`. Avoids shadowing the `resourceGroup()` built-in.
+Manages firewall rule, CITEXT server parameter, and `singing_bridge` database on the existing (moved) server. Does **not** manage the server resource itself (public access and storage auto-grow are set via CLI as one-time operations that would be overwritten by idempotent Bicep; they can be added to the template in a follow-up).
 
 ```bicep
 // File: infra/bicep/shared-postgres.bicep
-// Purpose: Shared PostgreSQL Flexible Server configuration — public access, firewall,
-//          auto-grow, CITEXT allowlist, and per-project database provisioning.
-// Role: Idempotent; safe to re-run. Does not manage passwords (out-of-band).
+// Purpose: Idempotent configuration of shared postgres — AllowAzureServices firewall rule,
+//          CITEXT extension allowlist, and singing_bridge database.
+// Role: Declarative complement to the one-time CLI setup in PLAN_Sprint18.md.
+// Exports: none
+// Depends: vvp-postgres server in rcnx-shared-rg (existing resource, not managed here)
 // Last updated: Sprint 18 (2026-04-24) -- initial
 
 param location string = resourceGroup().location
 param serverName string = 'vvp-postgres'
-param sharedRg string = 'rcnx-shared-rg'
 
 resource pgServer 'Microsoft.DBforPostgreSQL/flexibleServers@2023-12-01' existing = {
   name: serverName
-  scope: resourceGroup(sharedRg)
 }
 
 resource fwAllowAzure 'Microsoft.DBforPostgreSQL/flexibleServers/firewallRules@2023-12-01' = {
@@ -318,6 +341,8 @@ resource fwAllowAzure 'Microsoft.DBforPostgreSQL/flexibleServers/firewallRules@2
 resource citextParam 'Microsoft.DBforPostgreSQL/flexibleServers/configurations@2023-12-01' = {
   name: 'azure.extensions'
   parent: pgServer
+  // WARNING: this overwrites the full list. Pre-flight (Phase 0) records existing value.
+  // Operator must manually include all existing extensions in this value.
   properties: { value: 'citext', source: 'user-override' }
 }
 
@@ -328,17 +353,73 @@ resource sbDatabase 'Microsoft.DBforPostgreSQL/flexibleServers/databases@2023-12
 }
 ```
 
+**Note on `azure.extensions` in Bicep:** Bicep is declarative and will set the value as written. If other extensions are added later via CLI (e.g., `uuid-ossp` for another project), those additions will be overwritten on the next Bicep deployment. The operator must keep this value current with all required extensions. The additive-append logic in Phase 3 applies to the initial one-time CLI setup only.
+
 ### `infra/bicep/shared-keyvault.bicep` (new)
 
-Key Vault with RBAC mode, purge protection, and diagnostic settings wired to the existing Log Analytics workspace.
+```bicep
+// File: infra/bicep/shared-keyvault.bicep
+// Purpose: Shared Key Vault (rcnx-shared-kv) for cross-project secrets — RBAC mode,
+//          purge protection, audit diagnostics.
+// Role: Authoritative for vault-level config; secrets and RBAC are managed via CLI.
+// Exports: keyVaultUri (output)
+// Depends: Log Analytics workspace in sb-prod-rg (for diagnostics)
+// Last updated: Sprint 18 (2026-04-24) -- initial
+
+param location string = resourceGroup().location
+param kvName string = 'rcnx-shared-kv'
+param logWorkspaceId string
+
+resource kv 'Microsoft.KeyVault/vaults@2023-07-01' = {
+  name: kvName
+  location: location
+  properties: {
+    sku: { family: 'A', name: 'standard' }
+    tenantId: subscription().tenantId
+    enableRbacAuthorization: true
+    enablePurgeProtection: true
+    softDeleteRetentionInDays: 7
+    publicNetworkAccess: 'Enabled'
+  }
+}
+
+resource kvDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = {
+  name: 'kv-audit'
+  scope: kv
+  properties: {
+    workspaceId: logWorkspaceId
+    logs: [{ category: 'AuditEvent', enabled: true }]
+  }
+}
+
+output keyVaultUri string = kv.properties.vaultUri
+```
 
 ### Update: `infra/bicep/container-app.bicep`
 
-Add `SB_DATABASE_URL` env var (pointing at `secretref:sb-db-url`). No `SB_DATA_DIR` change yet — Sprint 19. Do **not** add `sbDatabaseUrl` as a Bicep secureString parameter; the secret is managed via KV reference at the CLI level to avoid exposure in deployment history.
+Add `sharedKvUri` parameter and `sb-db-url` KV-reference secret. The secret is declared in the `secrets` array alongside existing secrets, making Bicep the authoritative source:
+
+```bicep
+// New parameter (non-secret; just the vault URI)
+param sharedKvUri string = 'https://rcnx-shared-kv.vault.azure.net/'
+
+// In configuration.secrets array, add:
+{ name: 'sb-db-url', keyVaultUrl: '${sharedKvUri}secrets/sb-database-url', identity: 'system' }
+
+// In server container env array, add:
+{ name: 'SB_DATABASE_URL', secretRef: 'sb-db-url' }
+```
+
+The container app's `identity: { type: 'SystemAssigned' }` (already present) satisfies the `identity: 'system'` reference.
 
 ### `knowledge/decisions/0002-shared-postgres-platform.md` (new)
 
-Supersedes `0001-mvp-architecture.md` on the persistence decision. Records: move from SQLite to PostgreSQL, shared-server model, per-project role isolation, rationale (SMB locking, multi-project economics), consequences (Sprint 19 app migration required).
+Supersedes the SQLite persistence decision in `0001-mvp-architecture.md`. Records:
+- Decision: PostgreSQL as the shared persistence backend for all RCNX projects
+- Shared-server model: one Flexible Server in `rcnx-shared-rg`, per-project databases and roles
+- Rationale: Azure Files SMB does not support SQLite advisory locking; shared server eliminates per-project server costs
+- Migration path: Sprint 18 (infra) → Sprint 19 (application migration)
+- Consequences: SQLite migrations rewritten for Postgres in Sprint 19; `DATABASE_TEST_URL` required for integration tests
 
 ---
 
@@ -346,134 +427,174 @@ Supersedes `0001-mvp-architecture.md` on the persistence decision. Records: move
 
 Ordered runbook — each step is a pass/fail gate. Stop and investigate before proceeding past any failure.
 
-### Step 1 — Pre-flight
+### Step 1 — Pre-flight (Phase 0)
 
 ```bash
-# Private endpoint approved
+# Private endpoint Approved
 az postgres flexible-server show --name vvp-postgres --resource-group VVP \
   --query "privateEndpointConnections[0].privateLinkServiceConnectionState.status" -o tsv
 # PASS: Approved
 
-# VVP issuer healthy (DB-dependent)
+# VVP issuer healthy
 curl -sf --max-time 10 \
   https://vvp-issuer.livelyglacier-e85ccac4.uksouth.azurecontainerapps.io/healthz
 # PASS: HTTP 200
 
-# pistis-backend revision healthy (no HTTP health probe; use ACA state)
+# pistis-backend healthy
 az containerapp revision list --name pistis-backend --resource-group VVP \
   --query "[0].{state:properties.runningState,health:properties.healthState}" -o json
 # PASS: state=Running, health=Healthy
 ```
 
-### Step 2 — Bicep what-if (idempotency check)
+### Step 2 — Bicep what-if (both templates, before deploy)
 
 ```bash
 az deployment group what-if \
   --resource-group rcnx-shared-rg \
   --template-file infra/bicep/shared-postgres.bicep
-# PASS: no unexpected destructive changes listed
+# PASS: no unexpected destructive changes
+
+az deployment group what-if \
+  --resource-group rcnx-shared-rg \
+  --template-file infra/bicep/shared-keyvault.bicep \
+  --parameters logWorkspaceId=<workspace-id>
+# PASS: no unexpected destructive changes
 ```
 
-### Step 3 — Post-move regression (immediately after Phase 1)
+### Step 3 — Post-RG-move regression (immediately after Phase 1)
 
 ```bash
-# Private endpoint still Approved after RG move
+# Private endpoint still Approved
 az postgres flexible-server show --name vvp-postgres --resource-group rcnx-shared-rg \
   --query "privateEndpointConnections[0].privateLinkServiceConnectionState.status" -o tsv
-# PASS: Approved (if Pending, re-approve and re-run)
+# PASS: Approved (re-approve if Pending using script in Phase 1)
 
-# VVP issuer still healthy — within 2 minutes of move completion, with 30 s timeout per attempt
+# VVP issuer — 4 attempts × 15 s = 60 s observation window
 for i in 1 2 3 4; do
   code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 \
     https://vvp-issuer.livelyglacier-e85ccac4.uksouth.azurecontainerapps.io/healthz)
-  echo "attempt $i: $code"
-  [ "$code" = "200" ] && break
-  sleep 15
+  echo "attempt $i: $code"; [ "$code" = "200" ] && break; sleep 15
 done
-# PASS: at least one attempt returns 200 within observation window (4 × 15 s = 60 s)
+# PASS: at least one 200 within window
+# ROLLBACK trigger: no 200 within window → move server back to VVP RG
 
-# pistis-backend revision still healthy
+# pistis-backend healthy
 az containerapp revision list --name pistis-backend --resource-group VVP \
   --query "[0].{state:properties.runningState,health:properties.healthState}" -o json
 # PASS: state=Running, health=Healthy
 ```
 
-**Rollback rule:** if `vvp-issuer /healthz` does not return 200 within the observation window, move `vvp-postgres` back to the `VVP` resource group before investigating.
-
-### Step 4 — CITEXT extension verification
+### Step 4 — CITEXT verification
 
 ```bash
-# Confirm azure.extensions server parameter accepted citext
+# Server parameter contains citext
 az postgres flexible-server parameter show \
   --name vvp-postgres --resource-group rcnx-shared-rg \
-  --parameter-name azure.extensions --query "value" -o tsv
-# PASS: citext (or comma-separated list containing citext)
+  --parameter-name azure.extensions --query "value" -o tsv | grep -i citext
+# PASS: citext present in value
 
-# Connect and verify extension installed in singing_bridge
-psql "postgres://vvpadmin:<pw>@vvp-postgres.postgres.database.azure.com/singing_bridge?sslmode=verify-full&sslrootcert=system" \
-  -c "SELECT extname, extversion FROM pg_extension WHERE extname = 'citext';"
+# Extension installed and functional in singing_bridge
+psql "postgres://vvpadmin:<pw>@vvp-postgres.postgres.database.azure.com/singing_bridge?sslmode=require" <<'SQL'
+SELECT extname, extversion FROM pg_extension WHERE extname = 'citext';
+-- PASS: one row returned
+SELECT 'FOO'::citext = 'foo'::citext AS citext_works;
+-- PASS: returns t
+SQL
+```
+
+### Step 5 — Role isolation
+
+```bash
+PG_HOST="vvp-postgres.postgres.database.azure.com"
+
+# sbapp connects to singing_bridge ✓
+psql "postgres://sbapp:<pw-B>@${PG_HOST}/singing_bridge?sslmode=require" \
+  -c "SELECT current_user, current_database();"
 # PASS: one row returned
 
-# Smoke test: citext treats 'FOO' = 'foo'
-psql "..." -c "SELECT 'FOO'::citext = 'foo'::citext;"
-# PASS: returns t (true)
-```
-
-### Step 5 — Role isolation verification
-
-```bash
-# sbapp connects to singing_bridge (PASS)
-psql "postgres://sbapp:<pw-B>@vvp-postgres.postgres.database.azure.com/singing_bridge?sslmode=verify-full&sslrootcert=system" \
-  -c "SELECT current_user, current_database();"
-
-# sbapp cannot connect to vvpissuer (PASS = connection refused / permission denied)
-psql "postgres://sbapp:<pw-B>@vvp-postgres.postgres.database.azure.com/vvpissuer?sslmode=verify-full&sslrootcert=system" \
-  -c "SELECT 1;" 2>&1 | grep -i "permission denied\|FATAL"
-
-# sbmigrate can CREATE TABLE in singing_bridge (PASS)
-psql "postgres://sbmigrate:<pw-A>@...singing_bridge?sslmode=verify-full&sslrootcert=system" \
+# sbmigrate can CREATE TABLE in singing_bridge ✓
+psql "postgres://sbmigrate:<pw-A>@${PG_HOST}/singing_bridge?sslmode=require" \
   -c "CREATE TABLE _sprint18_probe (id int); DROP TABLE _sprint18_probe;"
+# PASS: no error
 
-# sbmigrate cannot connect to vvpissuer (PASS = permission denied)
-psql "postgres://sbmigrate:<pw-A>@...vvpissuer?sslmode=verify-full&sslrootcert=system" \
+# sbapp can SELECT table created by sbmigrate (default privileges working) ✓
+psql "postgres://sbmigrate:<pw-A>@${PG_HOST}/singing_bridge?sslmode=require" \
+  -c "CREATE TABLE _priv_probe (id int);"
+psql "postgres://sbapp:<pw-B>@${PG_HOST}/singing_bridge?sslmode=require" \
+  -c "SELECT * FROM _priv_probe;"
+psql "postgres://sbmigrate:<pw-A>@${PG_HOST}/singing_bridge?sslmode=require" \
+  -c "DROP TABLE _priv_probe;"
+# PASS: sbapp SELECT succeeds with 0 rows
+
+# sbapp cannot connect to vvpissuer ✗ (expected failure)
+psql "postgres://sbapp:<pw-B>@${PG_HOST}/vvpissuer?sslmode=require" \
   -c "SELECT 1;" 2>&1 | grep -i "permission denied\|FATAL"
+# PASS: error message contains permission denied
+
+# sbmigrate cannot connect to vvpissuer ✗ (expected failure)
+psql "postgres://sbmigrate:<pw-A>@${PG_HOST}/vvpissuer?sslmode=require" \
+  -c "SELECT 1;" 2>&1 | grep -i "permission denied\|FATAL"
+# PASS: error message contains permission denied
 ```
 
-### Step 6 — Key Vault secret readability (singing-bridge identity)
+### Step 6 — Key Vault secret readability
 
 ```bash
+KV_ID=$(az keyvault show --name rcnx-shared-kv --query id -o tsv)
 SB_IDENTITY=$(az containerapp show --name sb-server --resource-group sb-prod-rg \
   --query "identity.principalId" -o tsv)
 
-# Confirm RBAC assignment exists for sb-database-url
-az role assignment list \
-  --assignee "$SB_IDENTITY" \
-  --scope "$(az keyvault show --name rcnx-shared-kv --query id -o tsv)/secrets/sb-database-url" \
-  --role "Key Vault Secrets User" \
-  --query "[0].principalId" -o tsv
-# PASS: returns the SB_IDENTITY value
+for secret in sb-database-url sb-migrate-url; do
+  echo "=== $secret ==="
+  # RBAC assignment exists
+  az role assignment list \
+    --assignee "$SB_IDENTITY" \
+    --scope "$KV_ID/secrets/$secret" \
+    --role "Key Vault Secrets User" \
+    --query "[0].principalId" -o tsv
+  # PASS: returns SB_IDENTITY value
 
-# Verify secret is readable (using current dev identity as proxy; Container App identity
-# is verified via successful revision startup in Step 7)
-az keyvault secret show --vault-name rcnx-shared-kv --name sb-database-url \
-  --query "value" -o tsv | grep -q "postgres://" && echo "PASS" || echo "FAIL"
+  # Secret is readable (under current dev identity as proxy)
+  az keyvault secret show --vault-name rcnx-shared-kv --name "$secret" \
+    --query "value" -o tsv | grep -q "postgres://" && echo "PASS: $secret readable" || echo "FAIL: $secret"
+done
 ```
 
-### Step 7 — Container App secret injection and revision health
+### Step 7 — Container App revision health after Bicep deploy
 
 ```bash
-# Inject KV reference and verify revision reaches healthy state (see Phase 7 commands)
-# PASS: state=RunningAtMaxScale, health=Healthy within 3 minutes
-```
-
-### Step 8 — Bicep idempotency (re-run)
-
-```bash
+# Deploy updated container-app.bicep (see Phase 7 for full parameter list)
 az deployment group create \
-  --resource-group rcnx-shared-rg \
-  --template-file infra/bicep/shared-postgres.bicep \
-  --what-if
-# PASS: no changes detected on second run (idempotent)
+  --resource-group sb-prod-rg \
+  --template-file infra/bicep/container-app.bicep \
+  --parameters sharedKvUri='https://rcnx-shared-kv.vault.azure.net/' \
+    [... other existing params ...]
+
+NEW_REV=$(az containerapp show --name sb-server --resource-group sb-prod-rg \
+  --query "properties.latestRevisionName" -o tsv)
+
+until [ "$(az containerapp revision show --name sb-server --resource-group sb-prod-rg \
+  --revision "$NEW_REV" --query "properties.runningState" -o tsv 2>/dev/null)" \
+  != "Activating" ]; do sleep 5; done
+
+az containerapp revision show --name sb-server --resource-group sb-prod-rg \
+  --revision "$NEW_REV" \
+  --query "{state:properties.runningState,health:properties.healthState}" -o json
+# PASS: state=RunningAtMaxScale, health=Healthy
+# FAIL action: az containerapp logs show --name sb-server --resource-group sb-prod-rg --tail 30
+```
+
+### Step 8 — Bicep idempotency (re-run both templates)
+
+```bash
+az deployment group create --resource-group rcnx-shared-rg \
+  --template-file infra/bicep/shared-postgres.bicep --what-if
+# PASS: no changes
+
+az deployment group create --resource-group rcnx-shared-rg \
+  --template-file infra/bicep/shared-keyvault.bicep \
+  --parameters logWorkspaceId=<workspace-id> --what-if
+# PASS: no changes
 ```
 
 ---
@@ -482,26 +603,24 @@ az deployment group create \
 
 | Risk | Likelihood | Mitigation |
 |------|-----------|------------|
-| Private endpoint requires re-approval after RG move | Medium | Step 3 checks and re-approves if needed before proceeding |
-| `AllowAzureServices` expands attack surface | Low-medium | `sslmode=verify-full` + strong passwords + `pg-admin-password` restricted to platform RBAC |
-| DigiCert G2 CA missing from container image | Low | Debian-based images include it via `ca-certificates`; verified at connection test time |
-| CITEXT `azure.extensions` parameter requires server restart | Low | Azure Flexible Server applies this parameter without restart; check in Step 4 |
-| VVP Bicep breaks after RG move | Medium | FQDN is unchanged; VVP Bicep references server by name, not resource ID — verify pre-move |
-| `ALTER DEFAULT PRIVILEGES` must be re-run per migration session | Low | Sprint 19 uses `sbmigrate` for DDL; `sbapp` needs explicit grants after each migration — document in Sprint 19 plan |
+| Private endpoint requires re-approval after RG move | Medium | Phase 1 includes conditional re-approval script |
+| `azure.extensions` Bicep overwrites future CLI additions | Medium | Documented in template comment; operator must keep Bicep value current |
+| `ALTER DEFAULT PRIVILEGES` not effective for existing tables | Low | Only applies to future objects; Sprint 19 starts with empty DB so all tables are future |
+| RBAC grant propagation delay before Bicep deploy | Low | Phase 7 notes 30 s wait; az deployment will fail fast with clear error if KV read denied |
+| VVP apps broken by RG move | Very low | FQDN unchanged; verified in Step 3 within 60 s observation window with rollback trigger |
+| `sslrootcert=system` not supported by sqlx | Acknowledged | App connection string uses `sslmode=require` only; full cert validation is a Sprint 19 task |
 
 ---
 
 ## Files changing
 
-| File | Change | Owner |
-|------|--------|-------|
-| `infra/bicep/shared-postgres.bicep` | New: public access config, firewall rule, CITEXT parameter, `singing_bridge` database | singing-bridge repo |
-| `infra/bicep/shared-keyvault.bicep` | New: `rcnx-shared-kv` with RBAC, purge protection, diagnostics | singing-bridge repo |
-| `infra/bicep/container-app.bicep` | Add `SB_DATABASE_URL` env var referencing secret (no raw value in template) | singing-bridge repo |
-| `knowledge/decisions/0002-shared-postgres-platform.md` | New ADR superseding SQLite decision in 0001 | singing-bridge repo |
-| VVP bicep (`container-app.bicep` or equivalent) | Update server resource group reference: `VVP` → `rcnx-shared-rg` | VVP repo — coordinate before Phase 1 |
-
-**No application code changes in this sprint.**
+| File | Change |
+|------|--------|
+| `infra/bicep/shared-postgres.bicep` | New: firewall rule, CITEXT parameter, `singing_bridge` database |
+| `infra/bicep/shared-keyvault.bicep` | New: `rcnx-shared-kv` with RBAC, purge protection, diagnostics |
+| `infra/bicep/container-app.bicep` | Add `sharedKvUri` param; add `sb-db-url` KV-ref secret; add `SB_DATABASE_URL` env var |
+| `knowledge/decisions/0002-shared-postgres-platform.md` | New ADR superseding SQLite decision |
+| VVP infra | **No change required** — VVP apps reference postgres by FQDN (unchanged by RG move) |
 
 ---
 
@@ -509,10 +628,11 @@ az deployment group create \
 
 - `rcnx-shared-rg` exists; `vvp-postgres` is in it; private endpoint status `Approved`
 - `AllowAzureServices` firewall rule confirmed; storage auto-grow enabled
-- `citext` server parameter set and extension installed in `singing_bridge`; CITEXT smoke test passes
-- `sbmigrate` and `sbapp` roles exist with correct grants; isolation verified (Steps 5)
-- `rcnx-shared-kv` exists with purge protection, diagnostics, and all four secrets; RBAC grants confirmed
-- `SB_DATABASE_URL` KV reference set in singing-bridge Container App; new revision `Healthy`
-- VVP `vvp-issuer /healthz` → 200 and `pistis-backend` revision `Healthy` throughout
+- `azure.extensions` contains `citext`; extension installed in `singing_bridge`; citext smoke test passes (Step 4)
+- `sbmigrate` and `sbapp` roles exist with correct grants; all Step 5 isolation checks pass
+- `rcnx-shared-kv` exists with purge protection, diagnostics; RBAC grants confirmed for both `sb-database-url` and `sb-migrate-url` (Step 6)
+- `SB_DATABASE_URL` KV reference declared in `container-app.bicep`; new revision `Healthy` (Step 7)
+- VVP `vvp-issuer /healthz` → 200 and `pistis-backend` revision `Healthy` throughout (Steps 1, 3)
 - `knowledge/decisions/0002-shared-postgres-platform.md` committed
-- `infra/bicep/shared-postgres.bicep` idempotency confirmed (Step 8)
+- Both Bicep templates idempotent (Step 8)
+- Sprint 19 prerequisite documented: sqlx `tls` feature flag for `verify-full` application TLS

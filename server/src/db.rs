@@ -8,8 +8,8 @@
 //             max_connections=4; SQLite serialises writers internally via busy_timeout.
 //             CRITICAL: minReplicas=maxReplicas=1 in infra/bicep/container-app.bicep must stay
 //             at 1 while SQLite is the DB engine — a second replica would corrupt the database.
-// Last updated: Sprint 17 hotfix (2026-04-24) -- revert WAL → DELETE (SMB Azure Files does
-//               not support POSIX byte-range locks required by WAL)
+// Last updated: Sprint 17 (2026-04-24) -- revert WAL → DELETE (SMB Azure Files does not
+//               support POSIX byte-range locks required by WAL)
 
 use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
 

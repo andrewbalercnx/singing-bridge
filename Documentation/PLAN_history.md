@@ -10379,3 +10379,1155 @@ No flaky policy changes (NFS is not exercised in CI).
 | `knowledge/runbook/deploy.md` | VNet deploy step; cutover procedure; backup/restore with encryption note; single-replica constraint |
 | `knowledge/decisions/0001-mvp-architecture.md` | Add NFS transport accepted-risk note under storage section |
 
+
+---
+
+# Sprint 17: Teacher dashboard + session UI redesign
+
+_Archived: 2026-04-23_
+
+# PLAN — Sprint 17: Teacher dashboard + session UI redesign
+
+**Status:** DRAFT R3 — pending council review
+
+---
+
+## Problem Statement
+
+The teacher UI has two problems:
+
+1. **No hub.** Assets are scattered across three unlinked pages (`/teach/<slug>/session`, `.../recordings`, `.../library`). There is no central place to check on recent students, find a past recording, or queue up an accompaniment before starting a session.
+
+2. **Session view doesn't use the screen well.** The current session UI is a vertical flex column inside a narrow container. The video tiles don't fill the screen. The self-view is a fixed 110×130px card in the controls row, not an overlay on the remote video. The accompaniment drawer floats outside the video area. On a laptop, the teacher spends time scrolling and hunting rather than teaching.
+
+---
+
+## User Outcome
+
+**1. Who benefits and what job are they doing?**
+The teacher. Between sessions: reviewing past recordings, choosing an accompaniment, checking who attended. In-session: coaching — they need to see the student clearly, be aware of their own presence, and cue backing tracks without looking away from the student.
+
+**2. What does success look like from the user's perspective?**
+Between sessions: the teacher lands on a single page and can reach any asset — a past recording, the library, their room — in one click, without knowing any URL paths.
+In-session: the student fills the screen. The teacher sees themselves in a small corner overlay. The accompaniment panel slides in and out on demand without displacing the video. Controls are icon-only and immediately legible.
+
+**3. Why is this sprint the right next step for the product?**
+Persistence is now solved (Sprint 16). The core session works. The UI is the last major barrier to the teacher actually using the product in a real lesson.
+
+---
+
+## Current State
+
+From codegraph + file review:
+
+- `web/teacher.html` — single page with lobby section and session section; served at `GET /teach/<slug>` to authenticated teacher; unauthenticated visitors get `student.html`
+- `server/src/http/teach.rs` — `get_teach()` resolves owner from cookie, switches between `teacher.html` and `student.html`; sets `Cache-Control: private, no-store` and `Vary: Cookie`
+- `web/assets/teacher.js` — wires lobby (admit/reject/message), session (record, quality badge, send-recording modal), calls `sbSignalling.connectTeacher()`
+- `web/assets/session-ui.js` — `sbSessionUI.mount()`: `sb-session` (column flex), `sb-session__stage` (remote panel, breath ring), `sb-baseline` (audio meters, elapsed time), `sb-bottom` (controls row + 110×130px self-preview card)
+- `web/assets/session-panels.js` — pure DOM builders: `buildRemotePanel`, `buildControls` (mic/video/note/chat/end with text labels), `buildEndDialog`
+- `web/assets/accompaniment-drawer.js` — `sbAccompanimentDrawer.mount()` appended to `#accompaniment-drawer-root`; floating drawer outside session shell
+- `web/assets/theme.css` — `.sb-selfcard` fixed 110×130px; `.sb-session` position:absolute flex-column
+- Routes: `GET /api/recordings` (JSON list), `GET /teach/:slug/library/assets` (JSON array of assets), `GET /teach/:slug/history` (HTML page); no `/teach/:slug/session` route exists
+
+---
+
+## Proposed Solution
+
+### Part 1 — Teacher dashboard (`GET /teach/<slug>/dashboard`)
+
+**ADR-0001 compliance:** The ADR requires the lobby to remain live in parallel with an active session — "the lobby updates live in parallel with the active media session." The dashboard does NOT replace the lobby. The dashboard is for **between-session** asset management only. The session page retains the full lobby and session UI unchanged in terms of lobby functionality.
+
+**Routing model:**
+
+| URL | Auth state | Response |
+|-----|-----------|----------|
+| `GET /teach/<slug>` | Authenticated owner | `302` → `/teach/<slug>/dashboard` |
+| `GET /teach/<slug>` | Unauthenticated | `student.html` (no change) |
+| `GET /teach/<slug>/dashboard` | Authenticated owner | `dashboard.html` |
+| `GET /teach/<slug>/dashboard` | Not owner / unauthenticated | `302` → `/teach/<slug>` |
+| `GET /teach/<slug>/session` | Authenticated owner | `teacher.html` (session + lobby) |
+| `GET /teach/<slug>/session` | Not owner / unauthenticated | `302` → `/teach/<slug>` |
+
+The "Enter Room" button on the dashboard navigates to `/teach/<slug>/session`. No query-param bypass. `/teach/<slug>` for the authenticated owner always redirects to the dashboard; the session is only reachable via the dedicated `/session` route.
+
+**Cache headers:** All three owner-only responses (`/dashboard`, `/session`, redirect) must carry `Cache-Control: private, no-store` and `Vary: Cookie`, matching the pattern already established in `teach.rs`.
+
+**Dashboard page structure (`dashboard.html`):**
+
+```
+┌────────────────────────────────────────────────────────────┐
+│  singing-bridge   Your room: [slug]      [Enter Room →]    │  ← nav
+├──────────────────┬─────────────────────────────────────────┤
+│  SESSION HISTORY │  RECORDINGS                             │
+│  (links to /hist)│  (last 10 via GET /api/recordings)      │
+│                  │  [Send] [Delete] per row                 │
+├──────────────────┴─────────────────────────────────────────┤
+│  ACCOMPANIMENT LIBRARY                                     │
+│  N assets  (via GET /teach/<slug>/library/assets)          │
+│  [thumbnail × 4]   → full library link                    │
+└────────────────────────────────────────────────────────────┘
+```
+
+**Data sources (all JSON, existing endpoints):**
+- Recordings: `GET /api/recordings` — JSON array; dashboard renders last 10 rows (send/delete links)
+- Library summary: `GET /teach/<slug>/library/assets` — JSON array; asset count = `array.length`; first 4 thumbnails shown via `/api/media/:token` URLs in the asset objects
+- Session history: `GET /teach/<slug>/history` returns HTML; dashboard shows a link to the full history page rather than fetching inline (avoids parsing HTML)
+
+All fetches use `fetch()` with `credentials: 'include'`. All student/asset-supplied strings rendered via `.textContent` (no `innerHTML` for user-supplied data).
+
+**New files:**
+- `web/dashboard.html`
+- `web/assets/dashboard.js`
+- `server/src/http/dashboard.rs`
+
+**Modified files:**
+- `server/src/http/teach.rs` — add `302` redirect for authenticated owner; add `GET /teach/:slug/session` handler (or share handler with flag)
+- `server/src/http/mod.rs` — register `/teach/:slug/dashboard` and `/teach/:slug/session` routes
+- `web/teacher.html` — update `<link>` to ensure JS loads for session page at new route (minimal change; lobby wiring unchanged)
+- `web/assets/teacher.js` — update slug extraction from pathname (handles `/teach/<slug>/session`)
+
+---
+
+### Part 2 — Session UI layout
+
+**ADR-0001 lobby preserved:** The lobby section in `teacher.html` and all its wiring in `teacher.js` is unchanged. The redesign affects only `#session-root` (the session panel that mounts when a student is admitted) and the surrounding visual layout.
+
+**Target layout (laptop 1280×800, accompaniment panel open):**
+
+```
+┌────────────────────────────────────────────────────────────┐
+│  LOBBY (unchanged — shown before/during session)           │
+├───────────────────────────────────┬────────────────────────┤
+│  OTHER VIEW (student)             │  ACCOMPANIMENT PANEL   │
+│  ~66% width, full height          │  ~30% width            │
+│                                   │  ─────────────────     │
+│  ┌──────────────────┐             │  Track name            │
+│  │  SELF VIEW (PiP) │  nameplate  │  ◀ ══════ slider ▶    │
+│  │  bottom-left 20% │  hp chip    │  ⏸ Pause / Resume     │
+│  └──────────────────┘             │  📄 Score viewer       │
+├───────────────────────────────────┴────────────────────────┤
+│  [🎤] [📷] [🎵]  [💬]                         [📞 End]   │
+│  icon-only bar (teacher: all 4; student: mic, vid, end)    │
+└────────────────────────────────────────────────────────────┘
+```
+
+When accompaniment panel is closed: other-view expands to full width.
+
+**CSS additions in `theme.css`:**
+
+```css
+/* Session shell — three-zone grid */
+.sb-session-v2 {
+  position: absolute; inset: 0;
+  display: grid;
+  grid-template-rows: 1fr auto;          /* [video row] [control bar] */
+  grid-template-columns: 1fr;
+  background: var(--sb-ink); color: var(--sb-paper);
+}
+.sb-session-v2.sb-accmp-open {
+  grid-template-columns: 1fr 300px;     /* [video] [accompaniment] */
+}
+
+/* Video zone — positions other-view + PiP */
+.sb-video-zone {
+  grid-row: 1; grid-column: 1;
+  position: relative; background: #000;
+  border-radius: var(--sb-r-lg); overflow: hidden;
+  min-width: 0;
+}
+
+/* Self-view PiP */
+.sb-selfpip {
+  position: absolute; bottom: 16px; left: 16px;
+  width: 20%; aspect-ratio: 4/3;
+  border-radius: var(--sb-r-md); overflow: hidden;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+  border: 1px solid rgba(251,246,239,0.12);
+  z-index: 4;
+}
+.sb-selfpip video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+
+/* Accompaniment panel */
+.sb-accmp-panel {
+  grid-row: 1; grid-column: 2;
+  display: flex; flex-direction: column; gap: var(--sb-space-3);
+  padding: var(--sb-space-4);
+  border-left: 1px solid rgba(251,246,239,0.08);
+  overflow-y: auto; min-width: 0;
+}
+
+/* Icon-only control bar */
+.sb-iconbar {
+  grid-row: 2; grid-column: 1 / -1;
+  display: flex; align-items: center; gap: var(--sb-space-2);
+  padding: 10px var(--sb-space-4);
+  background: rgba(15,23,32,0.85); backdrop-filter: blur(8px);
+  border-top: 1px solid rgba(251,246,239,0.06);
+}
+.sb-iconbtn {
+  width: 44px; height: 44px; border: none;
+  border-radius: var(--sb-r-md);
+  background: rgba(251,246,239,0.08); color: var(--sb-paper);
+  display: flex; align-items: center; justify-content: center; cursor: pointer;
+  flex-shrink: 0;
+}
+.sb-iconbtn[aria-pressed="true"] { background: rgba(251,246,239,0.18); }
+.sb-iconbtn.sb-end { margin-left: auto; background: rgba(225,127,139,0.2); color: var(--sb-rose); }
+```
+
+**JS changes — keeping mount() ≤40 lines of own logic:**
+
+All new DOM builders go in `session-panels.js` (the established home for panel builders). `session-ui.js::mount()` remains an orchestrator that calls into `session-panels.js`.
+
+`session-panels.js` additions:
+- `buildSelfPip(stream)` — builds `.sb-selfpip` with mirrored video
+- `buildAccmpPanel(opts)` — builds `.sb-accmp-panel` with track-name `<p>`, `<input type="range">` seek slider, pause/resume `<button>`, score-viewer-toggle `<button>`; returns `{ node, setTrackName, setPosition, setDuration, setPaused }`
+- `buildIconBar(opts)` — replaces `buildControls()`; renders icon-only `sb-iconbtn` buttons; `opts.isTeacher` gates accompaniment toggle button; SVG icon set gains `music` icon
+
+**Shared `el()` helper:** Both `session-ui.js` and `session-panels.js` already define a local `el(tag, cls)` — these remain local (two lines each, no extraction needed). `dashboard.js` defines its own local `el()` for the same reason. No shared utility module introduced.
+
+`session-ui.js::mount()` updated layout:
+```js
+function mount(container, opts) {
+  var panels = _g.sbSessionPanels;
+  var audioCtx = new AudioContext();
+  // ... audio setup (unchanged) ...
+  var remotePanel = panels.buildRemotePanel({...});
+  var selfPip     = panels.buildSelfPip(opts.localStream);
+  var accmpPanel  = opts.isTeacher ? panels.buildAccmpPanel({...}) : null;
+  var iconBar     = panels.buildIconBar({...isTeacher: opts.isTeacher...});
+  var baseline    = buildBaselineStrip();
+  var mutedBanner = opts.localStream ? buildMutedBanner() : makeNullBanner();
+  var endDialog   = panels.buildEndDialog(function () { opts.onEnd(); });
+
+  var videoZone = el('div', 'sb-video-zone');
+  videoZone.append(remotePanel.node, selfPip.node);
+  var shell = el('div', 'sb-session-v2');
+  shell.append(videoZone);
+  if (accmpPanel) shell.append(accmpPanel.node);
+  shell.append(iconBar.node, mutedBanner.node, endDialog);
+  if (chatDrawer) shell.append(chatDrawer.node);
+  container.appendChild(shell);
+
+  return runSessionLifecycle(shell, {...}, opts);
+}
+```
+`mount()` call site is ≤40 lines; all building is in named builders.
+
+**Accompaniment toggle in `teacher.js`:**
+```js
+var accmpOpen = sessionStorage.getItem('sb-accmp-open') === '1';
+iconBar.setAccmpOpen(accmpOpen);  // syncs aria-pressed + shell class
+
+iconBar.onAccmpToggle = function () {
+  accmpOpen = !accmpOpen;
+  shell.classList.toggle('sb-accmp-open', accmpOpen);
+  iconBar.setAccmpOpen(accmpOpen);
+  sessionStorage.setItem('sb-accmp-open', accmpOpen ? '1' : '0');
+};
+```
+
+**`accompaniment-drawer.js` — `panelEl` option:**
+`mount(container, opts)` gains `opts.panelEl`. When provided, render controls into `panelEl` instead of building a floating drawer `<div>`. The audio element lifecycle (play/pause/seek/rAF loop, latency offset) is unchanged. Backward-compatible: `panelEl` absent → current drawer behaviour.
+
+**Old `buildControls()` and `buildSelfPreview()` removal:** Both are removed from `session-ui.js` and `session-panels.js`. `buildSelfPreview` is superseded by `buildSelfPip` in `session-panels.js`. `buildControls` is superseded by `buildIconBar`. The `sb-btn-label` span pattern and associated helpers are deleted. Callers in `session-ui.js` updated. Existing `web/assets/tests/controls.test.js` updated to test `buildIconBar` instead.
+
+**`dashboard.js` module pattern:** Plain IIFE self-contained script, same pattern as `library.js` and `recordings.js` — no ES module syntax, no `window.sbXxx` export (dashboard has no callers).
+
+---
+
+## Component-by-component design
+
+### `server/src/auth/slug.rs` — reserved slug additions
+
+Add `"session"` and `"dashboard"` to `RESERVED_SLUGS`. Both are now server-owned path segments under `/teach/:slug/...`; allowing a teacher to claim either as their room slug would produce an ambiguous URL collision. The existing `rejects_reserved` test exercises all reserved slugs automatically.
+
+---
+
+### `server/src/http/dashboard.rs`
+
+```rust
+pub async fn get_dashboard(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(slug): Path<String>,
+) -> Result<Response> {
+    let slug = validate(&slug).map_err(|_| AppError::NotFound)?;
+    let teacher_exists = /* SELECT COUNT(*) FROM teachers WHERE slug = ? */ ...;
+    if teacher_exists == 0 { return Err(AppError::NotFound); }
+    let is_owner = resolve_teacher_from_cookie(...) matches the slug owner;
+    if !is_owner {
+        return Ok(Redirect::to(&format!("/teach/{}", slug)).into_response());
+    }
+    // serve dashboard.html with debug injection + cache headers
+    let mut resp = Html(html).into_response();
+    resp.headers_mut().insert(CACHE_CONTROL, HeaderValue::from_static("private, no-store"));
+    resp.headers_mut().insert(VARY, HeaderValue::from_static("Cookie"));
+    Ok(resp)
+}
+```
+
+### `server/src/http/teach.rs` changes
+
+`get_teach()` updated: after confirming `is_owner` **and** the request path is `/teach/<slug>` (not `/teach/<slug>/session`), issue `302` to `/teach/<slug>/dashboard`.
+
+New handler `get_session()` reuses the same logic but serves `teacher.html` without redirect. Both handlers set `Cache-Control: private, no-store` + `Vary: Cookie`.
+
+Alternatively (simpler): single handler parameterised by a boolean `is_session_route` derived from which route pattern matched. Implementation choice deferred to coding; either is acceptable.
+
+### `server/src/http/mod.rs`
+
+```rust
+.route("/teach/:slug/dashboard", get(dashboard::get_dashboard))
+.route("/teach/:slug/session",   get(teach::get_session))
+// /teach/:slug → get_teach (now redirects owner to dashboard)
+```
+
+### `web/teacher.html`
+
+Minimal change: update slug extraction note. The `<script src>` list unchanged. Script at the bottom gains a comment that the page is now served at `/teach/<slug>/session`.
+
+### `web/assets/teacher.js`
+
+Update slug extraction:
+```js
+// Handles both /teach/<slug> and /teach/<slug>/session
+const slug = location.pathname.replace(/^\/teach\//, '').replace(/\/session$/, '');
+```
+
+Add accompaniment-toggle wiring (after session mounts) connecting `iconBar.onAccmpToggle` and restoring `sessionStorage` state.
+
+---
+
+## Test Strategy
+
+### Property / invariant coverage
+
+**Rust (`server/tests/http_dashboard.rs` — new file):**
+- Authenticated owner `GET /teach/<slug>/dashboard` → 200 with `Cache-Control: private, no-store` and `Vary: Cookie`
+- Non-owner authenticated `GET /teach/<slug>/dashboard` → 302 to `/teach/<slug>`
+- Unauthenticated `GET /teach/<slug>/dashboard` → 302 to `/teach/<slug>`
+- `GET /teach/<slug>` as authenticated owner → 302 with `Location: /teach/<slug>/dashboard`; response carries `Cache-Control: private, no-store` and `Vary: Cookie`
+- `GET /teach/<slug>` as unauthenticated → 200 with student.html content (no regression)
+- `GET /teach/<slug>/session` as authenticated owner → 200 with teacher.html content; `Cache-Control: private, no-store`
+- `GET /teach/<slug>/session` as unauthenticated → 302 to `/teach/<slug>`
+- Unknown slug `/teach/nosuchslug/dashboard` → 404
+
+**Node (`web/assets/tests/session-panels.test.js` — new file):**
+- `buildSelfPip(stream)` — returns node with class `sb-selfpip`; video element is muted and has `transform: scaleX(-1)` style
+- `buildAccmpPanel({})` — node contains `<input type="range">` and `<button>` for pause/resume; setters: `setTrackName('X')` updates track name `<p>` textContent; `setPosition(500)` updates slider value; `setDuration(1000)` updates slider max; `setPaused(true)` updates button text/aria
+- `buildIconBar({ isTeacher: true })` — renders 5 buttons (mic, vid, accompaniment, chat, end); each has `aria-label`; end button has class `sb-end`
+- `buildIconBar({ isTeacher: false })` — renders 3 buttons (mic, vid, end); no accompaniment or chat button
+- No `sb-btn-label` spans anywhere in `buildIconBar` output (regression against removed label pattern)
+
+**Node (`web/assets/tests/dashboard.test.js` — new file):**
+- Dashboard JS renders recording rows with `textContent` only (no `innerHTML` for user-supplied data — XSS guard)
+- `GET /api/recordings` fetch failure → recordings panel contains an error message element; library panel still present in DOM (independent failure)
+- `GET /teach/<slug>/library/assets` fetch failure → library panel contains an error message element; recordings panel still present in DOM
+
+### Failure-path coverage
+
+- `GET /api/recordings` fails → recordings panel shows inline error; library panel still renders
+- `GET /teach/<slug>/library/assets` fails → library panel shows inline error; rest of dashboard still renders
+- `panelEl` null in `accompaniment-drawer.js` → falls back to floating drawer (existing behaviour, verified by existing `accompaniment-drawer.test.js`)
+- `panelEl` non-null in `accompaniment-drawer.js` → controls rendered into provided element; play/pause button click updates `audio.paused` state; seek slider update seeks `audio.currentTime` (new test case in `accompaniment-drawer.test.js`)
+- Malformed slug in `get_dashboard` → 404 (validated by `validate()` call)
+
+### Regression guards (one per prior-round finding)
+
+- **R1/Sprint 14:** Teacher latency offset (`getOneWayLatencyMs`) applied in `accompaniment-drawer.js` audio scheduling — unaffected by `panelEl` addition (scheduling is in the audio loop, not the DOM path). Verified by `accompaniment-drawer.test.js` latency test (existing).
+- **R2/Sprint 9:** Peer-supplied strings (student name, email, track names) reach no `innerHTML` in any new panel builder or dashboard renderer — asserted by XSS test in `session-panels.test.js` and `dashboard.test.js`.
+- **R3/Sprint 16:** Unauthenticated `GET /teach/<slug>` still serves `student.html` — explicit test case in `http_dashboard.rs`.
+- **R4/Sprint 11:** Dashboard history panel is a link to `/teach/<slug>/history`, not an inline fetch — no unbounded request risk; verified structurally.
+
+### Fixture reuse plan
+
+- `server/tests/common/` — reuse existing `spawn_app()`, `register_teacher()`, `login_teacher()` helpers in new `http_dashboard.rs`
+- `web/assets/tests/controls.test.js` — renamed / updated to test `buildIconBar` in place of the removed `buildControls` with labels
+- `web/assets/tests/session-panels.test.js` — extend with `buildSelfPip` and `buildAccmpPanel` cases using existing Node test runner pattern (`node --test`)
+
+### Test runtime budget
+
+`cargo test` (all Rust integration tests): currently ~30 s; new `http_dashboard.rs` adds ~3 s (8 HTTP tests). Node tests (`node --test web/assets/tests/*.test.js`): currently ~2 s; new tests add <1 s. Total budget: ≤40 s. Flaky policy: failure in CI that passes locally 3× → quarantine and file bug; do not skip.
+
+---
+
+## File paths and required header updates
+
+| Action | File | Header change |
+|--------|------|---------------|
+| Create | `web/dashboard.html` | New header |
+| Create | `web/assets/dashboard.js` | New header |
+| Create | `server/src/http/dashboard.rs` | New header |
+| Create | `server/tests/http_dashboard.rs` | New header |
+| Create | `web/assets/tests/dashboard.test.js` | New header |
+| Modify | `server/src/http/teach.rs` | Bump `Last updated`; update Purpose (redirect logic) |
+| Modify | `server/src/http/mod.rs` | Bump `Last updated` |
+| Modify | `web/teacher.html` | Bump `Last updated` |
+| Modify | `web/assets/teacher.js` | Bump `Last updated`; update Purpose (session route slug extraction) |
+| Modify | `web/assets/session-ui.js` | Bump `Last updated`; update Exports (v2 layout) |
+| Modify | `web/assets/session-panels.js` | Bump `Last updated`; update Exports (buildSelfPip, buildAccmpPanel, buildIconBar; remove buildControls) |
+| Modify | `web/assets/accompaniment-drawer.js` | Bump `Last updated`; update Purpose (panelEl option) |
+| Modify | `web/assets/theme.css` | Bump `Last updated` |
+| Modify | `web/assets/tests/controls.test.js` | Bump `Last updated`; update Purpose |
+| Create | `web/assets/tests/session-panels.test.js` | New header |
+| Modify | `web/assets/tests/accompaniment-drawer.test.js` | Bump `Last updated` (add panelEl positive-path test) |
+| Modify | `server/src/auth/slug.rs` | Bump `Last updated`; add `"session"` and `"dashboard"` to `RESERVED_SLUGS` |
+| Update | `knowledge/decisions/0001-mvp-architecture.md` | No change — lobby model preserved; no ADR amendment needed |
+
+---
+
+## Risks and mitigations
+
+| Risk | Mitigation |
+|------|------------|
+| `buildControls` removal breaks `session-ui.js` callers | Only one call site in `session-ui.js`; renamed to `buildIconBar` at the same time; caught by `session-panels.test.js` |
+| `accompaniment-drawer.js::mount()` is already long; `panelEl` branch adds more | The branch is a single `if (opts.panelEl)` at DOM construction time; audio lifecycle untouched; no function length increase in hot paths |
+| `sb-accmp-open` sessionStorage key persists across page reloads but the session may have ended | Cleared in teardown via `sessionStorage.removeItem('sb-accmp-open')` |
+| 300px accompaniment panel too narrow on 1280px | Panel uses `overflow-y: auto`; slider uses `width: 100%`; no fixed-width inner content |
+| Library thumbnail fetch (`/api/media/:token`) may 404 if asset has no WAV yet | Dashboard shows placeholder for missing thumbnails; errors are per-card, not page-fatal |
+
+
+---
+
+# Sprint 18: Shared PostgreSQL platform
+
+_Archived: 2026-04-24_
+
+# PLAN_Sprint18.md — Shared PostgreSQL platform
+
+## Problem Statement
+
+RCNX is developing multiple projects (VVP, singing-bridge, pistis) on the same Azure subscription. Each project currently owns or plans to own its own PostgreSQL server. `vvp-postgres` (Standard_B1ms, PG 16, UK South) is already provisioned and underused — it hosts only two databases (`vvpissuer`, `pistis`) against a 32 GB allocation. Rather than provision a second B1ms server for singing-bridge (~£12/month), the correct platform move is to promote `vvp-postgres` to a shared, governed, multi-project asset under neutral ownership.
+
+Singing-bridge also needs a live postgres connection string before the Sprint 19 application migration can begin. This sprint delivers that endpoint.
+
+## User Outcome
+
+**Who benefits and what job are they doing?**
+Platform engineers across all RCNX projects. Each project team needs a reliable, persistent database without owning server-level infrastructure. Today, every project that needs postgres either pays for its own server or relies on an informally shared one with no governance.
+
+**What does success look like from the user's perspective?**
+After this sprint: a singing-bridge developer can open `PLAN_Sprint19.md`, see a working `SB_DATABASE_URL` already stored in the Container App secrets, and start the application migration with no infra work remaining. VVP developers notice no change to their setup. A future third project can add a database and role to the shared server in under 30 minutes by following the documented procedure in `knowledge/decisions/0002-shared-postgres-platform.md`.
+
+**Why is this sprint the right next step for the product?**
+Sprint 19 (app migration) cannot begin until postgres is reachable from the singing-bridge Container App. This sprint is the blocker-removal sprint.
+
+---
+
+## Current State
+
+Verified from deployed Azure resources (2026-04-24):
+
+| Resource | Detail |
+|----------|--------|
+| `vvp-postgres` | Standard_B1ms Burstable, PG 16.11, UK South, 32 GB, public access **Disabled**, storage auto-grow **Disabled** |
+| Private endpoint | `vvp-pg-pe` in `postgres-subnet` (10.0.2.0/24) of `vvp-vnet` (10.0.0.0/16), status **Approved** |
+| Private DNS zone | `privatelink.postgres.database.azure.com` linked to `vvp-vnet` only |
+| Existing databases | `vvpissuer`, `pistis` (plus system DBs) |
+| Admin login | `vvpadmin` |
+| VVP app connectivity | `vvp-issuer` and `pistis-backend` reference postgres by **FQDN** (`vvp-postgres.postgres.database.azure.com`) in plain env vars — FQDN is unchanged by resource-group move, so **no VVP configuration changes are needed** |
+| `sb-env` | Consumption-only Container Apps environment — `vnet: null`, `workloadProfiles: null` — confirmed **no VNet integration**, no fixed outbound IP |
+| `sb-vnet` | 10.0.0.0/16 — **overlaps** `vvp-vnet` (10.0.0.0/16); VNet peering blocked without re-addressing |
+| `sb-server` identity | `SystemAssigned` managed identity (from `container-app.bicep`) |
+
+**Networking rationale:** `sb-env` is a consumption-only environment with no VNet integration and no fixed egress IP. The overlapping address spaces block VNet peering. The only viable path for singing-bridge to reach postgres is public access with credential + TLS controls. VVP services continue using the private endpoint unchanged.
+
+---
+
+## Architecture Decision Record
+
+This sprint changes the persistence architecture recorded in `knowledge/decisions/0001-mvp-architecture.md`, which currently specifies SQLite as the database engine. A superseding ADR (`knowledge/decisions/0002-shared-postgres-platform.md`) is in scope and must be committed before the code review. It records:
+- The decision to move to PostgreSQL
+- The shared-server model and per-project isolation approach
+- Rationale (SMB locking, multi-project cost efficiency)
+- Consequences for Sprint 19 (application migration)
+
+---
+
+## Proposed Solution
+
+### Phase 0 — Pre-flight
+
+Record the current `azure.extensions` value for rollback, and confirm VVP health and private endpoint state before any changes.
+
+```bash
+# Record current azure.extensions value (append-safe update in Phase 3)
+CURRENT_EXT=$(az postgres flexible-server parameter show \
+  --name vvp-postgres --resource-group VVP \
+  --parameter-name azure.extensions --query "value" -o tsv)
+echo "Current azure.extensions: $CURRENT_EXT"  # record for rollback
+
+# Private endpoint approved
+az postgres flexible-server show --name vvp-postgres --resource-group VVP \
+  --query "privateEndpointConnections[0].privateLinkServiceConnectionState.status" -o tsv
+# PASS: Approved
+
+# VVP issuer healthy
+curl -sf --max-time 10 \
+  https://vvp-issuer.livelyglacier-e85ccac4.uksouth.azurecontainerapps.io/healthz
+# PASS: HTTP 200
+
+# pistis-backend revision healthy
+az containerapp revision list --name pistis-backend --resource-group VVP \
+  --query "[0].{state:properties.runningState,health:properties.healthState}" -o json
+# PASS: state=Running, health=Healthy
+```
+
+### Phase 1 — Governance: move server to shared resource group
+
+```bash
+az group create --name rcnx-shared-rg --location uksouth
+
+az resource move \
+  --destination-group rcnx-shared-rg \
+  --ids $(az postgres flexible-server show \
+    --name vvp-postgres --resource-group VVP --query id -o tsv)
+```
+
+After the move, verify the private endpoint connection state. Resource-group moves change the server's resource ID, which can require re-approval:
+
+```bash
+STATUS=$(az postgres flexible-server show --name vvp-postgres \
+  --resource-group rcnx-shared-rg \
+  --query "privateEndpointConnections[0].privateLinkServiceConnectionState.status" -o tsv)
+echo "PE status: $STATUS"
+
+# If Pending, re-approve:
+if [ "$STATUS" = "Pending" ]; then
+  CONN_NAME=$(az postgres flexible-server show --name vvp-postgres \
+    --resource-group rcnx-shared-rg \
+    --query "privateEndpointConnections[0].name" -o tsv)
+  az network private-endpoint-connection approve \
+    --name "$CONN_NAME" \
+    --resource-group rcnx-shared-rg \
+    --resource-name vvp-postgres \
+    --type Microsoft.DBforPostgreSQL/flexibleServers \
+    --description "Re-approved after RG move"
+fi
+```
+
+VVP applications use the FQDN `vvp-postgres.postgres.database.azure.com` which is **unchanged** by this move. No VVP configuration changes are needed.
+
+**Rollback:** `az resource move --destination-group VVP --ids $(az postgres flexible-server show --name vvp-postgres --resource-group rcnx-shared-rg --query id -o tsv)`
+
+### Phase 2 — Networking: enable public access + storage auto-grow
+
+```bash
+az postgres flexible-server update \
+  --name vvp-postgres --resource-group rcnx-shared-rg \
+  --public-access Enabled \
+  --storage-auto-grow Enabled
+
+az postgres flexible-server firewall-rule create \
+  --name vvp-postgres --resource-group rcnx-shared-rg \
+  --rule-name AllowAzureServices \
+  --start-ip-address 0.0.0.0 --end-ip-address 0.0.0.0
+```
+
+The private endpoint to `vvp-vnet` is **not affected** — both access paths coexist.
+
+### Phase 3 — CITEXT extension: additive allowlist update
+
+The `azure.extensions` parameter is a comma-separated allowlist. Overwriting it blindly would remove extensions already allowlisted for other databases. The update must **append** `citext` only if absent:
+
+```bash
+CURRENT_EXT=$(az postgres flexible-server parameter show \
+  --name vvp-postgres --resource-group rcnx-shared-rg \
+  --parameter-name azure.extensions --query "value" -o tsv)
+
+# Append citext only if not already present
+if echo "$CURRENT_EXT" | grep -qiw "citext"; then
+  echo "citext already in azure.extensions — no change needed"
+else
+  NEW_EXT="${CURRENT_EXT:+${CURRENT_EXT},}citext"
+  az postgres flexible-server parameter set \
+    --name vvp-postgres --resource-group rcnx-shared-rg \
+    --parameter-name azure.extensions \
+    --value "$NEW_EXT"
+fi
+```
+
+**Rollback:** `az postgres flexible-server parameter set --value "$CURRENT_EXT"` (using value recorded in Phase 0).
+
+### Phase 4 — Per-project isolation: database and roles
+
+Two roles per project: **`sbmigrate`** (DDL for migrations) and **`sbapp`** (DML for the running application). The application never holds DDL capability.
+
+**Generate passwords before running the SQL block** — use a method that avoids shell-history leakage:
+
+```bash
+# Generate 32-char alphanumeric passwords (no shell-special chars that break connection strings)
+openssl rand -base64 48 | tr -dc 'A-Za-z0-9' | head -c 32
+# Run twice: once for PW_A (sbmigrate), once for PW_B (sbapp).
+# Store in a local password manager immediately — never write to shell history.
+# To avoid history exposure: prefix the assignment with a space, or use `read -rs PW_A`.
+```
+
+```sql
+-- Run as vvpadmin on the postgres maintenance database.
+-- Precondition: singing_bridge database must already exist (created by Bicep deploy).
+-- Verify before continuing:
+-- SELECT datname FROM pg_database WHERE datname = 'singing_bridge';
+-- STOP if the row is absent — deploy shared-postgres.bicep first.
+
+-- Enforce per-database isolation.
+-- PostgreSQL grants CONNECT to PUBLIC by default. Revoke it from all shared databases
+-- so only explicitly named roles can connect to their own database.
+REVOKE CONNECT ON DATABASE singing_bridge FROM PUBLIC;
+REVOKE CONNECT ON DATABASE vvpissuer FROM PUBLIC;
+REVOKE CONNECT ON DATABASE pistis FROM PUBLIC;
+-- Note: vvpadmin holds azure_pg_admin which bypasses CONNECT restrictions —
+-- the revoke does not affect administrative access.
+
+-- Migration role (DDL)
+CREATE ROLE sbmigrate LOGIN PASSWORD '<pw-A>';
+GRANT CONNECT ON DATABASE singing_bridge TO sbmigrate;
+-- Explicitly deny access to the postgres maintenance database
+REVOKE CONNECT ON DATABASE postgres FROM sbmigrate;
+
+-- Runtime role (DML only)
+CREATE ROLE sbapp LOGIN PASSWORD '<pw-B>';
+GRANT CONNECT ON DATABASE singing_bridge TO sbapp;
+-- Explicitly deny access to the postgres maintenance database
+REVOKE CONNECT ON DATABASE postgres FROM sbapp;
+```
+
+Connect to `singing_bridge` as `vvpadmin`:
+
+```sql
+\c singing_bridge
+
+-- sbmigrate owns the schema and creates all objects
+GRANT CREATE ON SCHEMA public TO sbmigrate;
+GRANT USAGE ON SCHEMA public TO sbmigrate;
+
+-- sbapp needs schema USAGE explicitly (not relying on PUBLIC default)
+GRANT USAGE ON SCHEMA public TO sbapp;
+
+-- Install citext (requires superuser; done here as vvpadmin)
+CREATE EXTENSION IF NOT EXISTS citext;
+```
+
+**Pre-flight CONNECT audit** — run before executing the REVOKE statements. Record which roles currently have CONNECT on the shared databases so that the revoke does not silently remove access for VVP application roles:
+
+```bash
+psql "postgres://vvpadmin:<pw>@vvp-postgres.postgres.database.azure.com/postgres?sslmode=require" <<'SQL'
+SELECT datname, grantee, privilege_type
+FROM information_schema.role_database_grants
+WHERE privilege_type = 'CONNECT'
+  AND datname IN ('vvpissuer', 'pistis', 'singing_bridge');
+SQL
+# Record output. Any non-PUBLIC, non-vvpadmin grantee must be explicitly re-granted CONNECT
+# after the REVOKE FROM PUBLIC or it will lose access.
+```
+
+**Post-REVOKE VVP connectivity probe** — run immediately after the REVOKE statements, before any other phase:
+
+```bash
+# VVP issuer must still be reachable (private endpoint unaffected)
+curl -sf --max-time 10 \
+  https://vvp-issuer.livelyglacier-e85ccac4.uksouth.azurecontainerapps.io/healthz
+# PASS: HTTP 200
+# pistis-backend healthy
+az containerapp revision list --name pistis-backend --resource-group VVP \
+  --query "[0].{state:properties.runningState,health:properties.healthState}" -o json
+# PASS: state=Running, health=Healthy
+# Note: VVP apps connect via private endpoint using vvpadmin or application-specific
+# roles. Revoke from PUBLIC does not affect these roles if they had explicit CONNECT.
+```
+
+**`ALTER DEFAULT PRIVILEGES` must be run as `sbmigrate`**, not as `vvpadmin`, because default privileges apply to objects created by the role executing the statement. Connect as `sbmigrate`:
+
+```bash
+psql "postgres://sbmigrate:<pw-A>@vvp-postgres.postgres.database.azure.com/singing_bridge?sslmode=require" <<'SQL'
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO sbapp;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+  GRANT USAGE, SELECT ON SEQUENCES TO sbapp;
+SQL
+```
+
+This ensures every table and sequence that Sprint 19 migrations create will be immediately accessible to `sbapp` without additional grants.
+
+**Role isolation** (enforced at the PostgreSQL engine level): The `REVOKE CONNECT FROM PUBLIC` statements above ensure `sbmigrate` and `sbapp` cannot connect to `vvpissuer` or `pistis`, and no unenumerated role can connect to `singing_bridge`. Any unauthorised connection attempt returns `FATAL: permission denied for database`.
+
+### Phase 5 — TLS posture
+
+All connection strings use `sslmode=require`, which encrypts traffic. Azure PostgreSQL Flexible Server enforces TLS for all connections regardless of client setting.
+
+**Management commands** (psql CLI, this sprint): may additionally use `sslrootcert=system` to verify the server certificate chain:
+```
+postgres://vvpadmin:<pw>@vvp-postgres.postgres.database.azure.com/singing_bridge?sslmode=verify-full&sslrootcert=system
+```
+
+**Application connection strings** stored in Key Vault use `sslmode=require` only, which is what sqlx supports natively. `sslrootcert=system` is a libpq-specific parameter not honoured by sqlx. Full certificate validation from the application side (`verify-full` equivalent in sqlx) requires enabling the `tls-rustls` or `tls-native-tls` feature alongside `postgres` in sqlx — this is a **Sprint 19 prerequisite**, documented in `PLAN_Sprint19.md` under Cargo feature flags.
+
+Connection string stored in Key Vault:
+```
+postgres://sbapp:<pw-B>@vvp-postgres.postgres.database.azure.com/singing_bridge?sslmode=require
+```
+
+### Phase 6 — Credential storage (Key Vault)
+
+```bash
+az keyvault create \
+  --name rcnx-shared-kv \
+  --resource-group rcnx-shared-rg \
+  --location uksouth \
+  --enable-rbac-authorization true \
+  --enable-purge-protection true \
+  --retention-days 7
+
+az keyvault secret set --vault-name rcnx-shared-kv \
+  --name pg-admin-password --value '<vvpadmin-password>'
+
+az keyvault secret set --vault-name rcnx-shared-kv \
+  --name sb-migrate-url \
+  --value 'postgres://sbmigrate:<pw-A>@vvp-postgres.postgres.database.azure.com/singing_bridge?sslmode=require'
+
+az keyvault secret set --vault-name rcnx-shared-kv \
+  --name sb-database-url \
+  --value 'postgres://sbapp:<pw-B>@vvp-postgres.postgres.database.azure.com/singing_bridge?sslmode=require'
+```
+
+**RBAC grants:**
+
+The runtime Container App identity receives access to `sb-database-url` only. The migration credential (`sb-migrate-url`) must not be readable by the runtime identity — granting it would defeat the privilege split between the runtime application and the DDL-capable migration role.
+
+```bash
+KV_ID=$(az keyvault show --name rcnx-shared-kv --query id -o tsv)
+SB_IDENTITY=$(az containerapp show --name sb-server --resource-group sb-prod-rg \
+  --query "identity.principalId" -o tsv)
+OPERATOR_ID=$(az ad signed-in-user show --query id -o tsv)
+
+# Admin password: operator only
+az role assignment create \
+  --role "Key Vault Secrets Officer" \
+  --assignee "$OPERATOR_ID" \
+  --scope "$KV_ID/secrets/pg-admin-password"
+
+# Runtime identity reads the app connection string only
+az role assignment create \
+  --role "Key Vault Secrets User" \
+  --assignee "$SB_IDENTITY" \
+  --scope "$KV_ID/secrets/sb-database-url"
+
+# Migration URL: operator identity only (for running Sprint 19 sqlx migrations)
+# A dedicated migration job identity may be added in Sprint 19 if automation is required.
+az role assignment create \
+  --role "Key Vault Secrets User" \
+  --assignee "$OPERATOR_ID" \
+  --scope "$KV_ID/secrets/sb-migrate-url"
+```
+
+**Enable diagnostic logging:**
+
+```bash
+az monitor diagnostic-settings create \
+  --name kv-audit \
+  --resource "$KV_ID" \
+  --logs '[{"category":"AuditEvent","enabled":true}]' \
+  --workspace "$(az monitor log-analytics workspace list \
+    --resource-group sb-prod-rg --query '[0].id' -o tsv)"
+```
+
+### Phase 7 — Wire singing-bridge Container App (Bicep-authoritative)
+
+The `sb-db-url` secret is declared in `infra/bicep/container-app.bicep` using a Key Vault reference, so a fresh Bicep redeploy preserves it without CLI repair. The raw value never appears in deployment history.
+
+In `container-app.bicep`, add to the `secrets` array (see Files Changing section for full Bicep snippet) and add to the `env` array of the server container:
+
+```bicep
+// In secrets array:
+{ name: 'sb-db-url', keyVaultUrl: '${sharedKvUri}secrets/sb-database-url', identity: 'system' }
+
+// In server container env array:
+{ name: 'SB_DATABASE_URL', secretRef: 'sb-db-url' }
+```
+
+`sharedKvUri` is a new non-secret parameter: `param sharedKvUri string = 'https://rcnx-shared-kv.vault.azure.net/'`.
+
+For the Bicep KV reference to succeed, the Container App's system-assigned identity needs `Key Vault Secrets User` on the secret — granted in Phase 6. The Bicep deployment must be run after the RBAC grant propagates (~30 seconds).
+
+After deploying the updated Bicep, verify the new revision is healthy:
+
+```bash
+NEW_REV=$(az containerapp show --name sb-server --resource-group sb-prod-rg \
+  --query "properties.latestRevisionName" -o tsv)
+
+DEADLINE=$((SECONDS + 120))
+until [ "$(az containerapp revision show --name sb-server --resource-group sb-prod-rg \
+  --revision "$NEW_REV" --query "properties.runningState" -o tsv 2>/dev/null)" \
+  != "Activating" ]; do
+  [ $SECONDS -ge $DEADLINE ] && { echo "TIMEOUT: revision still Activating after 120s"; exit 1; }
+  sleep 5
+done
+
+az containerapp revision show --name sb-server --resource-group sb-prod-rg \
+  --revision "$NEW_REV" \
+  --query "{state:properties.runningState,health:properties.healthState}" -o json
+# REQUIRED: state=RunningAtMaxScale, health=Healthy
+# If Failed: az containerapp logs show --name sb-server --resource-group sb-prod-rg --tail 30
+```
+
+---
+
+## Infrastructure as Code
+
+### `infra/bicep/shared-postgres.bicep` (new)
+
+Manages firewall rule, CITEXT server parameter, and `singing_bridge` database on the existing (moved) server. Does **not** manage the server resource itself (public access and storage auto-grow are set via CLI as one-time operations that would be overwritten by idempotent Bicep; they can be added to the template in a follow-up).
+
+```bicep
+// File: infra/bicep/shared-postgres.bicep
+// Purpose: Idempotent configuration of shared postgres — AllowAzureServices firewall rule,
+//          CITEXT extension allowlist, and singing_bridge database.
+// Role: Declarative complement to the one-time CLI setup in PLAN_Sprint18.md.
+// Exports: none
+// Depends: vvp-postgres server in rcnx-shared-rg (existing resource, not managed here)
+// Last updated: Sprint 18 (2026-04-24) -- initial
+
+param location string = resourceGroup().location
+param serverName string = 'vvp-postgres'
+
+resource pgServer 'Microsoft.DBforPostgreSQL/flexibleServers@2023-12-01' existing = {
+  name: serverName
+}
+
+resource fwAllowAzure 'Microsoft.DBforPostgreSQL/flexibleServers/firewallRules@2023-12-01' = {
+  name: 'AllowAzureServices'
+  parent: pgServer
+  properties: { startIpAddress: '0.0.0.0', endIpAddress: '0.0.0.0' }
+}
+
+resource azureExtensionsParam 'Microsoft.DBforPostgreSQL/flexibleServers/configurations@2023-12-01' = {
+  name: 'azure.extensions'
+  parent: pgServer
+  // WARNING: this overwrites the full list. Pre-flight (Phase 0) records existing value.
+  // Operator must manually include all existing extensions in this value.
+  properties: { value: 'citext', source: 'user-override' }
+}
+
+resource sbDatabase 'Microsoft.DBforPostgreSQL/flexibleServers/databases@2023-12-01' = {
+  name: 'singing_bridge'
+  parent: pgServer
+  properties: { charset: 'UTF8', collation: 'en_US.utf8' }
+}
+```
+
+**Note on `azure.extensions` in Bicep:** Bicep is declarative and will set the value as written. If other extensions are added later via CLI (e.g., `uuid-ossp` for another project), those additions will be overwritten on the next Bicep deployment. The operator must keep this value current with all required extensions. The additive-append logic in Phase 3 applies to the initial one-time CLI setup only.
+
+### `infra/bicep/shared-keyvault.bicep` (new)
+
+```bicep
+// File: infra/bicep/shared-keyvault.bicep
+// Purpose: Shared Key Vault (rcnx-shared-kv) for cross-project secrets — RBAC mode,
+//          purge protection, audit diagnostics.
+// Role: Authoritative for vault-level config; secrets and RBAC are managed via CLI.
+// Exports: keyVaultUri (output)
+// Depends: Log Analytics workspace in sb-prod-rg (for diagnostics)
+// Last updated: Sprint 18 (2026-04-24) -- initial
+
+param location string = resourceGroup().location
+param kvName string = 'rcnx-shared-kv'
+param logWorkspaceId string
+
+resource kv 'Microsoft.KeyVault/vaults@2023-07-01' = {
+  name: kvName
+  location: location
+  properties: {
+    sku: { family: 'A', name: 'standard' }
+    tenantId: subscription().tenantId
+    enableRbacAuthorization: true
+    enablePurgeProtection: true
+    softDeleteRetentionInDays: 7
+    publicNetworkAccess: 'Enabled'
+  }
+}
+
+resource kvDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = {
+  name: 'kv-audit'
+  scope: kv
+  properties: {
+    workspaceId: logWorkspaceId
+    logs: [{ category: 'AuditEvent', enabled: true }]
+  }
+}
+
+output keyVaultUri string = kv.properties.vaultUri
+```
+
+### Update: `infra/bicep/container-app.bicep`
+
+Add `sharedKvUri` parameter and `sb-db-url` KV-reference secret. The secret is declared in the `secrets` array alongside existing secrets, making Bicep the authoritative source:
+
+```bicep
+// New parameter (non-secret; just the vault URI)
+param sharedKvUri string = 'https://rcnx-shared-kv.vault.azure.net/'
+
+// In configuration.secrets array, add:
+{ name: 'sb-db-url', keyVaultUrl: '${sharedKvUri}secrets/sb-database-url', identity: 'system' }
+
+// In server container env array, add:
+{ name: 'SB_DATABASE_URL', secretRef: 'sb-db-url' }
+```
+
+The container app's `identity: { type: 'SystemAssigned' }` (already present) satisfies the `identity: 'system'` reference.
+
+### `knowledge/decisions/0002-shared-postgres-platform.md` (new)
+
+Supersedes the SQLite persistence decision in `0001-mvp-architecture.md`. Records:
+- Decision: PostgreSQL as the shared persistence backend for all RCNX projects
+- Shared-server model: one Flexible Server in `rcnx-shared-rg`, per-project databases and roles
+- Rationale: Azure Files SMB does not support SQLite advisory locking; shared server eliminates per-project server costs
+- Migration path: Sprint 18 (infra) → Sprint 19 (application migration)
+- Consequences: SQLite migrations rewritten for Postgres in Sprint 19; `DATABASE_TEST_URL` required for integration tests
+
+---
+
+## Test Strategy
+
+Ordered runbook — each step is a pass/fail gate. Stop and investigate before proceeding past any failure.
+
+### Step 1 — Pre-flight (Phase 0)
+
+```bash
+# Private endpoint Approved
+az postgres flexible-server show --name vvp-postgres --resource-group VVP \
+  --query "privateEndpointConnections[0].privateLinkServiceConnectionState.status" -o tsv
+# PASS: Approved
+
+# VVP issuer healthy
+curl -sf --max-time 10 \
+  https://vvp-issuer.livelyglacier-e85ccac4.uksouth.azurecontainerapps.io/healthz
+# PASS: HTTP 200
+
+# pistis-backend healthy
+az containerapp revision list --name pistis-backend --resource-group VVP \
+  --query "[0].{state:properties.runningState,health:properties.healthState}" -o json
+# PASS: state=Running, health=Healthy
+```
+
+### Step 2 — Bicep what-if (both templates, before deploy)
+
+```bash
+az deployment group what-if \
+  --resource-group rcnx-shared-rg \
+  --template-file infra/bicep/shared-postgres.bicep
+# PASS: no unexpected destructive changes
+
+az deployment group what-if \
+  --resource-group rcnx-shared-rg \
+  --template-file infra/bicep/shared-keyvault.bicep \
+  --parameters logWorkspaceId=<workspace-id>
+# PASS: no unexpected destructive changes
+```
+
+### Step 3 — Post-RG-move regression (immediately after Phase 1)
+
+```bash
+# Private endpoint still Approved
+az postgres flexible-server show --name vvp-postgres --resource-group rcnx-shared-rg \
+  --query "privateEndpointConnections[0].privateLinkServiceConnectionState.status" -o tsv
+# PASS: Approved (re-approve if Pending using script in Phase 1)
+
+# VVP issuer — 4 attempts × 15 s = 60 s observation window
+for i in 1 2 3 4; do
+  code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 \
+    https://vvp-issuer.livelyglacier-e85ccac4.uksouth.azurecontainerapps.io/healthz)
+  echo "attempt $i: $code"; [ "$code" = "200" ] && break; sleep 15
+done
+# PASS: at least one 200 within window
+# ROLLBACK trigger: no 200 within window → move server back to VVP RG
+
+# pistis-backend healthy
+az containerapp revision list --name pistis-backend --resource-group VVP \
+  --query "[0].{state:properties.runningState,health:properties.healthState}" -o json
+# PASS: state=Running, health=Healthy
+```
+
+### Step 4 — CITEXT verification
+
+```bash
+# Server parameter contains citext
+az postgres flexible-server parameter show \
+  --name vvp-postgres --resource-group rcnx-shared-rg \
+  --parameter-name azure.extensions --query "value" -o tsv | grep -i citext
+# PASS: citext present in value
+
+# Extension installed and functional in singing_bridge
+psql "postgres://vvpadmin:<pw>@vvp-postgres.postgres.database.azure.com/singing_bridge?sslmode=require" <<'SQL'
+SELECT extname, extversion FROM pg_extension WHERE extname = 'citext';
+-- PASS: one row returned
+SELECT 'FOO'::citext = 'foo'::citext AS citext_works;
+-- PASS: returns t
+SQL
+```
+
+### Step 5 — Role isolation
+
+```bash
+PG_HOST="vvp-postgres.postgres.database.azure.com"
+
+# sbapp connects to singing_bridge ✓
+psql "postgres://sbapp:<pw-B>@${PG_HOST}/singing_bridge?sslmode=require" \
+  -c "SELECT current_user, current_database();"
+# PASS: one row returned
+
+# sbmigrate can CREATE TABLE in singing_bridge ✓
+psql "postgres://sbmigrate:<pw-A>@${PG_HOST}/singing_bridge?sslmode=require" \
+  -c "CREATE TABLE _sprint18_probe (id int); DROP TABLE _sprint18_probe;"
+# PASS: no error
+
+# sbapp can SELECT, INSERT, UPDATE, DELETE on table and use sequence (default privileges) ✓
+psql "postgres://sbmigrate:<pw-A>@${PG_HOST}/singing_bridge?sslmode=require" \
+  -c "CREATE TABLE _priv_probe (id SERIAL PRIMARY KEY, val text);"
+psql "postgres://sbapp:<pw-B>@${PG_HOST}/singing_bridge?sslmode=require" <<'SQL'
+INSERT INTO _priv_probe (val) VALUES ('a');
+UPDATE _priv_probe SET val = 'b' WHERE val = 'a';
+SELECT * FROM _priv_probe;
+DELETE FROM _priv_probe;
+SELECT nextval(pg_get_serial_sequence('_priv_probe', 'id'));
+SQL
+psql "postgres://sbmigrate:<pw-A>@${PG_HOST}/singing_bridge?sslmode=require" \
+  -c "DROP TABLE _priv_probe;"
+# PASS: INSERT, UPDATE, SELECT, DELETE, and nextval all succeed; DROP succeeds (cleanup)
+
+# sbapp cannot connect to vvpissuer ✗ (expected failure)
+psql "postgres://sbapp:<pw-B>@${PG_HOST}/vvpissuer?sslmode=require" \
+  -c "SELECT 1;" 2>&1 | grep -i "permission denied\|FATAL"
+# PASS: error message contains permission denied
+
+# sbapp cannot connect to pistis ✗ (expected failure)
+psql "postgres://sbapp:<pw-B>@${PG_HOST}/pistis?sslmode=require" \
+  -c "SELECT 1;" 2>&1 | grep -i "permission denied\|FATAL"
+# PASS: error message contains permission denied
+
+# sbmigrate cannot connect to vvpissuer ✗ (expected failure)
+psql "postgres://sbmigrate:<pw-A>@${PG_HOST}/vvpissuer?sslmode=require" \
+  -c "SELECT 1;" 2>&1 | grep -i "permission denied\|FATAL"
+# PASS: error message contains permission denied
+
+# sbmigrate cannot connect to pistis ✗ (expected failure)
+psql "postgres://sbmigrate:<pw-A>@${PG_HOST}/pistis?sslmode=require" \
+  -c "SELECT 1;" 2>&1 | grep -i "permission denied\|FATAL"
+# PASS: error message contains permission denied
+```
+
+### Step 6 — Key Vault secret readability and access boundaries
+
+```bash
+KV_ID=$(az keyvault show --name rcnx-shared-kv --query id -o tsv)
+SB_IDENTITY=$(az containerapp show --name sb-server --resource-group sb-prod-rg \
+  --query "identity.principalId" -o tsv)
+
+# --- Positive: runtime identity can read sb-database-url ---
+az role assignment list \
+  --assignee "$SB_IDENTITY" \
+  --scope "$KV_ID/secrets/sb-database-url" \
+  --role "Key Vault Secrets User" \
+  --query "[0].principalId" -o tsv
+# PASS: returns SB_IDENTITY
+
+az keyvault secret show --vault-name rcnx-shared-kv --name sb-database-url \
+  --query "value" -o tsv | grep -q "postgres://" && echo "PASS: sb-database-url readable" || echo "FAIL"
+
+# --- Negative: runtime identity has NO assignment on sb-migrate-url ---
+MIGRATE_ASSIGNMENTS=$(az role assignment list \
+  --assignee "$SB_IDENTITY" \
+  --scope "$KV_ID/secrets/sb-migrate-url" \
+  --role "Key Vault Secrets User" \
+  --query "length(@)" -o tsv)
+[ "$MIGRATE_ASSIGNMENTS" = "0" ] \
+  && echo "PASS: runtime identity has no access to sb-migrate-url" \
+  || echo "FAIL: runtime identity must not hold sb-migrate-url assignment"
+
+# --- sb-migrate-url readable by operator (under current CLI identity) ---
+az keyvault secret show --vault-name rcnx-shared-kv --name sb-migrate-url \
+  --query "value" -o tsv | grep -q "postgres://sbmigrate" \
+  && echo "PASS: sb-migrate-url readable by operator" || echo "FAIL"
+```
+
+### Step 7 — Container App revision health after Bicep deploy
+
+```bash
+# Deploy updated container-app.bicep (see Phase 7 for full parameter list)
+az deployment group create \
+  --resource-group sb-prod-rg \
+  --template-file infra/bicep/container-app.bicep \
+  --parameters sharedKvUri='https://rcnx-shared-kv.vault.azure.net/' \
+    [... other existing params ...]
+
+NEW_REV=$(az containerapp show --name sb-server --resource-group sb-prod-rg \
+  --query "properties.latestRevisionName" -o tsv)
+
+DEADLINE=$((SECONDS + 120))
+until [ "$(az containerapp revision show --name sb-server --resource-group sb-prod-rg \
+  --revision "$NEW_REV" --query "properties.runningState" -o tsv 2>/dev/null)" \
+  != "Activating" ]; do
+  [ $SECONDS -ge $DEADLINE ] && { echo "TIMEOUT: revision still Activating after 120s"; exit 1; }
+  sleep 5
+done
+
+az containerapp revision show --name sb-server --resource-group sb-prod-rg \
+  --revision "$NEW_REV" \
+  --query "{state:properties.runningState,health:properties.healthState}" -o json
+# PASS: state=RunningAtMaxScale, health=Healthy
+# FAIL action: az containerapp logs show --name sb-server --resource-group sb-prod-rg --tail 30
+```
+
+### Step 8 — Bicep idempotency (re-run both templates)
+
+```bash
+az deployment group create --resource-group rcnx-shared-rg \
+  --template-file infra/bicep/shared-postgres.bicep --what-if
+# PASS: no changes
+
+az deployment group create --resource-group rcnx-shared-rg \
+  --template-file infra/bicep/shared-keyvault.bicep \
+  --parameters logWorkspaceId=<workspace-id> --what-if
+# PASS: no changes
+```
+
+---
+
+## Risks and mitigations
+
+| Risk | Likelihood | Mitigation |
+|------|-----------|------------|
+| Private endpoint requires re-approval after RG move | Medium | Phase 1 includes conditional re-approval script |
+| `azure.extensions` Bicep overwrites future CLI additions | Medium | Documented in template comment; operator must keep Bicep value current |
+| `ALTER DEFAULT PRIVILEGES` not effective for existing tables | Low | Only applies to future objects; Sprint 19 starts with empty DB so all tables are future |
+| RBAC grant propagation delay before Bicep deploy | Low | Phase 7 notes 30 s wait; az deployment will fail fast with clear error if KV read denied |
+| VVP apps broken by RG move | Very low | FQDN unchanged; verified in Step 3 within 60 s observation window with rollback trigger |
+| `sslrootcert=system` not supported by sqlx | Acknowledged | App connection string uses `sslmode=require` only; full cert validation is a Sprint 19 task |
+
+---
+
+## Files changing
+
+| File | Change |
+|------|--------|
+| `infra/bicep/shared-postgres.bicep` | New: firewall rule, CITEXT parameter, `singing_bridge` database |
+| `infra/bicep/shared-keyvault.bicep` | New: `rcnx-shared-kv` with RBAC, purge protection, diagnostics |
+| `infra/bicep/container-app.bicep` | Add `sharedKvUri` param; add `sb-db-url` KV-ref secret; add `SB_DATABASE_URL` env var |
+| `knowledge/decisions/0002-shared-postgres-platform.md` | New ADR superseding SQLite decision |
+| VVP infra | **No change required** — VVP apps reference postgres by FQDN (unchanged by RG move) |
+
+---
+
+## Exit criteria
+
+- `rcnx-shared-rg` exists; `vvp-postgres` is in it; private endpoint status `Approved`
+- `AllowAzureServices` firewall rule confirmed; storage auto-grow enabled
+- `azure.extensions` contains `citext`; extension installed in `singing_bridge`; citext smoke test passes (Step 4)
+- `sbmigrate` and `sbapp` roles exist with correct grants; all Step 5 isolation checks pass (including negative access to both `vvpissuer` and `pistis`)
+- `rcnx-shared-kv` exists with purge protection, diagnostics; runtime identity RBAC confirmed for `sb-database-url`; runtime identity confirmed to have NO access to `sb-migrate-url` (Step 6)
+- `SB_DATABASE_URL` KV reference declared in `container-app.bicep`; new revision `Healthy` (Step 7)
+- VVP `vvp-issuer /healthz` → 200 and `pistis-backend` revision `Healthy` throughout (Steps 1, 3)
+- `knowledge/decisions/0002-shared-postgres-platform.md` committed
+- Both Bicep templates idempotent (Step 8)
+- **Accepted residual risk (Sprint 18):** Application connection strings use `sslmode=require`, which encrypts traffic but does not validate the server certificate chain. This is the limit of what sqlx supports without the `tls-rustls` or `tls-native-tls` Cargo feature enabled.
+- **Sprint 19 mandatory entry condition:** The `tls-rustls` (or `tls-native-tls`) feature must be added to the `sqlx` dependency in `server/Cargo.toml` alongside `postgres` before claiming `verify-full` application TLS enforcement. This sprint does not claim that enforcement.
+

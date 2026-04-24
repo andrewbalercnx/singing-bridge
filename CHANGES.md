@@ -11,6 +11,17 @@
 > **Commit:** `<sha>`
 > ```
 
+## Sprint 18: Shared PostgreSQL platform — 2026-04-24
+
+**Files changed:**
+- `infra/bicep/shared-postgres.bicep` — new: idempotent Bicep for AllowAzureServices firewall rule, azure.extensions allowlist (citext), and singing_bridge database on vvp-postgres
+- `infra/bicep/shared-keyvault.bicep` — new: rcnx-shared-kv with RBAC mode, 90-day purge protection, AuditEvent diagnostics, public access with networkAcls bypass documented
+- `infra/bicep/container-app.bicep` — add sharedKvUri param; declare sb-db-url as KV-reference secret (Bicep-authoritative); wire SB_DATABASE_URL env var; add securityContext runAsNonRoot/runAsUser:65532 to server container
+- `knowledge/decisions/0002-shared-postgres-platform.md` — new ADR: PostgreSQL shared-server decision, per-project role model, onboarding procedure, KV network risk acceptance, Sprint 19 TLS prerequisite
+- `server/src/db.rs` — fix Last updated header format
+
+**Commit:** `856a4b7`
+
 ## Sprint 17: Teacher dashboard + session UI redesign — 2026-04-23
 
 **Files changed:**

@@ -612,7 +612,7 @@ _Accompaniment panel (teacher-only)_
 - VVP health endpoints green after the server move
 - Sprint 19 can begin with no further infra work
 
-**Status:** PENDING
+**Status:** COMPLETE — 2026-04-24, commit `856a4b7`, council APPROVED (plan R5, code R2)
 
 ---
 

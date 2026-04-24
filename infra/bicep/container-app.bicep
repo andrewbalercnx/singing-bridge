@@ -10,7 +10,7 @@
 //             UID 65532:65532 with runAsNonRoot=true. Root-capable containers on this share
 //             would have unrestricted NFS server access. Enforce via securityContext on each
 //             container spec; never mount sb-data in a container without runAsUser=65532.
-// Last updated: Sprint 16 (2026-04-23) -- NFS Azure Files + VNet integration; remove SMB
+// Last updated: Sprint 18 (2026-04-24) -- add sharedKvUri param; wire SB_DATABASE_URL via KV ref
 
 param location string = resourceGroup().location
 param environmentName string = 'sb-env'
@@ -26,6 +26,9 @@ param nfsStorageAccountName string = 'sbnfs${uniqueString(resourceGroup().id)}'
 // VNet subnet IDs from vnet.bicep outputs.
 param acaSubnetId string
 param storageSubnetId string
+
+// Shared Key Vault URI for KV-reference secrets (non-secret; just the vault URI).
+param sharedKvUri string = 'https://rcnx-shared-kv.vault.azure.net/'
 
 // Secrets passed as secure parameters (never logged by ARM).
 @secure()
@@ -154,6 +157,9 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
         { name: 'sb-session-log-pepper', value: sbSessionLogPepper }
         { name: 'sb-sidecar-secret', value: sbSidecarSecret }
         { name: 'sb-acs-connection-string', value: sbAcsConnectionString }
+        // KV-reference secret: raw value never stored in deployment history.
+        // Requires Key Vault Secrets User RBAC on this secret for the system-assigned identity.
+        { name: 'sb-db-url', keyVaultUrl: '${sharedKvUri}secrets/sb-database-url', identity: 'system' }
       ]
       registries: [
         {
@@ -193,6 +199,7 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'SIDECAR_URL', value: 'http://localhost:5050' }
             { name: 'SIDECAR_SECRET', secretRef: 'sb-sidecar-secret' }
             { name: 'SB_ACS_CONNECTION_STRING', secretRef: 'sb-acs-connection-string' }
+            { name: 'SB_DATABASE_URL', secretRef: 'sb-db-url' }
           ]
           resources: { cpu: json('0.5'), memory: '1Gi' }
           volumeMounts: [

@@ -585,6 +585,75 @@ _Accompaniment panel (teacher-only)_
 
 **Status:** COMPLETE — 2026-04-23, commit `a39a5be` (code review APPROVED R4, 87% convergence)
 
+---
+
+## Sprint 18: No-headphones support + chatting mode + iOS path
+
+**Goal:** Support a singing lesson when the student cannot wear headphones — play the accompaniment on the student's machine only, keep the teacher muted from the backing track, and provide a push-to-talk "chatting" mode that enables AEC on the student's mic only while the teacher is actually speaking. Make iOS students (where AEC cannot be turned off) a first-class supported configuration rather than a degraded-tier warning.
+
+**Background:**
+ADR-0001 §Echo states that echo is avoided by a single "Please wear headphones" setup note rather than software. Sprint 9 added a self-check checkbox that records the student's confirmation and surfaces it to the teacher as a chip. Today the session still assumes headphones: AEC is off on both sides, the accompaniment plays on both peers, and a student on open speakers causes the teacher's voice to return via the student's mic (classic echo loop), while the accompaniment bleeds back and doubles with the teacher's local copy.
+
+This sprint acknowledges that not every student can wear headphones (young kids, chromebook-in-a-classroom, iOS Safari where the OS forces AEC regardless) and builds a coherent acoustic mode for that case:
+
+- Backing track plays **only on the student's machine**, so the teacher hears the student's voice blended with the natural room mix rather than a time-shifted double.
+- AEC stays **off by default** during singing (preserving music-mode fidelity), but is toggled **on** by the teacher when actually conversing — this is the "chatting mode" push-to-talk.
+- iOS students get the same acoustic model automatically, because `echoCancellation: false` is unenforceable on iOS Safari and treating them identically to speakers-only desktops is correct.
+
+**Deliverables:**
+
+_Acoustic profile model_
+- New enum `AcousticProfile` = `headphones` | `speakers` | `ios_forced`, stored on the lobby entry and propagated to the active session
+- Auto-detect at the student end during self-check:
+  - iOS Safari (any browser on iOS, per existing `browser.js` detection) → `ios_forced`, self-check headphones checkbox hidden with an explanatory note
+  - Desktop student who un-checks "I'm wearing headphones" → `speakers`
+  - Desktop student who checks the box → `headphones` (current default)
+- `sbSelfCheck.show` gains `onConfirm(profile)` (replacing the boolean `headphonesConfirmed`); teacher call-sites adjusted
+
+_Protocol additions (`server/src/ws/protocol.rs`)_
+- `ClientMsg::StudentAcousticProfile { profile }` — sent by the student after self-check; replaces (alongside) `HeadphonesConfirmed` which is kept for backward compat and mapped to `profile = headphones` when received
+- `ClientMsg::AcousticProfileOverride { profile }` (teacher only) — manual override if the teacher can see the student doesn't have earphones even though the student didn't un-check the box; student sending → `ErrorCode::Forbidden`
+- `ClientMsg::ChattingMode { enabled }` (teacher only, in-session) — student sending → `ErrorCode::Forbidden`
+- `ServerMsg::AcousticProfile { profile, source: "student" | "teacher_override" }` — delivered to the student so the client can adjust local behaviour
+- `ServerMsg::ChattingMode { enabled }` — delivered to the student
+- `LobbyEntryView.profile` added; `headphones_confirmed` retained as a derived boolean for existing UI until fully migrated
+
+_Student client behaviour (`web/assets/audio.js`, `signalling.js`, `student.js`)_
+- On receiving `AcousticProfile { profile: speakers | ios_forced }` the client keeps AEC off but records the profile locally (for UI) and accepts `ChattingMode` toggles
+- On receiving `ChattingMode { enabled: true }`, student calls `micTrack.applyConstraints({ echoCancellation: true, noiseSuppression: true })`; on `enabled: false`, reverts to `{ echoCancellation: false, noiseSuppression: false }`
+- iOS: `applyConstraints` is best-effort; UI reflects "chat mode always on (iOS)"; no console error path when constraints are ignored by the OS
+- No SDP renegotiation — Opus stays in music mode throughout; only the browser-side DSP flags flip
+
+_Teacher client behaviour (`web/assets/session-ui.js`, `accompaniment-drawer.js`, `teacher.js`)_
+- Accompaniment drawer: when the active session's profile is `speakers` or `ios_forced`, the teacher's local `<audio>` element for the backing track is muted (`el.muted = true`); the track still loads so scrub/tempo/score-viewer work unchanged; a small banner reads "Playing on student side only — muted for you"
+- New icon-bar control: a "Chat" toggle (push-to-talk style — hold-to-talk on desktop via spacebar, or click-to-toggle for sticky mode); dispatches `ClientMsg::ChattingMode { enabled }` and updates UI state
+- Manual override control: in the lobby row and session panel, a small three-state switch lets the teacher set the profile explicitly (useful when the student forgot to un-check the box)
+
+_UI surfaces_
+- Session-panel headphones chip generalised to an "Acoustic" chip with three states: 🎧 Headphones / 🔊 Speakers / 📱 iOS (AEC locked)
+- Lobby entry chip matches the same three states
+- Teacher session view gains the Chat toggle icon alongside existing mic/camera icons; disabled-with-tooltip state for `ios_forced` (labelled "Always on — iOS forces voice processing")
+
+_Tests_
+- Rust WS tests: `StudentAcousticProfile` round-trip; `AcousticProfileOverride` teacher-only (student sends → Forbidden); `ChattingMode` teacher-only (student sends → Forbidden); backward compat — a client that still sends `HeadphonesConfirmed` yields `profile = headphones`
+- JS tests (`self-check.test.js`): iOS UA yields `ios_forced` and hides the checkbox; desktop un-checked yields `speakers`; desktop checked yields `headphones`
+- JS tests (`signalling.test.js` / new `acoustic.test.js`): `AcousticProfile` server message triggers the right local state; `ChattingMode` server message calls `applyConstraints` with the expected shape; `ChattingMode` off reverts
+- JS tests (`accompaniment-drawer.test.js`): profile = speakers mutes teacher element; profile = headphones leaves it unmuted; banner text appears/disappears
+- Regression: when profile = `headphones`, zero behaviour change versus Sprint 17 (default path untouched)
+
+**Exit criteria:**
+- Student on desktop Chrome un-checks "I'm wearing headphones" in self-check → teacher lobby row shows 🔊 Speakers chip; teacher admits; accompaniment drawer shows the mute banner; teacher hears no backing track locally but student does
+- Teacher presses the Chat toggle (or holds spacebar) while the student's backing track is playing; teacher and student can converse with no audible echo loop back to the teacher; releasing the toggle restores music-mode fidelity on the student's uplink
+- iOS Safari student joins → lobby chip automatically reads 📱 iOS (AEC locked); Chat toggle in session view renders as permanently-on with tooltip; audio works end-to-end (teacher muted on accompaniment, student hears it locally)
+- Teacher flips the manual override on a lobby entry whose student claimed headphones; student client receives the new profile, adopts speakers behaviour live; teacher accompaniment mute state updates without re-negotiation
+- All existing sessions where profile = `headphones` behave identically to Sprint 17 (zero regression in the default path — subjective listening test and `mount` regression tests pass)
+- All existing + new Rust and JS tests pass
+- No Opus SDP renegotiation fires on any profile or chatting-mode transition
+
+**Status:** NOT STARTED
+
+---
+
 - Persistent "my students" list for the teacher — deliberately out of MVP; addressed partially by Sprint 11 history
 - Multi-participant sessions — MVP is strictly 2 peers
 - Low-latency "try to match duet" mode — explicitly not a goal; this tool is coaching-focused

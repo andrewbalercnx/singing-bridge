@@ -3,15 +3,13 @@
 // Role: Shared DB access; applied at startup and in the integration-test harness.
 // Exports: init_pool
 // Depends: sqlx
-// Invariants: WAL journal mode (journal_mode=WAL); concurrent readers, one serialised writer.
+// Invariants: DELETE journal mode (default); works on both SMB and NFS Azure Files.
 //             foreign_keys=ON; busy_timeout=30000ms; synchronous=NORMAL.
-//             max_connections=4 serves read concurrency (history, library) without serialising
-//             on read paths. WAL single-writer constraint is enforced by SQLite, not the pool.
+//             max_connections=4; SQLite serialises writers internally via busy_timeout.
 //             CRITICAL: minReplicas=maxReplicas=1 in infra/bicep/container-app.bicep must stay
-//             at 1 while SQLite is the DB engine — WAL locks are node-local and a second
-//             replica would corrupt the database.
-// Last updated: Sprint 16 (2026-04-23) -- re-enable WAL (NFS Azure Files supports POSIX locks);
-//               lift max_connections 1→4; remove SMB workaround comment
+//             at 1 while SQLite is the DB engine — a second replica would corrupt the database.
+// Last updated: Sprint 17 hotfix (2026-04-24) -- revert WAL → DELETE (SMB Azure Files does
+//               not support POSIX byte-range locks required by WAL)
 
 use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
 
@@ -22,17 +20,6 @@ pub async fn init_pool(db_url: &str) -> Result<SqlitePool> {
         .max_connections(4)
         .after_connect(|conn, _| {
             Box::pin(async move {
-                // Verify WAL is applied. In-memory databases return "memory"
-                // (WAL is unsupported there); that is acceptable for tests.
-                // Any other mode means the filesystem cannot support WAL — fail fast.
-                let (mode,): (String,) = sqlx::query_as("PRAGMA journal_mode=WAL")
-                    .fetch_one(&mut *conn)
-                    .await?;
-                if mode != "wal" && mode != "memory" {
-                    return Err(sqlx::Error::Configuration(
-                        format!("journal_mode=WAL could not be set; got '{mode}'").into(),
-                    ));
-                }
                 sqlx::query("PRAGMA synchronous=NORMAL")
                     .execute(&mut *conn)
                     .await?;

@@ -110,7 +110,7 @@ resource caStorage 'Microsoft.App/managedEnvironments/storages@2024-03-01' = {
   properties: {
     nfsAzureFile: {
       server: '${nfsStorageAccount.name}.file.core.windows.net'
-      shareName: '/sb-data'
+      shareName: 'sb-data'
       accessMode: 'ReadWrite'
     }
   }
@@ -145,14 +145,6 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
           { name: 'cf-13', action: 'Allow', ipAddressRange: '104.24.0.0/14'    }
           { name: 'cf-14', action: 'Allow', ipAddressRange: '172.64.0.0/13'    }
           { name: 'cf-15', action: 'Allow', ipAddressRange: '131.0.72.0/22'    }
-          // Cloudflare IPv6 ranges
-          { name: 'cf-v6-1', action: 'Allow', ipAddressRange: '2400:cb00::/32' }
-          { name: 'cf-v6-2', action: 'Allow', ipAddressRange: '2606:4700::/32' }
-          { name: 'cf-v6-3', action: 'Allow', ipAddressRange: '2803:f800::/32' }
-          { name: 'cf-v6-4', action: 'Allow', ipAddressRange: '2405:b500::/32' }
-          { name: 'cf-v6-5', action: 'Allow', ipAddressRange: '2405:8100::/32' }
-          { name: 'cf-v6-6', action: 'Allow', ipAddressRange: '2a06:98c0::/29' }
-          { name: 'cf-v6-7', action: 'Allow', ipAddressRange: '2c0f:f248::/32' }
         ]
       }
       secrets: [
@@ -206,11 +198,6 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
           volumeMounts: [
             { volumeName: 'sb-data', mountPath: '/data' }
           ]
-          securityContext: {
-            runAsNonRoot: true
-            runAsUser: 65532
-            runAsGroup: 65532
-          }
           probes: [
             {
               type: 'Liveness'

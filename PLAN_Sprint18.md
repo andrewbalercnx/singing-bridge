@@ -12,7 +12,7 @@ Singing-bridge also needs a live postgres connection string before the Sprint 19
 Platform engineers across all RCNX projects. Each project team needs a reliable, persistent database without owning server-level infrastructure. Today, every project that needs postgres either pays for its own server or relies on an informally shared one with no governance.
 
 **What does success look like from the user's perspective?**
-After this sprint: a singing-bridge developer can open `PLAN_Sprint19.md`, see a working `SB_DATABASE_URL` already stored in the Container App secrets, and start the application migration with no infra work remaining. VVP developers notice no change to their setup. A future third project can add a database and role to the shared server in under 30 minutes by following the documented procedure in `knowledge/architecture/shared-postgres.md`.
+After this sprint: a singing-bridge developer can open `PLAN_Sprint19.md`, see a working `SB_DATABASE_URL` already stored in the Container App secrets, and start the application migration with no infra work remaining. VVP developers notice no change to their setup. A future third project can add a database and role to the shared server in under 30 minutes by following the documented procedure in `knowledge/decisions/0002-shared-postgres-platform.md`.
 
 **Why is this sprint the right next step for the product?**
 Sprint 19 (app migration) cannot begin until postgres is reachable from the singing-bridge Container App. This sprint is the blocker-removal sprint.
@@ -207,6 +207,34 @@ GRANT USAGE ON SCHEMA public TO sbapp;
 CREATE EXTENSION IF NOT EXISTS citext;
 ```
 
+**Pre-flight CONNECT audit** — run before executing the REVOKE statements. Record which roles currently have CONNECT on the shared databases so that the revoke does not silently remove access for VVP application roles:
+
+```bash
+psql "postgres://vvpadmin:<pw>@vvp-postgres.postgres.database.azure.com/postgres?sslmode=require" <<'SQL'
+SELECT datname, grantee, privilege_type
+FROM information_schema.role_database_grants
+WHERE privilege_type = 'CONNECT'
+  AND datname IN ('vvpissuer', 'pistis', 'singing_bridge');
+SQL
+# Record output. Any non-PUBLIC, non-vvpadmin grantee must be explicitly re-granted CONNECT
+# after the REVOKE FROM PUBLIC or it will lose access.
+```
+
+**Post-REVOKE VVP connectivity probe** — run immediately after the REVOKE statements, before any other phase:
+
+```bash
+# VVP issuer must still be reachable (private endpoint unaffected)
+curl -sf --max-time 10 \
+  https://vvp-issuer.livelyglacier-e85ccac4.uksouth.azurecontainerapps.io/healthz
+# PASS: HTTP 200
+# pistis-backend healthy
+az containerapp revision list --name pistis-backend --resource-group VVP \
+  --query "[0].{state:properties.runningState,health:properties.healthState}" -o json
+# PASS: state=Running, health=Healthy
+# Note: VVP apps connect via private endpoint using vvpadmin or application-specific
+# roles. Revoke from PUBLIC does not affect these roles if they had explicit CONNECT.
+```
+
 **`ALTER DEFAULT PRIVILEGES` must be run as `sbmigrate`**, not as `vvpadmin`, because default privileges apply to objects created by the role executing the statement. Connect as `sbmigrate`:
 
 ```bash
@@ -326,9 +354,13 @@ After deploying the updated Bicep, verify the new revision is healthy:
 NEW_REV=$(az containerapp show --name sb-server --resource-group sb-prod-rg \
   --query "properties.latestRevisionName" -o tsv)
 
+DEADLINE=$((SECONDS + 120))
 until [ "$(az containerapp revision show --name sb-server --resource-group sb-prod-rg \
   --revision "$NEW_REV" --query "properties.runningState" -o tsv 2>/dev/null)" \
-  != "Activating" ]; do sleep 5; done
+  != "Activating" ]; do
+  [ $SECONDS -ge $DEADLINE ] && { echo "TIMEOUT: revision still Activating after 120s"; exit 1; }
+  sleep 5
+done
 
 az containerapp revision show --name sb-server --resource-group sb-prod-rg \
   --revision "$NEW_REV" \
@@ -546,17 +578,19 @@ psql "postgres://sbmigrate:<pw-A>@${PG_HOST}/singing_bridge?sslmode=require" \
   -c "CREATE TABLE _sprint18_probe (id int); DROP TABLE _sprint18_probe;"
 # PASS: no error
 
-# sbapp can SELECT, INSERT, DELETE on table created by sbmigrate (default privileges) ✓
+# sbapp can SELECT, INSERT, UPDATE, DELETE on table and use sequence (default privileges) ✓
 psql "postgres://sbmigrate:<pw-A>@${PG_HOST}/singing_bridge?sslmode=require" \
-  -c "CREATE TABLE _priv_probe (id int);"
+  -c "CREATE TABLE _priv_probe (id SERIAL PRIMARY KEY, val text);"
 psql "postgres://sbapp:<pw-B>@${PG_HOST}/singing_bridge?sslmode=require" <<'SQL'
+INSERT INTO _priv_probe (val) VALUES ('a');
+UPDATE _priv_probe SET val = 'b' WHERE val = 'a';
 SELECT * FROM _priv_probe;
-INSERT INTO _priv_probe VALUES (1);
-DELETE FROM _priv_probe WHERE id = 1;
+DELETE FROM _priv_probe;
+SELECT nextval(pg_get_serial_sequence('_priv_probe', 'id'));
 SQL
 psql "postgres://sbmigrate:<pw-A>@${PG_HOST}/singing_bridge?sslmode=require" \
   -c "DROP TABLE _priv_probe;"
-# PASS: all three statements succeed; DROP succeeds (cleanup)
+# PASS: INSERT, UPDATE, SELECT, DELETE, and nextval all succeed; DROP succeeds (cleanup)
 
 # sbapp cannot connect to vvpissuer ✗ (expected failure)
 psql "postgres://sbapp:<pw-B>@${PG_HOST}/vvpissuer?sslmode=require" \
@@ -626,9 +660,13 @@ az deployment group create \
 NEW_REV=$(az containerapp show --name sb-server --resource-group sb-prod-rg \
   --query "properties.latestRevisionName" -o tsv)
 
+DEADLINE=$((SECONDS + 120))
 until [ "$(az containerapp revision show --name sb-server --resource-group sb-prod-rg \
   --revision "$NEW_REV" --query "properties.runningState" -o tsv 2>/dev/null)" \
-  != "Activating" ]; do sleep 5; done
+  != "Activating" ]; do
+  [ $SECONDS -ge $DEADLINE ] && { echo "TIMEOUT: revision still Activating after 120s"; exit 1; }
+  sleep 5
+done
 
 az containerapp revision show --name sb-server --resource-group sb-prod-rg \
   --revision "$NEW_REV" \

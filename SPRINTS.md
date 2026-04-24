@@ -590,3 +590,49 @@ _Accompaniment panel (teacher-only)_
 - Low-latency "try to match duet" mode — explicitly not a goal; this tool is coaching-focused
 - **Web MIDI recording:** promoted to Sprint 15.
 - **WAV recording:** allow the teacher to record a live audio performance directly in the browser (Web Audio / MediaRecorder) as a WAV accompaniment, without needing a separate recording app. Input paths summary: PDF = upload only; MIDI = upload or record (Sprint 15); WAV = upload only until this is implemented.
+
+---
+
+## Sprint 18: Shared PostgreSQL platform
+
+**Goal:** Promote `vvp-postgres` to a governed, multi-project shared service so that singing-bridge (and future RCNX projects) can use persistent PostgreSQL without each owning a separate server.
+
+**Deliverables:**
+- `rcnx-shared-rg` resource group created; `vvp-postgres` moved into it
+- Public access enabled on the shared server; `AllowAzureServices` firewall rule active
+- Storage auto-grow enabled
+- `singing_bridge` database and `sbapp` least-privilege role created; `citext` extension installed
+- `rcnx-shared-kv` Key Vault in `rcnx-shared-rg` holding admin + per-project connection strings with RBAC grants
+- `SB_DATABASE_URL` secret pre-positioned in singing-bridge Container App (Sprint 19 ready to go)
+- VVP services verified healthy after resource group move
+- `infra/bicep/shared-postgres.bicep` and `infra/bicep/shared-keyvault.bicep` committed and idempotent
+
+**Exit criteria:**
+- `sbapp` can connect to `singing_bridge`; cannot connect to VVP databases
+- VVP health endpoints green after the server move
+- Sprint 19 can begin with no further infra work
+
+**Status:** PENDING
+
+---
+
+## Sprint 19: PostgreSQL application migration
+
+**Goal:** Migrate the singing-bridge server from SQLite to PostgreSQL so that teacher accounts, sessions, recordings, and library assets persist across deploys.
+
+**Deliverables:**
+- `sqlx` feature flag changed from `sqlite` to `postgres`; `SqlitePool` → `PgPool` throughout
+- All 6 migration files rewritten for Postgres syntax (BIGSERIAL, BYTEA, CITEXT, `$N` placeholders)
+- `INSERT OR IGNORE` → `INSERT … ON CONFLICT DO NOTHING`
+- `config.rs` reads `SB_DATABASE_URL`; `db_url` derived from `SB_DATA_DIR` removed
+- `server/tests/common/mod.rs` uses per-test Postgres DB (unique name, dropped on shutdown); `DATABASE_TEST_URL` env var
+- `infra/bicep/container-app.bicep` updated: `SB_DATABASE_URL` wired; `SB_DATA_DIR` removed
+- All 14 existing Rust integration tests pass on Postgres backend
+- Production deploy: `SB_DATA_DIR=/tmp` workaround removed; sessions persist across redeploys
+
+**Exit criteria:**
+- `cargo test` green with `DATABASE_TEST_URL` set
+- Teacher logs in before a deploy; is still logged in after
+- No `SqlitePool` symbol remaining in `server/src/`
+
+**Status:** PENDING

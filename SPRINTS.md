@@ -636,3 +636,51 @@ _Accompaniment panel (teacher-only)_
 - No `SqlitePool` symbol remaining in `server/src/`
 
 **Status:** PENDING
+
+---
+
+## Sprint 20: Lesson support for students without headphones (and iOS)
+
+**Goal:** A complete singing lesson — including backing-track playback and bidirectional voice — works end-to-end for students on speakers or iOS, with no audible echo at the teacher and no subjective fidelity regression for headphone students.
+
+**Deliverables:**
+
+_Acoustic profile model_
+- Three-state profile: `Headphones` / `Speakers` / `IosForced`, stored on the lobby entry, propagated to the active session via the existing WS signalling path
+- Auto-detection at student join: iOS UA → `IosForced`; desktop self-check checked → `Headphones`; desktop self-check unchecked → `Speakers`
+- Manual override: teacher can change the profile in the lobby row (pre-admit) and in the in-session panel (post-admit); override propagates live to the student client within 200 ms
+- Default path (`Headphones`) behaves bit-identically to Sprint 17 — no SDP renegotiation, no perceived change
+
+_Conditional accompaniment muting_
+- When profile ≠ `Headphones`, the teacher's local audio element for the backing track is muted; controls (play / pause / scrub / tempo / score-viewer) remain fully functional; an in-drawer banner explains why
+- Teacher's local audio element still loads (no src removal) so scrub and bar-advancement continue
+
+_VAD-driven chat mode_
+- Energy + hysteresis VAD on the teacher's outbound mic; emits `ChattingMode { enabled }` WS message to student on state change
+- On `ChattingMode { enabled: true }`: student calls `applyConstraints({ echoCancellation: true, noiseSuppression: true })`
+- On `ChattingMode { enabled: false }`: student calls `applyConstraints({ echoCancellation: false, noiseSuppression: false })`
+- 3 s hangover: chat mode stays on for ≥ 3 s after VAD detects silence
+- Hard gate: chat-mode rising edges suppressed while `AccompanimentState.is_playing = true`
+- Manual override: teacher can force chat mode on or off via a live chip; wins over VAD until cleared
+- Live chip in session UI shows state: `Auto-listening` / `On` / `Suppressed`
+
+_iOS first-class support_
+- iOS UA → `IosForced` profile; student sees "Supported" with a small label ("📱 iOS — AEC locked") instead of the current "degraded" warning
+- Chat-mode chip shows "Always on — iOS forces voice processing" and is non-interactive for iOS students
+- `browser.js` BROWSER_FLOORS + tier logic updated to reflect iOS as supported
+
+_Backwards compatibility_
+- No DB migration; all profile state is in-memory per session
+- No SDP renegotiation on any transition
+- `HeadphonesConfirmed` existing protocol field continues to work as before
+
+**Exit criteria:**
+- Full 30-minute lesson on desktop Chrome with speakers: teacher reports no audible echo or doubled backing track
+- Full 30-minute lesson on iPad Safari (`IosForced`): teacher reports same
+- Headphones regression test: subjective audio quality under `Headphones` profile rated equal to Sprint 17
+- Teacher-initiated profile override mid-lesson takes effect immediately (< 200 ms)
+- Chat-mode state machine verified across four inputs: VAD on/off × accompaniment playing/not × manual auto/force-on/force-off
+- iOS student sees "Supported" (not "degraded") in the browser compatibility flow
+- Council code review APPROVED
+
+**Status:** PENDING

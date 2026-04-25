@@ -5,12 +5,15 @@
 //          while waiting to be admitted.
 // Role: Mounts a modal overlay; calls opts.onConfirm(headphonesConfirmed) when done.
 // Exports: window.sbSelfCheck.show(stream, opts) → { teardown() }
+//          opts.iosAecForced (bool) — when true, hides headphones checkbox and enables confirm
+//          button immediately; onConfirm(false) called on confirm (profile fixed as IosForced).
 // Depends: DOM, getUserMedia (stream provided by caller), theme.css (.sb-self-check)
 // Invariants: teacher sessionStorage gate is UX-only convenience, not a trust boundary;
-//             confirm button disabled until headphones checkbox is checked;
+//             confirm button disabled until headphones checkbox is checked (non-iOS only);
+//             when iosAecForced=true, confirm button enabled immediately; onConfirm(false) always.
 //             null stream renders overlay without media (degraded path — mic meter hidden);
 //             all tracks stopped on teardown; overlay removed from DOM on teardown.
-// Last updated: Sprint 9 (2026-04-19) -- refactored: buildOverlayDOM / startMicMeter / show
+// Last updated: Sprint 20 (2026-04-25) -- iosAecForced: skip headphones checkbox
 
 (function (root, factory) {
   'use strict';
@@ -137,6 +140,7 @@
   function show(stream, opts) {
     var role = opts.role || 'student';
     var onConfirm = opts.onConfirm || function () {};
+    var iosAecForced = !!(opts && opts.iosAecForced);
 
     if (role === 'teacher' && typeof sessionStorage !== 'undefined') {
       if (sessionStorage.getItem(TEACHER_SESSION_KEY)) {
@@ -151,11 +155,21 @@
     var meter = startMicMeter(stream, dom.meterFill);
     var teardown = makeTeardown(dom.overlay, stream, meter);
 
-    dom.hpCheck.addEventListener('change', function () {
-      dom.confirmBtn.disabled = !dom.hpCheck.checked;
-    });
+    if (iosAecForced) {
+      // iOS: headphones checkbox irrelevant — AEC is always on by the OS.
+      dom.hpCheck.parentNode.hidden = true; // hide hpWrap label
+      var iosLabel = el('p', 'sb-self-check-ios-note');
+      iosLabel.textContent = '\uD83D\uDCF1 AEC is always on for your device \u2014 headphones are still recommended for best quality.';
+      dom.hpCheck.parentNode.parentNode.insertBefore(iosLabel, dom.confirmBtn);
+      dom.confirmBtn.disabled = false; // no checkbox to gate on
+    } else {
+      dom.hpCheck.addEventListener('change', function () {
+        dom.confirmBtn.disabled = !dom.hpCheck.checked;
+      });
+    }
+
     dom.confirmBtn.addEventListener('click', function () {
-      var hp = dom.hpCheck.checked;
+      var hp = iosAecForced ? false : dom.hpCheck.checked;
       if (role === 'teacher' && typeof sessionStorage !== 'undefined') {
         sessionStorage.setItem(TEACHER_SESSION_KEY, '1');
       }

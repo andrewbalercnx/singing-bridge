@@ -2,7 +2,7 @@
 // Purpose: Node-run property + boundary + failure tests for the
 //          browser/device/tier detector. Runs under `node --test`
 //          in CI.
-// Last updated: Sprint 3 (2026-04-17) -- initial implementation
+// Last updated: Sprint 20 (2026-04-25) -- iOS reclassified to supported; iosAecForced tests
 
 'use strict';
 
@@ -35,15 +35,30 @@ test('in-app WebView UAs all map to unworkable', () => {
   }
 });
 
-test('iOS UAs always map to degraded — iOS forces voice processing on all browsers', () => {
+test('iOS UAs are supported with iosAecForced=true (Sprint 20: reclassified from degraded)', () => {
   const r1 = detectBrowser(BROWSER_UA_FIXTURES.safari_ios_17, FEATURES_OK);
-  assert.equal(r1.tier, 'degraded');
+  assert.equal(r1.tier, 'supported');
   assert.equal(r1.isIOS, true);
+  assert.equal(r1.iosAecForced, true);
+  assert.equal(r1.reasons.length, 0, 'iOS should have no warning reasons');
   const r2 = detectBrowser(BROWSER_UA_FIXTURES.chrome_ios, FEATURES_OK);
-  // CriOS on iPhone must degrade via iOS branch, not the Chrome-version branch.
-  assert.equal(r2.tier, 'degraded');
+  // CriOS is iOS — supported, iosAecForced, browser name resolved correctly.
+  assert.equal(r2.tier, 'supported');
   assert.equal(r2.isIOS, true);
+  assert.equal(r2.iosAecForced, true);
   assert.equal(r2.name, 'Chrome');
+});
+
+test('iosAecForced is false for all non-iOS fixtures', () => {
+  const nonIos = [
+    'chrome_desktop_current', 'chrome_android_current', 'firefox_desktop_current',
+    'firefox_android', 'safari_desktop_17', 'edge_desktop_current',
+    'chrome_desktop_old_110', 'android_tablet', 'empty',
+  ];
+  for (const key of nonIos) {
+    const r = detectBrowser(BROWSER_UA_FIXTURES[key], FEATURES_OK);
+    assert.equal(r.iosAecForced, false, `${key} should have iosAecForced=false`);
+  }
 });
 
 test('feature-absent env is unworkable regardless of UA (RTCPeerConnection missing)', () => {

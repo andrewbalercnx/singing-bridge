@@ -1,7 +1,7 @@
 // File: web/assets/student.js
 // Purpose: Student join form + lobby/session UI driver. Sprint 8:
 //          replaced wireControls with sbSessionUI.mount into #session-root.
-// Last updated: Sprint 14 (2026-04-23) -- accompaniment-drawer + score-view mounts + AccompanimentState handler
+// Last updated: Sprint 20 (2026-04-25) -- acoustic profile derivation, iOS note, applyChatMode
 
 'use strict';
 
@@ -16,6 +16,7 @@
   const blockReason = document.getElementById('block-reason');
   const degradedNotice = document.getElementById('degraded-notice');
   const degradedReason = document.getElementById('degraded-reason');
+  const iosNote = document.getElementById('ios-note');
   const qualityBadge = document.getElementById('quality-badge');
   const reconnectBanner = document.getElementById('reconnect-banner');
   const floorNotice = document.getElementById('floor-violation');
@@ -28,6 +29,26 @@
 
   let consentTimer = null;
   let headphonesConfirmedState = false;
+  let localAudioTrack = null;
+  let lastChatModeApplied = null;
+
+  function deriveAcousticProfile(det) {
+    return det.iosAecForced ? 'ios_forced' : null;
+  }
+
+  function applyChatMode(enabled) {
+    if (enabled === lastChatModeApplied) return;
+    lastChatModeApplied = enabled;
+    if (detect.iosAecForced) return; // iOS: constraints are fixed by OS; no-op
+    if (!localAudioTrack) return;
+    localAudioTrack.applyConstraints({
+      echoCancellation: enabled,
+      noiseSuppression: enabled,
+      autoGainControl: enabled,
+    }).catch(function () {
+      console.warn('[student] applyConstraints for chat mode rejected');
+    });
+  }
 
   function showConsentBanner(onResponse) {
     if (!consentBanner) return;
@@ -79,6 +100,9 @@
     degradedNotice.hidden = false;
     degradedReason.textContent = detect.reasons[0] || '';
   }
+  if (detect.iosAecForced && iosNote) {
+    iosNote.hidden = false;
+  }
 
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -100,6 +124,7 @@
     if (window.sbSelfCheck) {
       window.sbSelfCheck.show(selfCheckStream, {
         role: 'student',
+        iosAecForced: detect.iosAecForced,
         onConfirm(hp) {
           headphonesConfirmedState = hp;
           if (hp && handle) handle.sendHeadphonesConfirmed();
@@ -110,6 +135,7 @@
     handle = await window.signallingClient.connectStudent({
       slug,
       email,
+      acoustic_profile: deriveAcousticProfile(detect),
       onAdmitted() {
         lobbyStatus.hidden = true;
       },
@@ -138,7 +164,11 @@
         if (accompanimentHandle) accompanimentHandle.updateState(state);
         if (scoreViewHandle) scoreViewHandle.updatePages(state.page_urls || null, state.bar_coords || null);
       },
+      onChattingMode({ enabled }) {
+        applyChatMode(enabled);
+      },
       onPeerConnected({ dataChannel, audioTrack, videoTrack, localStream, remoteStream }) {
+        localAudioTrack = localStream && localStream.getAudioTracks()[0] || null;
         sessionSection.hidden = false;
         if (qualityBadge) qualityBadge.hidden = false;
         const sessionRoot = document.getElementById('session-root');
@@ -185,6 +215,8 @@
         if (sessionUiHandle) { sessionUiHandle.teardown(); sessionUiHandle = null; }
         if (accompanimentHandle) { accompanimentHandle.teardown(); accompanimentHandle = null; }
         if (scoreViewHandle) { scoreViewHandle.teardown(); scoreViewHandle = null; }
+        localAudioTrack = null;
+        lastChatModeApplied = null;
         sessionSection.hidden = true;
         if (qualityBadge) qualityBadge.hidden = true;
         if (reconnectBanner) reconnectBanner.hidden = true;

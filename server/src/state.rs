@@ -10,7 +10,7 @@
 //             AppState::room / ::room_or_insert (no direct DashMap access
 //             from async fns). BLOCK_LIST_CAP enforced on every block insert;
 //             oldest entry evicted when cap is reached (FIFO).
-// Last updated: Sprint 14 (2026-04-23) -- AccompanimentSnapshot + ActiveSession.accompaniment
+// Last updated: Sprint 20 (2026-04-25) -- AcousticProfile replaces headphones_confirmed in LobbyEntry
 
 use std::net::IpAddr;
 use std::sync::atomic::{AtomicU16, AtomicUsize, Ordering};
@@ -31,7 +31,7 @@ use crate::config::Config;
 use crate::http::media_token::MediaTokenStore;
 use crate::sidecar::{BarCoord, BarTiming, SidecarClient};
 use crate::error::{AppError, Result};
-use crate::ws::protocol::{EntryId, LobbyEntryView, PumpDirective, Tier};
+use crate::ws::protocol::{AcousticProfile, EntryId, LobbyEntryView, PumpDirective, Tier};
 use crate::ws::rate_limit::WsJoinBucket;
 use crate::auth::magic_link::TeacherId;
 use crate::ws::session_history::{SessionEventId, StudentId};
@@ -92,7 +92,7 @@ pub struct LobbyEntry {
     pub joined_at: Instant,
     pub joined_at_unix: i64,
     pub conn: ClientHandle,
-    pub headphones_confirmed: bool,
+    pub acoustic_profile: AcousticProfile,
 }
 
 impl LobbyEntry {
@@ -105,7 +105,7 @@ impl LobbyEntry {
             tier: self.tier,
             tier_reason: self.tier_reason.clone(),
             joined_at_unix: self.joined_at_unix,
-            headphones_confirmed: self.headphones_confirmed,
+            acoustic_profile: self.acoustic_profile,
         }
     }
 }

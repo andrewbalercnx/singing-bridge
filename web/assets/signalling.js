@@ -21,7 +21,7 @@
 //             is the sole sender.setParameters mutation site AFTER
 //             session subsystems start; priority hints at transceiver
 //             creation are the only pre-session setParameters calls.
-// Last updated: Sprint 14 (2026-04-23) -- forward getOneWayLatencyMs to onPeerConnected
+// Last updated: Sprint 20 (2026-04-25) -- acoustic_profile in LobbyJoin; chatting_mode + acoustic_profile_changed handlers; sendSetAcousticProfile + sendChattingMode on teacher handle
 
 (function (root, factory) {
   'use strict';
@@ -204,6 +204,7 @@
     var onWsClose = args.onWsClose;
     var onRemoteStream = args.onRemoteStream;
     var onAccompanimentState = args.onAccompanimentState;
+    var onAcousticProfileChanged = args.onAcousticProfileChanged;
 
     var sig = new Signalling(openWs());
     sig.send({ type: 'lobby_watch', slug: slug });
@@ -356,6 +357,9 @@
     sig.on('accompaniment_state', function (m) {
       if (onAccompanimentState) onAccompanimentState(m);
     });
+    sig.on('acoustic_profile_changed', function (m) {
+      if (onAcousticProfileChanged) onAcousticProfileChanged(m.profile);
+    });
 
     return {
       admit: function (entryId) { sig.send({ type: 'lobby_admit', slug: slug, entry_id: entryId }); },
@@ -370,6 +374,12 @@
         sig.send({ type: 'lobby_message', entry_id: entryId, text: text });
       },
       sendRaw: function (msg) { sig.send(msg); },
+      sendSetAcousticProfile: function (entryId, profile) {
+        sig.send({ type: 'set_acoustic_profile', entry_id: entryId, profile: profile });
+      },
+      sendChattingMode: function (enabled) {
+        sig.send({ type: 'chatting_mode', enabled: !!enabled });
+      },
       hangup: function () { teardownSession(); sig.close(); },
     };
   }
@@ -393,10 +403,12 @@
     var onLobbyMessage = args.onLobbyMessage;
     var onRemoteStream = args.onRemoteStream;
     var onAccompanimentState = args.onAccompanimentState;
+    var onAcousticProfileChanged = args.onAcousticProfileChanged;
+    var onChattingMode = args.onChattingMode;
 
     var detect = detectTier();
     var sig = new Signalling(openWs());
-    sig.send({
+    var joinMsg = {
       type: 'lobby_join',
       slug: slug,
       email: email,
@@ -404,7 +416,9 @@
       device_class: detect.device,
       tier: detect.tier,
       tier_reason: detect.reasons[0] || null,
-    });
+    };
+    if (args.acoustic_profile != null) joinMsg.acoustic_profile = args.acoustic_profile;
+    sig.send(joinMsg);
 
     var refs = { pc: null, media: null, overlay: null, dataChannel: null, session: null };
     var teardownSession = makeTeardown(refs);
@@ -494,6 +508,12 @@
     });
     sig.on('accompaniment_state', function (m) {
       if (onAccompanimentState) onAccompanimentState(m);
+    });
+    sig.on('acoustic_profile_changed', function (m) {
+      if (onAcousticProfileChanged) onAcousticProfileChanged(m.profile);
+    });
+    sig.on('chatting_mode', function (m) {
+      if (onChattingMode) onChattingMode({ enabled: m.enabled });
     });
 
     return {

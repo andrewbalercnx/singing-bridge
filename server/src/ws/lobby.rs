@@ -3,13 +3,13 @@
 //          RoomState under a single `write().await` scope; no `.await`
 //          inside the guard except collecting data.
 // Role: The admission workflow described in §4.7.
-// Exports: join_lobby, watch_lobby, admit, reject, confirm_headphones
+// Exports: join_lobby, watch_lobby, admit, reject, confirm_headphones (deprecated backwards-compat)
 // Depends: tokio, state, protocol, session_log, session_history, auth::magic_link
 // Invariants: ≤ 1 teacher_conn, ≤ 1 active_session, LobbyEntry placement is
 //             XOR between lobby and active_session.
 //             Blocked IP → close 1008 "blocked". Plain reject → close 1000.
 //             Block-with-ttl → close 1008 "blocked".
-// Last updated: Sprint 14 (2026-04-23) -- accompaniment: None added to ActiveSession
+// Last updated: Sprint 20 (2026-04-25) -- acoustic_profile in join_lobby; confirm_headphones updated
 
 use std::net::IpAddr;
 use std::sync::Arc;
@@ -20,7 +20,7 @@ use tokio::sync::mpsc;
 use crate::auth::magic_link::TeacherId;
 use crate::state::{ActiveSession, AppState, ClientHandle, LobbyEntry, SlugKey};
 use crate::ws::connection::ConnContext;
-use crate::ws::protocol::{EntryId, ErrorCode, PumpDirective, Role, ServerMsg, Tier, MAX_TIER_REASON_CHARS};
+use crate::ws::protocol::{AcousticProfile, EntryId, ErrorCode, PumpDirective, Role, ServerMsg, Tier, MAX_TIER_REASON_CHARS};
 use crate::ws::session_history;
 use crate::ws::session_log::{self, SessionLogId};
 
@@ -140,6 +140,8 @@ pub async fn join_lobby(
     device_class: String,
     tier: Tier,
     tier_reason: Option<String>,
+    // acoustic_profile is advisory; teacher override via SetAcousticProfile is authoritative.
+    acoustic_profile: Option<AcousticProfile>,
 ) -> bool {
     let room = match state.room_or_insert(slug.clone()) {
         Ok(r) => r,
@@ -167,6 +169,12 @@ pub async fn join_lobby(
             send_error(&ctx.tx, ErrorCode::LobbyFull, "lobby full").await;
             return true;
         } else {
+            // Fallback table: Unknown → Speakers; None → Speakers (HeadphonesConfirmed upgrades later).
+            let resolved_profile = match acoustic_profile {
+                Some(AcousticProfile::IosForced) => AcousticProfile::IosForced,
+                Some(AcousticProfile::Headphones) => AcousticProfile::Headphones,
+                Some(AcousticProfile::Speakers) | Some(AcousticProfile::Unknown) | None => AcousticProfile::Speakers,
+            };
             rs.lobby.push(LobbyEntry {
                 id: entry_id,
                 email,
@@ -177,7 +185,7 @@ pub async fn join_lobby(
                 joined_at: Instant::now(),
                 joined_at_unix: now_unix,
                 conn: client_handle,
-                headphones_confirmed: false,
+                acoustic_profile: resolved_profile,
             });
             let teacher_tx = rs.teacher_conn.as_ref().map(|c| c.tx.clone());
             let update = ServerMsg::LobbyState {
@@ -208,10 +216,10 @@ pub async fn join_lobby(
     true
 }
 
-/// Mark the calling student's lobby entry as headphones-confirmed and push a
-/// `LobbyState` update to the teacher. Idempotent: a duplicate call when the
-/// entry is already confirmed is a silent no-op with no second broadcast.
-/// Returns `false` only on a fatal pump error (caller should close the loop).
+/// Backwards-compat handler for pre-Sprint-20 `HeadphonesConfirmed` message.
+/// Upgrades `Speakers → Headphones` only. No-op for `IosForced` (cannot wear
+/// headphones on iOS in a way that disables OS AEC) and for `Headphones`
+/// (already confirmed). Broadcasts `LobbyState` on a real upgrade.
 pub async fn confirm_headphones(state: &Arc<AppState>, ctx: &ConnContext) -> bool {
     let (Some(slug), Some(entry_id)) = (ctx.slug.as_ref(), ctx.entry_id) else {
         send_error(&ctx.tx, ErrorCode::EntryNotFound, "not in lobby").await;
@@ -236,11 +244,16 @@ pub async fn confirm_headphones(state: &Arc<AppState>, ctx: &ConnContext) -> boo
                 return true;
             }
             Some(pos) => {
-                if rs.lobby[pos].headphones_confirmed {
-                    // Already confirmed — no-op, suppress duplicate broadcast.
-                    return true;
+                match rs.lobby[pos].acoustic_profile {
+                    // IosForced: AEC is OS-enforced regardless of headphones — silent no-op.
+                    AcousticProfile::IosForced => return true,
+                    // Already Headphones — idempotent no-op, suppress duplicate broadcast.
+                    AcousticProfile::Headphones => return true,
+                    // Speakers (or Unknown, normalized to Speakers at join) → upgrade.
+                    AcousticProfile::Speakers | AcousticProfile::Unknown => {
+                        rs.lobby[pos].acoustic_profile = AcousticProfile::Headphones;
+                    }
                 }
-                rs.lobby[pos].headphones_confirmed = true;
                 let update = ServerMsg::LobbyState { entries: rs.lobby_view() };
                 let teacher_tx = rs.teacher_conn.as_ref().map(|c| c.tx.clone());
                 (teacher_tx, update)

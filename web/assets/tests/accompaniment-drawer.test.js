@@ -1,8 +1,8 @@
 // File: web/assets/tests/accompaniment-drawer.test.js
 // Purpose: Unit tests for accompaniment-drawer.js: audio lifecycle, rAF bar-advancement,
-//          clock skew clamping, teacher/student roles, validation, edge cases, and
-//          panelEl path (Sprint 17 v2 layout).
-// Last updated: Sprint 17 (2026-04-23) -- panelEl coverage added
+//          clock skew clamping, teacher/student roles, validation, edge cases,
+//          panelEl path (Sprint 17 v2 layout), and acoustic profile muting (Sprint 20).
+// Last updated: Sprint 20 (2026-04-25) -- setAcousticProfile muting + banner tests
 
 'use strict';
 
@@ -34,6 +34,7 @@ function makeAudioStub() {
     src: '',
     currentTime: 0,
     paused: true,
+    muted: false,
     play: function () { stub.paused = false; return Promise.resolve(); },
     pause: function () { stub.paused = true; },
     addEventListener: function (ev, fn) { (listeners[ev] = listeners[ev] || []).push(fn); },
@@ -645,4 +646,121 @@ test('panelEl: loadedmetadata fires setDuration', function () {
   lastAudio.duration = 120;
   lastAudio._fire('loadedmetadata');
   assert.equal(panelEl._get().durationMs, 120000, 'setDuration called with ms from audio.duration');
+});
+
+// ---------------------------------------------------------------------------
+// Acoustic profile muting (Sprint 20)
+// ---------------------------------------------------------------------------
+
+function setupWithProfile(profile) {
+  lastAudio = null;
+  rafCallbacks = [];
+  fakeNow = 1_000_000;
+  var ws = makeSendWs();
+  var container = makeContainer();
+  var handle = drawer.mount(container, {
+    role: 'teacher',
+    sendWs: ws.fn,
+    acousticProfile: profile,
+  });
+  return { handle: handle, ws: ws, container: container };
+}
+
+function playAudio(handle) {
+  handle.updateState({
+    asset_id: 1, variant_id: 1, is_playing: true,
+    position_ms: 0, tempo_pct: 100,
+    wav_url: 'http://example.com/a.wav',
+    server_time_ms: fakeNow,
+  });
+}
+
+test('setAcousticProfile(speakers): audio.muted = true', function () {
+  var { handle } = setup('teacher');
+  playAudio(handle);
+  handle.setAcousticProfile('speakers');
+  assert.equal(lastAudio.muted, true, 'audio.muted is true for speakers');
+});
+
+test('setAcousticProfile(headphones): audio.muted = false', function () {
+  var { handle } = setup('teacher');
+  playAudio(handle);
+  handle.setAcousticProfile('speakers');
+  handle.setAcousticProfile('headphones');
+  assert.equal(lastAudio.muted, false, 'audio.muted is false for headphones');
+});
+
+test('setAcousticProfile(ios_forced): audio.muted = true (same as speakers)', function () {
+  var { handle } = setup('teacher');
+  playAudio(handle);
+  handle.setAcousticProfile('ios_forced');
+  assert.equal(lastAudio.muted, true, 'audio.muted is true for ios_forced');
+});
+
+test('mount-time acousticProfile=speakers: banner shown immediately (before audio created)', function () {
+  var { container } = setupWithProfile('speakers');
+  var root = container._children[0];
+  var bannerEl = null;
+  for (var i = 0; i < root._children.length; i++) {
+    if (root._children[i].className && root._children[i].className.indexOf('sb-muting-banner') !== -1) {
+      bannerEl = root._children[i];
+    }
+  }
+  assert.ok(bannerEl, 'banner element present');
+  assert.equal(bannerEl.hidden, false, 'banner visible at mount when acousticProfile=speakers');
+  assert.strictEqual(lastAudio, null, 'no audio created yet at mount');
+});
+
+test('mount-time acousticProfile=headphones: banner hidden', function () {
+  var { container } = setupWithProfile('headphones');
+  var root = container._children[0];
+  var bannerEl = null;
+  for (var i = 0; i < root._children.length; i++) {
+    if (root._children[i].className && root._children[i].className.indexOf('sb-muting-banner') !== -1) {
+      bannerEl = root._children[i];
+    }
+  }
+  assert.ok(bannerEl, 'banner element present');
+  assert.equal(bannerEl.hidden, true, 'banner hidden at mount when acousticProfile=headphones');
+});
+
+test('mount-time acousticProfile=speakers: audio.muted=true when audio is subsequently created', function () {
+  var { handle } = setupWithProfile('speakers');
+  playAudio(handle); // triggers audio creation
+  assert.equal(lastAudio.muted, true, 'audio created with muted=true for speakers profile');
+});
+
+test('setAcousticProfile: banner shows when muted, hides when headphones', function () {
+  var { handle, container } = setup('teacher');
+  var root = container._children[0];
+  var bannerEl = null;
+  for (var i = 0; i < root._children.length; i++) {
+    if (root._children[i].className && root._children[i].className.indexOf('sb-muting-banner') !== -1) {
+      bannerEl = root._children[i];
+    }
+  }
+  assert.ok(bannerEl, 'banner element present');
+  handle.setAcousticProfile('speakers');
+  assert.equal(bannerEl.hidden, false, 'banner visible for speakers');
+  handle.setAcousticProfile('headphones');
+  assert.equal(bannerEl.hidden, true, 'banner hidden for headphones');
+});
+
+test('Sprint 14 regression: audio.currentTime tracking correct when audio.muted=true', function () {
+  var { handle, sv } = setup('teacher');
+  handle.setScoreView(sv);
+  var barTimings = [{ bar: 1, time_s: 0 }, { bar: 2, time_s: 1 }];
+  handle.updateState({
+    asset_id: 1, variant_id: 1, is_playing: true,
+    position_ms: 0, tempo_pct: 100,
+    wav_url: 'http://example.com/a.wav',
+    bar_timings: barTimings,
+    server_time_ms: fakeNow,
+  });
+  handle.setAcousticProfile('speakers');
+  // Advance time — bar advancement should still work despite muted
+  fakeNow += 1500;
+  drainRaf();
+  var last = sv.calls[sv.calls.length - 1];
+  assert.ok(last !== undefined, 'seekToBar still called when audio muted');
 });

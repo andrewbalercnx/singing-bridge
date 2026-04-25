@@ -2,7 +2,7 @@
 // Purpose: In-session accompaniment playback UI — audio control and bar-advancement loop.
 //          Teacher sees play/pause/stop controls; student sees read-only status.
 // Role: Manages the Audio element lifecycle, rAF bar-advancement loop, and WS message dispatch.
-// Exports: window.sbAccompanimentDrawer.mount(container, opts) → { teardown, updateState, setScoreView }
+// Exports: window.sbAccompanimentDrawer.mount(container, opts) → { teardown, updateState, setScoreView, setAcousticProfile(profile) }
 // Depends: DOM, Audio, requestAnimationFrame, signalling.js (caller provides sendWs)
 // Invariants: skewMs sampled once on receipt; not resampled per rAF tick.
 //             _lastTempoPct fallback = 100 when tempo_pct is null or absent.
@@ -12,7 +12,8 @@
 //             Score view wired after mount via handle.setScoreView(scoreViewHandle).
 //             opts.panelEl: when provided (v2 layout), drives panelEl API instead of
 //             building own UI; container may be null in that case.
-// Last updated: Sprint 17 (2026-04-23) -- panelEl option for inline accmp panel (v2 layout)
+//             audio.muted = true when acousticProfile !== 'headphones'.
+// Last updated: Sprint 20 (2026-04-25) -- setAcousticProfile: muting + banner
 
 (function (root, factory) {
   'use strict';
@@ -77,6 +78,7 @@
     var panelEl = (opts && opts.panelEl) || null; // buildAccmpPanel handle (v2 layout)
     var sendWs = (opts && opts.sendWs) || function () {};
     var getOneWayLatencyMs = (opts && opts.getOneWayLatencyMs) || function () { return 0; };
+    var _acousticProfile = (opts && opts.acousticProfile) || 'headphones';
 
     var audio = null;
     var rafHandle = null;
@@ -90,6 +92,7 @@
     var root = null;
     var statusEl = null;
     var controls = null;
+    var _bannerEl = null;
 
     if (!panelEl) {
       // Build own floating UI (backward-compatible path).
@@ -139,6 +142,13 @@
         root.appendChild(controls);
       }
 
+      if (role === 'teacher') {
+        _bannerEl = el('div', 'sb-muting-banner');
+        _bannerEl.textContent = 'Backing track playing on student\'s machine only';
+        _bannerEl.hidden = true;
+        root.appendChild(_bannerEl);
+      }
+
       if (container) container.appendChild(root);
     } else if (role === 'teacher') {
       // Drive the inline accmpPanel from session-panels.js (v2 layout).
@@ -153,6 +163,18 @@
         }
       });
     }
+
+    // ---- Acoustic profile ----
+
+    function _applyProfile(profile) {
+      _acousticProfile = profile;
+      var muted = (profile !== 'headphones');
+      if (audio) audio.muted = muted;
+      if (_bannerEl) _bannerEl.hidden = !muted;
+    }
+
+    // Apply initial profile (banner visible before any audio is created).
+    _applyProfile(_acousticProfile);
 
     // ---- Internal helpers ----
 
@@ -195,6 +217,7 @@
       }
       if (!audio) {
         audio = new Audio();
+        audio.muted = (_acousticProfile !== 'headphones');
         audio.addEventListener('ended', function () {
           if (role === 'teacher') {
             sendWs({ type: 'accompaniment_stop' });
@@ -324,6 +347,7 @@
       teardown: teardown,
       updateState: updateState,
       setScoreView: function (handle) { scoreViewHandle = handle; },
+      setAcousticProfile: _applyProfile,
     };
   }
 

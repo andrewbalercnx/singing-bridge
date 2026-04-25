@@ -9,7 +9,9 @@
 // Exports: detectBrowser, BROWSER_FLOORS, BROWSER_UA_FIXTURES
 // Depends: none
 // Invariants: no DOM access; no network; pure function of (ua, features).
-// Last updated: Sprint 13 (2026-04-22) -- fix iOS degradation message; covers all browsers not just Safari
+// Exports: detectBrowser, BROWSER_FLOORS, BROWSER_UA_FIXTURES
+//          detectBrowser return shape adds: iosAecForced (bool — true on all iOS browsers)
+// Last updated: Sprint 20 (2026-04-25) -- iOS reclassified supported; iosAecForced flag
 
 (function (root, factory) {
   'use strict';
@@ -95,9 +97,6 @@
     } else if (feat.hasRTCPeerConnection === false || feat.hasGetUserMedia === false) {
       tier = 'unworkable';
       reasons.push('This browser is missing WebRTC support required for the lesson tool.');
-    } else if (ios) {
-      tier = 'degraded';
-      reasons.push('iOS forces voice processing on all browsers; audio quality will be reduced.');
     } else if (nv.name === 'Firefox' && device === 'phone') {
       tier = 'degraded';
       reasons.push('Android Firefox audio processing differs from the desktop version.');
@@ -123,6 +122,7 @@
       device: device,
       isIOS: ios,
       isInAppWebView: inapp,
+      iosAecForced: ios,
     };
   }
 

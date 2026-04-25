@@ -173,8 +173,7 @@ Three tiers, evaluated at the landing page:
 - Proportion of sessions hitting the 96 kbps student→teacher audio
   floor (session log). Persistent floor violations would indicate the
   fidelity-first model is failing in the real world.
-- Proportion of students on iOS Safari vs desktop. If iOS dominates,
-  the degraded-tier UX needs more investment.
+- Proportion of students on iOS (now `supported` / `iosAecForced`). Teacher perception of iOS student fidelity. If teachers report consistent quality issues from iOS students, revisit whether `IosForced` profile behaviour is working as intended.
 - Lobby-abuse incidents (random entries on a leaked URL). If this
   becomes real, we add per-teacher invite codes or domain-locked
   magic links.
@@ -212,3 +211,29 @@ Three tiers, evaluated at the landing page:
   strictly P2P; an SFU adds a forwarding hop (latency + infra cost)
   with no benefit at this scale. Revisit only if / when multi-party
   sessions or server-side recording (Sprint 6) require it.
+
+---
+
+## Amendment: Sprint 20 — iOS reclassified to `supported` (2026-04-25)
+
+**Decision:** iOS Safari and iOS Chrome (CriOS) are reclassified from `Degraded` to `Supported`. The original `Degraded` classification was a warning-only path; it did not prevent the lesson from running. Sprint 20 formalises the supported path with explicit acoustic profile machinery.
+
+**Rationale:**
+- iOS browsers run WebKit (Apple forces this) and apply AEC/NS/AGC via the OS regardless of `getUserMedia` constraints. This was previously surfaced as a warning; it is now surfaced as a known, handled constraint.
+- The `IosForced` acoustic profile communicates the constraint to the teacher, gates accompaniment muting correctly, and keeps chat-mode VAD locked on (no manual toggling needed or meaningful).
+- iOS sample-rate resampling (48 kHz → OS-internal rate → 44.1 kHz) is an accepted, irremediable limitation on all iOS browsers. It slightly degrades fidelity but does not make the session unworkable.
+
+**Updated browser compatibility tiers:**
+- **Supported** — Chrome / Edge (last 2 major), Firefox (last 2), Safari desktop ≥ 16, **iOS Safari and iOS Chrome/Firefox** (with `iosAecForced = true`).
+- **Degraded** — Android Firefox (WebRTC audio quirks). Proceed with a clear warning.
+- **Unworkable** — in-app browsers (Facebook / Instagram / TikTok WebViews), pre-WebRTC browsers. Block with actionable guidance.
+
+**New `iosAecForced` signal:** `browser.js` returns `iosAecForced: true` for all iOS UAs. Callers:
+- `student.js`: shows `#ios-note` element instead of no notice; passes `acoustic_profile: 'ios_forced'` in `LobbyJoin`; skips `applyConstraints` call in `applyChatMode` (no-op — OS enforces constraints anyway).
+- `self-check.js`: hides headphones checkbox; enables confirm button immediately; calls `onConfirm(false)`.
+- Teacher lobby: shows `IosForced` acoustic profile chip in lobby entry.
+
+**iOS audio limitations (accepted):**
+- AEC, NS, and AGC cannot be disabled on any iOS browser — WebKit enforces them regardless of `getUserMedia` constraints.
+- Sample rate is resampled by the OS (48 kHz codec path goes through an OS-level resampler); this cannot be bypassed in the browser.
+- These are permanent platform constraints, not bugs to be fixed.

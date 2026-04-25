@@ -2,7 +2,7 @@
 // Purpose: Teacher UI wiring. Student-supplied strings rendered via
 //          textContent only (no innerHTML — XSS prevention). Sprint 8:
 //          replaced wireControls with sbSessionUI.mount into #session-root.
-// Last updated: Sprint 17 (2026-04-23) -- v2 session layout; slug from /teach/<slug>/session; panelEl accmp
+// Last updated: Sprint 20 (2026-04-25) -- VAD wiring; chat chip; acoustic profile chip; setAcousticProfile
 
 'use strict';
 
@@ -43,6 +43,34 @@
   let lastStudentEmail = '';
   let lastStudentHeadphones = false;
   let localAudioTrack = null;
+
+  // VAD + chat mode
+  let vadHandle = null;
+  let accompanimentIsPlaying = false;
+  let lastStudentAcousticProfile = 'speakers'; // conservative default
+  let chatChipEl = null;
+
+  const CHAT_CHIP_MODES = ['auto', 'on', 'off']; // cycles on click
+
+  function updateChatChip() {
+    if (!chatChipEl || !vadHandle) return;
+    if (accompanimentIsPlaying) {
+      chatChipEl.textContent = 'Suppressed (track playing)';
+      chatChipEl.className = 'sb-chat-chip sb-chat-chip--suppressed';
+      return;
+    }
+    const mode = chatChipEl.dataset.forceMode || 'auto';
+    if (mode === 'auto') {
+      chatChipEl.textContent = 'Auto-listening';
+      chatChipEl.className = 'sb-chat-chip sb-chat-chip--auto';
+    } else if (mode === 'on') {
+      chatChipEl.textContent = 'On';
+      chatChipEl.className = 'sb-chat-chip sb-chat-chip--on';
+    } else {
+      chatChipEl.textContent = 'Demonstrating';
+      chatChipEl.className = 'sb-chat-chip sb-chat-chip--demonstrating';
+    }
+  }
 
   function setRecordState(state) {
     if (!recordBtn) return;
@@ -135,10 +163,20 @@
     const badge = document.createElement('span');
     badge.className = `tier-badge ${entry.tier || 'degraded'}`;
     badge.textContent = entry.tier || 'degraded';
-    const hpChip = document.createElement('span');
-    hpChip.className = 'headphones-chip' + (entry.headphones_confirmed ? ' confirmed' : '');
-    hpChip.textContent = entry.headphones_confirmed ? '🎧 Headphones' : 'No headphones confirmed';
-    li.append(meta, document.createTextNode(' '), badge, document.createTextNode(' '), hpChip);
+    const profile = entry.acoustic_profile || (entry.headphones_confirmed ? 'headphones' : null);
+    const profileLabels = { headphones: '🎧 Headphones', speakers: '🔊 Speakers', ios_forced: '📱 iOS (AEC forced)' };
+    const profileChip = document.createElement('span');
+    profileChip.className = 'profile-chip profile-chip--' + (profile || 'unknown');
+    profileChip.textContent = profileLabels[profile] || 'Audio setup unknown';
+    const overrideBtn = document.createElement('button');
+    overrideBtn.type = 'button';
+    overrideBtn.className = 'sb-btn sb-btn--sm';
+    overrideBtn.textContent = profile === 'headphones' ? 'Mark: Speakers' : 'Mark: Headphones';
+    overrideBtn.addEventListener('click', () => {
+      const newProfile = profile === 'headphones' ? 'speakers' : 'headphones';
+      if (sessionHandle) sessionHandle.sendSetAcousticProfile(entry.id, newProfile);
+    });
+    li.append(meta, document.createTextNode(' '), badge, document.createTextNode(' '), profileChip, document.createTextNode(' '), overrideBtn);
     if (entry.tier_reason) {
       const r = document.createElement('span');
       r.className = 'tier-reason';
@@ -151,6 +189,7 @@
     admit.addEventListener('click', () => {
       lastStudentEmail = entry.email;
       lastStudentHeadphones = !!entry.headphones_confirmed;
+      lastStudentAcousticProfile = entry.acoustic_profile || (entry.headphones_confirmed ? 'headphones' : 'speakers');
       handleProxy.admit(entry.id);
     });
     const reject = document.createElement('button');
@@ -213,6 +252,16 @@
     onAccompanimentState(state) {
       if (accompanimentHandle) accompanimentHandle.updateState(state);
       if (scoreViewHandle) scoreViewHandle.updatePages(state.page_urls || null, state.bar_coords || null);
+      const wasPlaying = accompanimentIsPlaying;
+      accompanimentIsPlaying = !!state.is_playing;
+      if (vadHandle && accompanimentIsPlaying !== wasPlaying) {
+        vadHandle.suppress(accompanimentIsPlaying);
+        updateChatChip();
+      }
+    },
+    onAcousticProfileChanged(profile) {
+      lastStudentAcousticProfile = profile;
+      if (accompanimentHandle) accompanimentHandle.setAcousticProfile(profile);
     },
     onPeerConnected({ dataChannel, audioTrack, videoTrack, localStream, remoteStream, getOneWayLatencyMs }) {
       statusEl.textContent = 'Connected.';
@@ -243,6 +292,36 @@
         onSendChat(text) { if (sessionHandle) sessionHandle.sendChat(text); },
       });
 
+      // Create VAD on the teacher's local audio track.
+      if (window.sbVad && audioTrack) {
+        vadHandle = window.sbVad.create(audioTrack, {
+          onVoiceStart() {
+            if (!accompanimentIsPlaying && sessionHandle) sessionHandle.sendChattingMode(true);
+          },
+          onVoiceSilence() {
+            if (sessionHandle) sessionHandle.sendChattingMode(false);
+          },
+        });
+        // Add chat chip to session area.
+        const sessionArea = document.querySelector('.session');
+        if (sessionArea) {
+          chatChipEl = document.createElement('button');
+          chatChipEl.type = 'button';
+          chatChipEl.dataset.forceMode = 'auto';
+          chatChipEl.addEventListener('click', () => {
+            if (!vadHandle) return;
+            const cur = chatChipEl.dataset.forceMode || 'auto';
+            const next = cur === 'auto' ? 'on' : cur === 'on' ? 'off' : 'auto';
+            chatChipEl.dataset.forceMode = next;
+            vadHandle.forceMode(next);
+            updateChatChip();
+            // forceMode emits onVoiceStart/Silence which call sendChattingMode.
+          });
+          updateChatChip();
+          sessionArea.appendChild(chatChipEl);
+        }
+      }
+
       // Wire accompaniment into the inline panel (v2 layout).
       const accmpPanel = sessionUiHandle && sessionUiHandle.accmpPanel;
       if (window.sbAccompanimentDrawer && accmpPanel) {
@@ -250,6 +329,7 @@
           role: 'teacher',
           panelEl: accmpPanel,
           slug,
+          acousticProfile: lastStudentAcousticProfile,
           sendWs(msg) { if (sessionHandle) sessionHandle.sendRaw(msg); },
           getOneWayLatencyMs: getOneWayLatencyMs || function () { return 0; },
         });
@@ -275,6 +355,9 @@
     onPeerDisconnected() {
       statusEl.textContent = 'Student disconnected.';
       localAudioTrack = null;
+      accompanimentIsPlaying = false;
+      if (vadHandle) { vadHandle.teardown(); vadHandle = null; }
+      if (chatChipEl && chatChipEl.parentNode) { chatChipEl.parentNode.removeChild(chatChipEl); chatChipEl = null; }
       if (sessionUiHandle) { sessionUiHandle.teardown(); sessionUiHandle = null; }
       if (accompanimentHandle) { accompanimentHandle.teardown(); accompanimentHandle = null; }
       if (scoreViewHandle) { scoreViewHandle.teardown(); scoreViewHandle = null; }

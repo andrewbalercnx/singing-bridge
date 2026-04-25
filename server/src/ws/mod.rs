@@ -3,13 +3,13 @@
 //          check; slug-aware role resolution on first lobby message; clean
 //          async teardown. Ban panic edges in the hot path.
 // Role: The live end of signalling. Owns the pump-driven connection loop.
-// Exports: ws_upgrade, resolve_peer_ip
+// Exports: ws_upgrade, resolve_peer_ip, pump_send_error
 // Depends: axum, tokio, state, protocol
 // Invariants: no unwrap/expect in this module. Origin must match base_url.
 //             Role is decided on the first LobbyJoin/LobbyWatch and immutable
 //             thereafter. SessionMetrics rate-limited to 1 frame per 5 s.
 //             loss_bp clamped to [0, 10000] before persist (100% = 10000 bp).
-// Last updated: Sprint 14 (2026-04-23) -- accompaniment module + AccompanimentPlay/Pause/Stop dispatch
+// Last updated: Sprint 20 (2026-04-25) -- SetAcousticProfile/ChattingMode dispatch; acoustic_profile in LobbyJoin
 
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 
@@ -43,7 +43,7 @@ use crate::config::Config;
 use crate::state::{AppState, ConnectionId, RemovalKind, SlugKey};
 use crate::ws::connection::ConnContext;
 use crate::ws::protocol::{
-    ClientMsg, EntryId, ErrorCode, PumpDirective, Role, ServerMsg, MAX_BROWSER_LEN,
+    AcousticProfile, ClientMsg, EntryId, ErrorCode, PumpDirective, Role, ServerMsg, MAX_BROWSER_LEN,
     MAX_CHAT_BYTES, MAX_CHAT_CHARS, MAX_DEVICE_CLASS_LEN, MAX_EMAIL_LEN, MAX_SIGNAL_PAYLOAD_BYTES,
     MAX_TIER_REASON_BYTES,
 };
@@ -253,7 +253,8 @@ async fn handle_client_msg(
             device_class,
             tier,
             tier_reason,
-        } => handle_lobby_join(ctx, state, slug, email, browser, device_class, tier, tier_reason).await,
+            acoustic_profile,
+        } => handle_lobby_join(ctx, state, slug, email, browser, device_class, tier, tier_reason, acoustic_profile).await,
         ClientMsg::LobbyWatch { slug } => handle_lobby_watch(ctx, state, slug).await,
         ClientMsg::LobbyAdmit { slug, entry_id } => {
             handle_lobby_admit(ctx, state, &slug, entry_id).await
@@ -275,6 +276,10 @@ async fn handle_client_msg(
             handle_lobby_message(ctx, state, entry_id, text).await
         }
         ClientMsg::HeadphonesConfirmed => handle_headphones_confirmed(ctx, state).await,
+        ClientMsg::SetAcousticProfile { entry_id, profile } => {
+            handle_set_acoustic_profile(ctx, state, entry_id, profile).await
+        }
+        ClientMsg::ChattingMode { enabled } => handle_chatting_mode(ctx, state, enabled).await,
         ClientMsg::AccompanimentPlay { asset_id, variant_id, position_ms } => {
             accompaniment::handle_accompaniment_play(ctx, state, asset_id, variant_id, position_ms).await
         }
@@ -296,6 +301,7 @@ async fn handle_lobby_join(
     device_class: String,
     tier: crate::ws::protocol::Tier,
     tier_reason: Option<String>,
+    acoustic_profile: Option<crate::ws::protocol::AcousticProfile>,
 ) -> bool {
     if ctx.slug.is_some() {
         send_error(ctx, ErrorCode::AlreadyJoined, "already joined").await;
@@ -341,7 +347,7 @@ async fn handle_lobby_join(
     ctx.slug = Some(key.clone());
     ctx.role = Some(Role::Student);
     let peer_ip = ctx.peer_ip;
-    lobby::join_lobby(state, ctx, &key, peer_ip, email, browser, device_class, tier, tier_reason).await
+    lobby::join_lobby(state, ctx, &key, peer_ip, email, browser, device_class, tier, tier_reason, acoustic_profile).await
 }
 
 async fn handle_lobby_watch(ctx: &mut ConnContext, state: &Arc<AppState>, slug: String) -> bool {
@@ -704,6 +710,92 @@ async fn handle_headphones_confirmed(ctx: &ConnContext, state: &Arc<AppState>) -
         return true;
     }
     lobby::confirm_headphones(state, ctx).await
+}
+
+/// Teacher-only: override the acoustic profile for a lobby or session student entry.
+/// Normalizes `Unknown → Speakers` before storing. Broadcasts:
+/// - `LobbyState` (always, so teacher's own lobby view updates)
+/// - `AcousticProfileChanged` to both session peers if the student is currently in session.
+async fn handle_set_acoustic_profile(
+    ctx: &ConnContext,
+    state: &Arc<AppState>,
+    entry_id: EntryId,
+    profile: AcousticProfile,
+) -> bool {
+    if ctx.role != Some(Role::Teacher) {
+        send_error(ctx, ErrorCode::Forbidden, "teacher only").await;
+        return true;
+    }
+    let Some(slug) = ctx.slug.as_ref() else { return true };
+    let Some(room) = state.room(slug) else { return true };
+
+    // Normalize Unknown → Speakers before storing.
+    let resolved = match profile {
+        AcousticProfile::Unknown => AcousticProfile::Speakers,
+        other => other,
+    };
+
+    let (lobby_update, changed_msg, student_tx) = {
+        let mut rs = room.write().await;
+
+        // Try lobby first.
+        if let Some(pos) = rs.lobby.iter().position(|e| e.id == entry_id) {
+            rs.lobby[pos].acoustic_profile = resolved;
+            let lobby_update = ServerMsg::LobbyState { entries: rs.lobby_view() };
+            (lobby_update, None, None)
+        } else if rs.active_session.as_ref().map_or(false, |s| s.student.id == entry_id) {
+            // Two-step: mutate then read (no simultaneous borrows).
+            if let Some(ref mut session) = rs.active_session {
+                session.student.acoustic_profile = resolved;
+            }
+            let lobby_update = ServerMsg::LobbyState { entries: rs.lobby_view() };
+            let changed_msg = ServerMsg::AcousticProfileChanged { profile: resolved };
+            let student_tx = rs.active_session.as_ref().map(|s| s.student.conn.tx.clone());
+            (lobby_update, Some(changed_msg), student_tx)
+        } else {
+            drop(rs);
+            send_error(ctx, ErrorCode::EntryNotFound, "entry not found").await;
+            return true;
+        }
+    };
+
+    // Send lobby update to teacher.
+    let _ = ctx.tx.send(PumpDirective::Send(lobby_update)).await;
+
+    // If in session, notify both peers of the profile change.
+    if let (Some(msg), Some(stx)) = (changed_msg, student_tx) {
+        let _ = ctx.tx.send(PumpDirective::Send(msg.clone())).await;
+        let _ = stx.send(PumpDirective::Send(msg)).await;
+    }
+    true
+}
+
+/// Teacher-only: relay chat-mode (AEC on/off) instruction to the active session student.
+/// Returns `NotInSession` error if no student is currently in session.
+async fn handle_chatting_mode(ctx: &ConnContext, state: &Arc<AppState>, enabled: bool) -> bool {
+    if ctx.role != Some(Role::Teacher) {
+        send_error(ctx, ErrorCode::Forbidden, "teacher only").await;
+        return true;
+    }
+    let Some(slug) = ctx.slug.as_ref() else { return true };
+    let Some(room) = state.room(slug) else { return true };
+
+    let student_tx = {
+        let rs = room.read().await;
+        match rs.active_session.as_ref() {
+            Some(session) => session.student.conn.tx.clone(),
+            None => {
+                drop(rs);
+                send_error(ctx, ErrorCode::NotInSession, "no active session").await;
+                return true;
+            }
+        }
+    };
+
+    let _ = student_tx
+        .send(PumpDirective::Send(ServerMsg::ChattingMode { enabled }))
+        .await;
+    true
 }
 
 async fn parse_slug_or_err(ctx: &ConnContext, raw: &str) -> Option<SlugKey> {

@@ -1,9 +1,9 @@
 // File: server/tests/ws_headphones.rs
-// Purpose: Integration tests for the HeadphonesConfirmed handler.
-//          Covers the happy path (chip update to teacher), role guard
+// Purpose: Integration tests for the HeadphonesConfirmed handler (backwards compat).
+//          Covers the happy path (Speakers → Headphones upgrade), role guard
 //          (teacher cannot send it), and ordering guard (must send
 //          LobbyJoin first, otherwise entry_id is absent).
-// Last updated: Sprint 9 (2026-04-19) -- initial implementation
+// Last updated: Sprint 20 (2026-04-25) -- check acoustic_profile field instead of headphones_confirmed
 
 mod common;
 
@@ -35,14 +35,14 @@ async fn student_confirms_headphones_teacher_sees_chip() {
 
     let update = recv_json(&mut teacher).await;
     assert_eq!(update["type"], "lobby_state");
-    assert_eq!(update["entries"][0]["headphones_confirmed"], false);
+    assert_eq!(update["entries"][0]["acoustic_profile"], "speakers");
 
-    // Student confirms headphones.
+    // Student confirms headphones — upgrades Speakers → Headphones.
     send_ws(&mut student, &serde_json::json!({"type":"headphones_confirmed"})).await;
 
     let update2 = recv_json(&mut teacher).await;
     assert_eq!(update2["type"], "lobby_state");
-    assert_eq!(update2["entries"][0]["headphones_confirmed"], true);
+    assert_eq!(update2["entries"][0]["acoustic_profile"], "headphones");
 }
 
 // ---------------------------------------------------------------------------
@@ -92,7 +92,7 @@ async fn duplicate_headphones_confirmed_suppresses_second_broadcast() {
     // First confirm — teacher receives exactly one broadcast.
     send_ws(&mut student, &serde_json::json!({"type":"headphones_confirmed"})).await;
     let u1 = recv_json(&mut teacher).await;
-    assert_eq!(u1["entries"][0]["headphones_confirmed"], true);
+    assert_eq!(u1["entries"][0]["acoustic_profile"], "headphones");
 
     // Second confirm — state already true; server must NOT broadcast again.
     send_ws(&mut student, &serde_json::json!({"type":"headphones_confirmed"})).await;

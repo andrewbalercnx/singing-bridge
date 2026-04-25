@@ -11,7 +11,7 @@
 //             LobbyReject.block_ttl_secs is clamped [0, 86400] server-side.
 //             Chat.text validated: non-empty, ≤ MAX_CHAT_BYTES then ≤ MAX_CHAT_CHARS.
 //             AccompanimentPlay/Pause/Stop are teacher-only; student receives Forbidden.
-// Last updated: Sprint 14 (2026-04-23) -- Forbidden + AccompanimentPlay/Pause/Stop + AccompanimentState
+// Last updated: Sprint 20 (2026-04-25) -- AcousticProfile enum; SetAcousticProfile/ChattingMode msgs; replace headphones_confirmed
 
 use std::borrow::Cow;
 
@@ -90,6 +90,25 @@ impl Default for Tier {
     }
 }
 
+/// Acoustic profile for a student connection.
+/// `Unknown` is a serde deserialization fallback only — it is never serialized
+/// outbound. Handlers must normalize `Unknown → Speakers` before storing.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AcousticProfile {
+    Headphones,
+    Speakers,
+    IosForced,
+    #[serde(other)]
+    Unknown,
+}
+
+impl Default for AcousticProfile {
+    fn default() -> Self {
+        AcousticProfile::Speakers
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct LobbyEntryView {
     pub id: EntryId,
@@ -100,7 +119,7 @@ pub struct LobbyEntryView {
     pub tier_reason: Option<String>,
     pub joined_at_unix: i64,
     #[serde(default)]
-    pub headphones_confirmed: bool,
+    pub acoustic_profile: AcousticProfile,
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -136,6 +155,10 @@ pub enum ClientMsg {
         tier: Tier,
         #[serde(default)]
         tier_reason: Option<String>,
+        /// Optional acoustic profile derived from UA (e.g. "ios_forced").
+        /// Absent from pre-Sprint-20 clients → server defaults to Speakers.
+        #[serde(default)]
+        acoustic_profile: Option<AcousticProfile>,
     },
     LobbyWatch {
         slug: String,
@@ -177,7 +200,20 @@ pub enum ClientMsg {
         entry_id: EntryId,
         text: String,
     },
+    /// Deprecated: kept for backwards compat with pre-Sprint-20 clients.
+    /// Updates acoustic_profile Speakers → Headphones (no-op for IosForced or Headphones).
     HeadphonesConfirmed,
+    /// Teacher-only: override the acoustic profile for a lobby/session student entry.
+    /// Role-checked in mod.rs; Unknown variant normalised to Speakers before storing.
+    SetAcousticProfile {
+        entry_id: EntryId,
+        profile: AcousticProfile,
+    },
+    /// Teacher→server: relay chat-mode AEC enable/disable to the student.
+    /// Role-checked in mod.rs; requires an active session peer.
+    ChattingMode {
+        enabled: bool,
+    },
     // Teacher-only accompaniment control messages.
     AccompanimentPlay {
         asset_id: i64,
@@ -236,6 +272,15 @@ pub enum ServerMsg {
     LobbyMessage {
         text: String,
     },
+    /// Sent to both session peers when a student's acoustic profile changes.
+    AcousticProfileChanged {
+        profile: AcousticProfile,
+    },
+    /// Server→student only: relay teacher chat-mode (AEC on/off) instruction.
+    /// Teacher never receives this message.
+    ChattingMode {
+        enabled: bool,
+    },
     /// Full snapshot of accompaniment playback state.
     /// Cleared state: asset_id=None, is_playing=false, position_ms=0, all urls/coords=None.
     AccompanimentState {
@@ -278,6 +323,16 @@ mod tests {
                 device_class: "desktop".into(),
                 tier: Tier::Supported,
                 tier_reason: None,
+                acoustic_profile: None,
+            },
+            ClientMsg::LobbyJoin {
+                slug: "alice".into(),
+                email: "s@example".into(),
+                browser: "Safari/17".into(),
+                device_class: "phone".into(),
+                tier: Tier::Supported,
+                tier_reason: None,
+                acoustic_profile: Some(AcousticProfile::IosForced),
             },
             ClientMsg::LobbyWatch {
                 slug: "alice".into(),
@@ -301,6 +356,12 @@ mod tests {
                 text: "be right with you".into(),
             },
             ClientMsg::HeadphonesConfirmed,
+            ClientMsg::SetAcousticProfile {
+                entry_id: EntryId::new(),
+                profile: AcousticProfile::Headphones,
+            },
+            ClientMsg::ChattingMode { enabled: true },
+            ClientMsg::ChattingMode { enabled: false },
             ClientMsg::AccompanimentPlay {
                 asset_id: 42,
                 variant_id: 7,
@@ -318,9 +379,31 @@ mod tests {
     }
 
     #[test]
-    fn lobby_entry_view_defaults_headphones_confirmed_absent() {
-        // Backward-compat: a LobbyEntryView payload without headphones_confirmed
-        // must deserialise with headphones_confirmed = false (via #[serde(default)]).
+    fn acoustic_profile_roundtrips() {
+        let cases = [
+            (AcousticProfile::Headphones, "\"headphones\""),
+            (AcousticProfile::Speakers, "\"speakers\""),
+            (AcousticProfile::IosForced, "\"ios_forced\""),
+        ];
+        for (profile, expected_json) in cases {
+            let s = serde_json::to_string(&profile).unwrap();
+            assert_eq!(s, expected_json, "serialize {profile:?}");
+            let back: AcousticProfile = serde_json::from_str(&s).unwrap();
+            assert_eq!(back, profile, "roundtrip {profile:?}");
+        }
+    }
+
+    #[test]
+    fn acoustic_profile_unknown_deserialises_to_unknown_variant() {
+        // Future clients may send values we don't know; they must not close the socket.
+        let v: AcousticProfile = serde_json::from_str("\"bluetooth\"").unwrap();
+        assert_eq!(v, AcousticProfile::Unknown);
+    }
+
+    #[test]
+    fn lobby_entry_view_acoustic_profile_defaults_to_speakers_when_absent() {
+        // Pre-Sprint-20 LobbyEntryView payloads lack acoustic_profile.
+        // The default must be Speakers (conservative — applies mitigation).
         let json = serde_json::json!({
             "id": "00000000-0000-0000-0000-000000000000",
             "email": "s@example.test",
@@ -331,7 +414,7 @@ mod tests {
             "joined_at_unix": 0,
         });
         let view: LobbyEntryView = serde_json::from_value(json).unwrap();
-        assert!(!view.headphones_confirmed);
+        assert_eq!(view.acoustic_profile, AcousticProfile::Speakers);
     }
 
     #[test]
@@ -366,6 +449,11 @@ mod tests {
                 code: ErrorCode::Forbidden,
                 message: "not a teacher".into(),
             },
+            // New in Sprint 20: acoustic profile changed + chatting mode.
+            ServerMsg::AcousticProfileChanged { profile: AcousticProfile::IosForced },
+            ServerMsg::AcousticProfileChanged { profile: AcousticProfile::Headphones },
+            ServerMsg::ChattingMode { enabled: true },
+            ServerMsg::ChattingMode { enabled: false },
             // New in Sprint 14: populated AccompanimentState.
             ServerMsg::AccompanimentState {
                 asset_id: Some(1),
@@ -409,6 +497,7 @@ mod tests {
                 device_class: "desktop".into(),
                 tier: Tier::Supported,
                 tier_reason: None,
+                acoustic_profile: None,
             };
             let s = serde_json::to_string(&msg).unwrap();
             let _: ClientMsg = serde_json::from_str(&s).unwrap();

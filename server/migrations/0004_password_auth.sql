@@ -1,14 +1,14 @@
 -- File: server/migrations/0004_password_auth.sql
 -- Purpose: Add password_hash column to teachers and create login_attempts table.
--- Last updated: Sprint 10 (2026-04-21) -- initial implementation
+-- Last updated: Sprint 19 (2026-04-25) -- migrate SQLite → PostgreSQL; BIGSERIAL, BIGINT
 
 ALTER TABLE teachers ADD COLUMN password_hash TEXT;
 
 -- teacher_id is nullable so unknown-email attempts can be recorded for IP throttling.
 CREATE TABLE login_attempts (
-  id           INTEGER PRIMARY KEY AUTOINCREMENT,
-  teacher_id   INTEGER REFERENCES teachers(id),
-  peer_ip      TEXT NOT NULL,
+  id           BIGSERIAL PRIMARY KEY,
+  teacher_id   BIGINT  REFERENCES teachers(id),
+  peer_ip      TEXT    NOT NULL,
   attempted_at INTEGER NOT NULL,
   succeeded    INTEGER NOT NULL DEFAULT 0
 );

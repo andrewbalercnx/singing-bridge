@@ -140,7 +140,7 @@ pub(crate) async fn post_upload(
     let insert: std::result::Result<(i64,), sqlx::Error> = sqlx::query_as(
         "INSERT INTO recordings
            (teacher_id, student_email, student_email_hash, created_at, duration_s, blob_key, token_hash)
-         VALUES (?, ?, ?, ?, ?, ?, ?)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
          RETURNING id",
     )
     .bind(teacher_id)
@@ -206,7 +206,7 @@ pub(crate) async fn get_list(
         SortBy::Date => sqlx::query_as(
             "SELECT id, student_email, created_at, duration_s, failed_attempts, blob_key
              FROM recordings
-             WHERE teacher_id = ? AND deleted_at IS NULL
+             WHERE teacher_id = $1 AND deleted_at IS NULL
              ORDER BY created_at DESC",
         )
         .bind(teacher_id)
@@ -215,7 +215,7 @@ pub(crate) async fn get_list(
         SortBy::Student => sqlx::query_as(
             "SELECT id, student_email, created_at, duration_s, failed_attempts, blob_key
              FROM recordings
-             WHERE teacher_id = ? AND deleted_at IS NULL
+             WHERE teacher_id = $1 AND deleted_at IS NULL
              ORDER BY student_email ASC, created_at DESC",
         )
         .bind(teacher_id)
@@ -259,7 +259,7 @@ pub(crate) async fn post_send(
     let row: Option<(String,)> = sqlx::query_as(
         "SELECT student_email
          FROM recordings
-         WHERE id = ? AND teacher_id = ? AND deleted_at IS NULL",
+         WHERE id = $1 AND teacher_id = $2 AND deleted_at IS NULL",
     )
     .bind(id)
     .bind(teacher_id)
@@ -283,8 +283,8 @@ pub(crate) async fn post_send(
 
     sqlx::query(
         "UPDATE recordings
-         SET token_hash = ?, student_email = ?, student_email_hash = ?, failed_attempts = 0
-         WHERE id = ? AND teacher_id = ?",
+         SET token_hash = $1, student_email = $2, student_email_hash = $3, failed_attempts = 0
+         WHERE id = $4 AND teacher_id = $5",
     )
     .bind(&new_hash)
     .bind(&recipient)
@@ -323,8 +323,8 @@ pub(crate) async fn delete_recording(
 
     let now = time::OffsetDateTime::now_utc().unix_timestamp();
     let result = sqlx::query(
-        "UPDATE recordings SET deleted_at = ?
-         WHERE id = ? AND teacher_id = ? AND deleted_at IS NULL",
+        "UPDATE recordings SET deleted_at = $1
+         WHERE id = $2 AND teacher_id = $3 AND deleted_at IS NULL",
     )
     .bind(now)
     .bind(id)
@@ -351,7 +351,7 @@ pub(crate) async fn get_recordings_page(
     let teacher_id = require_auth(&state, &headers).await?;
 
     let (owns,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM teachers WHERE id = ? AND slug = ?",
+        "SELECT COUNT(*) FROM teachers WHERE id = $1 AND slug = $2",
     )
     .bind(teacher_id)
     .bind(&slug)

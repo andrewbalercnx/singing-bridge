@@ -1,44 +1,35 @@
 // File: server/src/db.rs
-// Purpose: SQLite connection pool setup + migrations.
+// Purpose: PostgreSQL connection pool setup + migration runner.
 // Role: Shared DB access; applied at startup and in the integration-test harness.
-// Exports: init_pool
-// Depends: sqlx
-// Invariants: DELETE journal mode (default); works on both SMB and NFS Azure Files.
-//             foreign_keys=ON; busy_timeout=30000ms; synchronous=NORMAL.
-//             max_connections=4; SQLite serialises writers internally via busy_timeout.
-//             CRITICAL: minReplicas=maxReplicas=1 in infra/bicep/container-app.bicep must stay
-//             at 1 while SQLite is the DB engine — a second replica would corrupt the database.
-// Last updated: Sprint 17 (2026-04-24) -- revert WAL → DELETE (SMB Azure Files does not
-//               support POSIX byte-range locks required by WAL)
+// Exports: init_pool, run_migrations
+// Depends: sqlx (postgres + tls-rustls features)
+// Invariants: max_connections=5; PostgreSQL enforces FK constraints by default.
+//             init_pool does NOT run migrations — caller is responsible.
+//             run_migrations requires a DDL-capable credential (sbmigrate role).
+//             Production connection strings must include sslmode=verify-full.
+// Last updated: Sprint 19 (2026-04-25) -- migrate SQLite → PostgreSQL; separate migrations
 
-use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
+use sqlx::{postgres::PgPoolOptions, PgPool};
 
 use crate::error::Result;
 
-pub async fn init_pool(db_url: &str) -> Result<SqlitePool> {
-    let pool = SqlitePoolOptions::new()
-        .max_connections(4)
-        .after_connect(|conn, _| {
-            Box::pin(async move {
-                sqlx::query("PRAGMA synchronous=NORMAL")
-                    .execute(&mut *conn)
-                    .await?;
-                sqlx::query("PRAGMA busy_timeout=30000")
-                    .execute(&mut *conn)
-                    .await?;
-                sqlx::query("PRAGMA foreign_keys=ON")
-                    .execute(&mut *conn)
-                    .await?;
-                Ok(())
-            })
-        })
+pub async fn init_pool(db_url: &str) -> Result<PgPool> {
+    let pool = PgPoolOptions::new()
+        .max_connections(5)
         .connect(db_url)
         .await?;
+    Ok(pool)
+}
 
+pub async fn run_migrations(db_url: &str) -> Result<()> {
+    let pool = PgPoolOptions::new()
+        .max_connections(1)
+        .connect(db_url)
+        .await?;
     sqlx::migrate!("./migrations")
         .run(&pool)
         .await
         .map_err(|e| crate::error::AppError::Internal(format!("migrate: {e}").into()))?;
-
-    Ok(pool)
+    pool.close().await;
+    Ok(())
 }

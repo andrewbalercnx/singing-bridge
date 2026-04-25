@@ -505,7 +505,7 @@ async fn media_token_serves_blob_content() {
 
     // Patch the DB row to set page_blob_keys_json.
     sqlx::query(
-        "UPDATE accompaniments SET page_blob_keys_json = ? WHERE id = ?",
+        "UPDATE accompaniments SET page_blob_keys_json = $1 WHERE id = $2",
     )
     .bind(serde_json::to_string(&vec![&page_key]).unwrap())
     .bind(id)
@@ -571,7 +571,7 @@ async fn media_token_invalidated_after_asset_delete() {
         .put(&page_key, Box::pin(std::io::Cursor::new(page_bytes.to_vec())) as Pin<Box<dyn tokio::io::AsyncRead + Send>>)
         .await
         .unwrap();
-    sqlx::query("UPDATE accompaniments SET page_blob_keys_json = ? WHERE id = ?")
+    sqlx::query("UPDATE accompaniments SET page_blob_keys_json = $1 WHERE id = $2")
         .bind(serde_json::to_string(&vec![&page_key]).unwrap())
         .bind(id)
         .execute(&app.state.db)
@@ -640,7 +640,7 @@ async fn media_token_library_cache_control() {
         .put(&page_key, Box::pin(std::io::Cursor::new(page_bytes.to_vec())) as Pin<Box<dyn tokio::io::AsyncRead + Send>>)
         .await
         .unwrap();
-    sqlx::query("UPDATE accompaniments SET page_blob_keys_json = ? WHERE id = ?")
+    sqlx::query("UPDATE accompaniments SET page_blob_keys_json = $1 WHERE id = $2")
         .bind(serde_json::to_string(&vec![&page_key]).unwrap())
         .bind(id)
         .execute(&app.state.db)
@@ -771,7 +771,7 @@ async fn upload_midi_returns_kind_field_and_no_variant() {
     let id = body["id"].as_i64().unwrap();
 
     let (count,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM accompaniment_variants WHERE accompaniment_id = ?",
+        "SELECT COUNT(*) FROM accompaniment_variants WHERE accompaniment_id = $1",
     )
     .bind(id)
     .fetch_one(&app.state.db)
@@ -806,7 +806,7 @@ async fn upload_wav_creates_variant_and_stores_bytes() {
     let variant_id = body["variant_id"].as_i64().expect("variant_id present for WAV");
 
     let (count,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM accompaniment_variants WHERE accompaniment_id = ? AND id = ?",
+        "SELECT COUNT(*) FROM accompaniment_variants WHERE accompaniment_id = $1 AND id = $2",
     )
     .bind(id)
     .bind(variant_id)
@@ -1092,7 +1092,7 @@ async fn post_midi_bar_timings_too_large_rejected() {
 
     // MIDI blob must not have been persisted.
     let row: (Option<String>,) = sqlx::query_as(
-        "SELECT midi_blob_key FROM accompaniments WHERE id = ?",
+        "SELECT midi_blob_key FROM accompaniments WHERE id = $1",
     )
     .bind(id)
     .fetch_one(&app.state.db)
@@ -1149,7 +1149,7 @@ async fn post_rasterise_bar_coords_too_large_rejected() {
     assert_eq!(r.status(), 400);
 
     let row: (Option<String>,) = sqlx::query_as(
-        "SELECT page_blob_keys_json FROM accompaniments WHERE id = ?",
+        "SELECT page_blob_keys_json FROM accompaniments WHERE id = $1",
     )
     .bind(id)
     .fetch_one(&app.state.db)

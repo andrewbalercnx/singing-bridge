@@ -739,7 +739,7 @@ async fn require_joined(ctx: &ConnContext, msg_slug: &str) -> bool {
 }
 
 async fn slug_exists(state: &AppState, slug: &SlugKey) -> bool {
-    let count: (i64,) = match sqlx::query_as("SELECT COUNT(*) FROM teachers WHERE slug = ?")
+    let count: (i64,) = match sqlx::query_as("SELECT COUNT(*) FROM teachers WHERE slug = $1")
         .bind(slug.as_str())
         .fetch_one(&state.db)
         .await
@@ -753,7 +753,7 @@ async fn slug_exists(state: &AppState, slug: &SlugKey) -> bool {
 async fn owns_slug(state: &AppState, teacher_id: Option<i64>, slug: &SlugKey) -> bool {
     let Some(tid) = teacher_id else { return false };
     let row: Result<(i64,), sqlx::Error> =
-        sqlx::query_as("SELECT COUNT(*) FROM teachers WHERE id = ? AND slug = ?")
+        sqlx::query_as("SELECT COUNT(*) FROM teachers WHERE id = $1 AND slug = $2")
             .bind(tid)
             .bind(slug.as_str())
             .fetch_one(&state.db)

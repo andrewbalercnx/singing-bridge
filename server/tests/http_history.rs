@@ -213,7 +213,7 @@ async fn history_excludes_archived_events() {
         .make_session_event(teacher_id, "old@example.test", now - 100, Some(now - 90))
         .await;
     // Manually archive.
-    sqlx::query("UPDATE session_events SET archived_at = ? WHERE id = ?")
+    sqlx::query("UPDATE session_events SET archived_at = $1 WHERE id = $2")
         .bind(now)
         .bind(event_id)
         .execute(&app.state.db)

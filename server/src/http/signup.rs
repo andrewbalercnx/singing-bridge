@@ -60,7 +60,7 @@ pub async fn post_consume(
     let teacher_id = magic_link::consume(&state.db, &body.token).await?;
     let cookie = issue_session_cookie(&state.db, teacher_id, state.config.session_ttl_secs).await?;
 
-    let (slug,): (String,) = sqlx::query_as("SELECT slug FROM teachers WHERE id = ?")
+    let (slug,): (String,) = sqlx::query_as("SELECT slug FROM teachers WHERE id = $1")
         .bind(teacher_id)
         .fetch_one(&state.db)
         .await?;

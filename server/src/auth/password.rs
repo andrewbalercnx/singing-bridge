@@ -17,7 +17,7 @@ use argon2::{
     Argon2, Params,
 };
 use once_cell::sync::Lazy;
-use sqlx::SqlitePool;
+use sqlx::PgPool;
 
 use crate::auth::magic_link::TeacherId;
 use crate::error::Result;
@@ -86,10 +86,10 @@ pub enum LimitResult {
 
 /// Record the attempt then evaluate IP + account limits in a single transaction.
 /// Always inserts (teacher_id may be None for unknown-email) before checking.
-/// Uses BEGIN IMMEDIATE because the single-connection SQLite pool serialises
-/// writers anyway, but the explicit transaction ensures INSERT + COUNT are atomic.
+/// INSERT runs first (always), then the IP + account counts are read inside the
+/// same transaction so INSERT + COUNT are atomic.
 pub async fn record_and_check_limits(
-    pool: &SqlitePool,
+    pool: &PgPool,
     teacher_id: Option<TeacherId>,
     peer_ip: &str,
     cfg: &LimitConfig,
@@ -99,7 +99,7 @@ pub async fn record_and_check_limits(
     let mut tx = pool.begin().await?;
 
     sqlx::query(
-        "INSERT INTO login_attempts (teacher_id, peer_ip, attempted_at, succeeded) VALUES (?, ?, ?, 0)",
+        "INSERT INTO login_attempts (teacher_id, peer_ip, attempted_at, succeeded) VALUES ($1, $2, $3, 0)",
     )
     .bind(teacher_id)
     .bind(peer_ip)
@@ -109,7 +109,7 @@ pub async fn record_and_check_limits(
 
     let ip_cutoff = now - cfg.ip_window_secs;
     let (ip_count,): (i64,) =
-        sqlx::query_as("SELECT COUNT(*) FROM login_attempts WHERE peer_ip = ? AND attempted_at > ?")
+        sqlx::query_as("SELECT COUNT(*) FROM login_attempts WHERE peer_ip = $1 AND attempted_at > $2")
             .bind(peer_ip)
             .bind(ip_cutoff)
             .fetch_one(&mut *tx)
@@ -123,7 +123,7 @@ pub async fn record_and_check_limits(
     if let Some(tid) = teacher_id {
         let account_cutoff = now - cfg.account_window_secs;
         let last_success: Option<(i64,)> = sqlx::query_as(
-            "SELECT MAX(attempted_at) FROM login_attempts WHERE teacher_id = ? AND succeeded = 1",
+            "SELECT MAX(attempted_at) FROM login_attempts WHERE teacher_id = $1 AND succeeded = 1",
         )
         .bind(tid)
         .fetch_optional(&mut *tx)
@@ -132,7 +132,7 @@ pub async fn record_and_check_limits(
         let failure_since = last_success_ts.max(account_cutoff);
 
         let (failure_count,): (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM login_attempts WHERE teacher_id = ? AND succeeded = 0 AND attempted_at > ?",
+            "SELECT COUNT(*) FROM login_attempts WHERE teacher_id = $1 AND succeeded = 0 AND attempted_at > $2",
         )
         .bind(tid)
         .bind(failure_since)

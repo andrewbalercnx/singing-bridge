@@ -56,7 +56,7 @@ pub(crate) async fn get_history(
 
     // Verify the teacher owns the slug.
     let row: Result<(i64,), sqlx::Error> =
-        sqlx::query_as("SELECT id FROM teachers WHERE id = ? AND slug = ?")
+        sqlx::query_as("SELECT id FROM teachers WHERE id = $1 AND slug = $2")
             .bind(teacher_id)
             .bind(&slug)
             .fetch_one(&state.db)
@@ -72,10 +72,10 @@ pub(crate) async fn get_history(
              FROM session_events se \
              JOIN students s ON s.id = se.student_id \
              LEFT JOIN recordings r ON r.id = se.recording_id \
-             WHERE se.teacher_id = ? \
+             WHERE se.teacher_id = $1 \
                AND se.archived_at IS NULL \
              ORDER BY se.started_at DESC \
-             LIMIT ?",
+             LIMIT $2",
         )
         .bind(teacher_id)
         .bind(HISTORY_PAGE_LIMIT)

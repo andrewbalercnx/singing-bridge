@@ -8,11 +8,11 @@
 //             blob_key set to NULL only after successful BlobStore::delete.
 //             Gate attempts pruned per gate_attempt_ttl_secs passed at call time.
 //             cleanup_loop exits cleanly on CancellationToken cancellation.
-// Last updated: Sprint 111 (2026-04-21) -- archive session_events
+// Last updated: Sprint 19 (2026-04-25) -- migrate SQLite → PostgreSQL; $N placeholders
 
 use std::sync::Arc;
 
-use sqlx::SqlitePool;
+use sqlx::PgPool;
 use tokio_util::sync::CancellationToken;
 
 use crate::blob::BlobStore;
@@ -24,7 +24,7 @@ const BLOB_GRACE_SECS: i64 = 86_400;
 const LOOP_INTERVAL_SECS: u64 = 300;
 
 pub async fn run_one_cleanup_cycle(
-    db: &SqlitePool,
+    db: &PgPool,
     blob: &Arc<dyn BlobStore>,
     gate_attempt_ttl_secs: i64,
 ) -> crate::error::Result<usize> {
@@ -35,7 +35,7 @@ pub async fn run_one_cleanup_cycle(
     let rows: Vec<(i64, String)> = sqlx::query_as(
         "SELECT id, blob_key FROM recordings
          WHERE deleted_at IS NOT NULL
-           AND deleted_at < ?
+           AND deleted_at < $1
            AND blob_key IS NOT NULL",
     )
     .bind(cutoff)
@@ -49,7 +49,7 @@ pub async fn run_one_cleanup_cycle(
             Ok(()) => {
                 // Set blob_key = NULL only after successful delete.
                 if let Err(e) = sqlx::query(
-                    "UPDATE recordings SET blob_key = NULL WHERE id = ?",
+                    "UPDATE recordings SET blob_key = NULL WHERE id = $1",
                 )
                 .bind(id)
                 .execute(db)
@@ -69,7 +69,7 @@ pub async fn run_one_cleanup_cycle(
     // Prune stale gate attempts (TTL from config to match the rate-limit window).
     let gate_cutoff = now - gate_attempt_ttl_secs;
     if let Err(e) = sqlx::query(
-        "DELETE FROM recording_gate_attempts WHERE attempted_at < ?",
+        "DELETE FROM recording_gate_attempts WHERE attempted_at < $1",
     )
     .bind(gate_cutoff)
     .execute(db)
@@ -80,7 +80,7 @@ pub async fn run_one_cleanup_cycle(
 
     // Prune login attempts older than 24 h.
     let login_cutoff = now - 86400;
-    if let Err(e) = sqlx::query("DELETE FROM login_attempts WHERE attempted_at < ?")
+    if let Err(e) = sqlx::query("DELETE FROM login_attempts WHERE attempted_at < $1")
         .bind(login_cutoff)
         .execute(db)
         .await
@@ -97,7 +97,7 @@ pub async fn run_one_cleanup_cycle(
 }
 
 pub async fn cleanup_loop(
-    db: SqlitePool,
+    db: PgPool,
     blob: Arc<dyn BlobStore>,
     gate_attempt_ttl_secs: i64,
     shutdown: CancellationToken,
@@ -119,15 +119,31 @@ pub async fn cleanup_loop(
 mod tests {
     use super::*;
     use std::sync::Arc;
+    use sqlx::{postgres::PgPoolOptions, PgPool};
+    use std::sync::atomic::{AtomicU64, Ordering};
     use crate::blob::DevBlobStore;
 
-    async fn make_db() -> SqlitePool {
-        crate::db::init_pool("sqlite::memory:").await.unwrap()
+    static DB_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    async fn make_db() -> PgPool {
+        let admin_url = std::env::var("DATABASE_TEST_URL")
+            .expect("DATABASE_TEST_URL must be set for cleanup inline tests");
+        let n = DB_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let pid = std::process::id();
+        let db_name = format!("singing_bridge_test_{pid}_{n}");
+        let admin = PgPoolOptions::new().max_connections(1).connect(&admin_url).await.unwrap();
+        sqlx::query(&format!("CREATE DATABASE \"{db_name}\"")).execute(&admin).await.unwrap();
+        admin.close().await;
+        let db_url = match admin_url.rfind('/') {
+            Some(idx) => format!("{}/{}", &admin_url[..idx], db_name),
+            None => format!("{}/{}", admin_url, db_name),
+        };
+        crate::db::run_migrations(&db_url).await.unwrap();
+        crate::db::init_pool(&db_url).await.unwrap()
     }
 
     async fn make_blob() -> Arc<dyn BlobStore> {
         let dir = tempfile::tempdir().unwrap();
-        // Leak the dir so it lives for the test; acceptable in test code.
         let dir = dir.into_path();
         Arc::new(DevBlobStore::new(dir).await.unwrap())
     }
@@ -136,14 +152,14 @@ mod tests {
         Box::pin(std::io::Cursor::new(data.to_vec()))
     }
 
-    async fn insert_recording(db: &SqlitePool, teacher_id: i64, blob_key: Option<&str>, deleted_at: Option<i64>) -> i64 {
+    async fn insert_recording(db: &PgPool, teacher_id: i64, blob_key: Option<&str>, deleted_at: Option<i64>) -> i64 {
         let now = time::OffsetDateTime::now_utc().unix_timestamp();
         let token_hash: Vec<u8> = rand::random::<[u8; 32]>().to_vec();
         let email_hash: Vec<u8> = rand::random::<[u8; 32]>().to_vec();
         let (id,): (i64,) = sqlx::query_as(
             "INSERT INTO recordings
                (teacher_id, student_email, student_email_hash, created_at, blob_key, token_hash, deleted_at)
-             VALUES (?, 'test@test.com', ?, ?, ?, ?, ?)
+             VALUES ($1, 'test@test.com', $2, $3, $4, $5, $6)
              RETURNING id",
         )
         .bind(teacher_id)
@@ -158,10 +174,10 @@ mod tests {
         id
     }
 
-    async fn ensure_teacher(db: &SqlitePool) -> i64 {
+    async fn ensure_teacher(db: &PgPool) -> i64 {
         let now = time::OffsetDateTime::now_utc().unix_timestamp();
         let (id,): (i64,) = sqlx::query_as(
-            "INSERT INTO teachers (email, slug, created_at) VALUES ('t@test.com', 'testslug', ?) RETURNING id",
+            "INSERT INTO teachers (email, slug, created_at) VALUES ('t@test.com', 'testslug', $1) RETURNING id",
         )
         .bind(now)
         .fetch_one(db)
@@ -184,7 +200,7 @@ mod tests {
         assert_eq!(purged, 1);
 
         let (blob_key,): (Option<String>,) =
-            sqlx::query_as("SELECT blob_key FROM recordings WHERE id = ?")
+            sqlx::query_as("SELECT blob_key FROM recordings WHERE id = $1")
                 .bind(id)
                 .fetch_one(&db)
                 .await
@@ -208,24 +224,18 @@ mod tests {
 
     #[tokio::test]
     async fn blob_delete_failure_retains_key() {
-        // Use a blob store with a non-existent dir to force delete failure.
         let db = make_db().await;
         let teacher_id = ensure_teacher(&db).await;
-        // Create a DevBlobStore but don't actually put the file (simulates delete failure via NotFound being silently ignored).
-        // Instead use a key that references a file that doesn't exist.
-        // DevBlobStore::delete ignores NotFound. To simulate real failure we'd need a mock.
-        // Instead test the cleanup leaves blob_key non-null when the initial file was never put.
         let blob = make_blob().await;
         let old_deleted_at = time::OffsetDateTime::now_utc().unix_timestamp() - BLOB_GRACE_SECS - 1;
         let id = insert_recording(&db, teacher_id, Some("ghost.webm"), Some(old_deleted_at)).await;
 
         // File doesn't exist — DevBlobStore treats NotFound as success (so blob_key IS nulled).
-        // Verify the row survives when blob_key was already NULL.
         let purged = run_one_cleanup_cycle(&db, &blob, 300).await.unwrap();
         assert_eq!(purged, 1); // DevBlobStore ignores NotFound, so it counts as purged
 
         let (blob_key,): (Option<String>,) =
-            sqlx::query_as("SELECT blob_key FROM recordings WHERE id = ?")
+            sqlx::query_as("SELECT blob_key FROM recordings WHERE id = $1")
                 .bind(id)
                 .fetch_one(&db)
                 .await
@@ -241,13 +251,13 @@ mod tests {
         let old = now - 300 - 1;
         let fresh = now - 10;
 
-        sqlx::query("INSERT INTO recording_gate_attempts (peer_ip, attempted_at) VALUES (?, ?)")
+        sqlx::query("INSERT INTO recording_gate_attempts (peer_ip, attempted_at) VALUES ($1, $2)")
             .bind("1.2.3.4")
             .bind(old)
             .execute(&db)
             .await
             .unwrap();
-        sqlx::query("INSERT INTO recording_gate_attempts (peer_ip, attempted_at) VALUES (?, ?)")
+        sqlx::query("INSERT INTO recording_gate_attempts (peer_ip, attempted_at) VALUES ($1, $2)")
             .bind("1.2.3.4")
             .bind(fresh)
             .execute(&db)

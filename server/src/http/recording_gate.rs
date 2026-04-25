@@ -105,7 +105,7 @@ pub(crate) async fn post_verify(
     // Per-IP rate limit: check recent attempts in the window (read-only, no transaction needed).
     let window_start = now - state.config.gate_rate_limit_window_secs;
     let (ip_count,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM recording_gate_attempts WHERE peer_ip = ? AND attempted_at > ?",
+        "SELECT COUNT(*) FROM recording_gate_attempts WHERE peer_ip = $1 AND attempted_at > $2",
     )
     .bind(peer_ip.to_string())
     .bind(window_start)
@@ -119,7 +119,7 @@ pub(crate) async fn post_verify(
     // Record this attempt outside any transaction so it persists even when token is
     // not found or already locked — prevents enumeration via attempt-log rollback.
     sqlx::query(
-        "INSERT INTO recording_gate_attempts (peer_ip, attempted_at) VALUES (?, ?)",
+        "INSERT INTO recording_gate_attempts (peer_ip, attempted_at) VALUES ($1, $2)",
     )
     .bind(peer_ip.to_string())
     .bind(now)
@@ -133,7 +133,7 @@ pub(crate) async fn post_verify(
     let row: Option<(i64, Vec<u8>, Option<String>, i64)> = sqlx::query_as(
         "SELECT id, student_email_hash, blob_key, failed_attempts
          FROM recordings
-         WHERE token_hash = ? AND deleted_at IS NULL",
+         WHERE token_hash = $1 AND deleted_at IS NULL",
     )
     .bind(&token_hash)
     .fetch_optional(&mut *tx)
@@ -155,7 +155,7 @@ pub(crate) async fn post_verify(
 
     if !email_match {
         let new_attempts = failed_attempts + 1;
-        sqlx::query("UPDATE recordings SET failed_attempts = ? WHERE id = ?")
+        sqlx::query("UPDATE recordings SET failed_attempts = $1 WHERE id = $2")
             .bind(new_attempts)
             .bind(id)
             .execute(&mut *tx)
@@ -171,7 +171,7 @@ pub(crate) async fn post_verify(
 
     // Email matches. Set accessed_at on first successful verify.
     sqlx::query(
-        "UPDATE recordings SET accessed_at = CASE WHEN accessed_at IS NULL THEN ? ELSE accessed_at END WHERE id = ?",
+        "UPDATE recordings SET accessed_at = CASE WHEN accessed_at IS NULL THEN $1 ELSE accessed_at END WHERE id = $2",
     )
     .bind(now)
     .bind(id)
@@ -208,7 +208,7 @@ async fn notify_teacher_token_disabled(state: &AppState, recording_id: i64) {
     let row: Option<(String, String)> = sqlx::query_as(
         "SELECT t.email, t.slug FROM recordings r
          JOIN teachers t ON t.id = r.teacher_id
-         WHERE r.id = ?",
+         WHERE r.id = $1",
     )
     .bind(recording_id)
     .fetch_optional(&state.db)

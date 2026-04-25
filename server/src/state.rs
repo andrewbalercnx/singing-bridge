@@ -19,7 +19,7 @@ use std::time::Instant;
 
 use dashmap::mapref::entry::Entry;
 use dashmap::DashMap;
-use sqlx::SqlitePool;
+use sqlx::PgPool;
 use tokio::sync::{mpsc, RwLock};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
@@ -223,7 +223,7 @@ pub enum RemovalKind {
 }
 
 pub struct AppState {
-    pub db: SqlitePool,
+    pub db: PgPool,
     pub config: Config,
     pub mailer: Arc<dyn Mailer>,
     pub blob: Arc<dyn BlobStore>,

@@ -1,33 +1,35 @@
 -- File: server/migrations/0001_initial.sql
 -- Purpose: Initial schema for teachers, magic links, sessions, signup attempts.
--- Last updated: Sprint 1 (2026-04-17) -- initial implementation
+-- Last updated: Sprint 19 (2026-04-25) -- migrate SQLite → PostgreSQL; BIGSERIAL, BYTEA, CITEXT
+
+CREATE EXTENSION IF NOT EXISTS citext;
 
 CREATE TABLE teachers (
-  id         INTEGER PRIMARY KEY,
-  email      TEXT NOT NULL UNIQUE COLLATE NOCASE,
-  slug       TEXT NOT NULL UNIQUE COLLATE NOCASE,
+  id         BIGSERIAL PRIMARY KEY,
+  email      CITEXT NOT NULL UNIQUE,
+  slug       CITEXT NOT NULL UNIQUE,
   created_at INTEGER NOT NULL
 );
 
 CREATE TABLE magic_links (
-  token_hash  BLOB PRIMARY KEY,
-  teacher_id  INTEGER NOT NULL REFERENCES teachers(id),
+  token_hash  BYTEA   PRIMARY KEY,
+  teacher_id  BIGINT  NOT NULL REFERENCES teachers(id),
   issued_at   INTEGER NOT NULL,
   expires_at  INTEGER NOT NULL,
   consumed_at INTEGER
 );
 
 CREATE TABLE sessions (
-  cookie_hash BLOB PRIMARY KEY,
-  teacher_id  INTEGER NOT NULL REFERENCES teachers(id),
+  cookie_hash BYTEA   PRIMARY KEY,
+  teacher_id  BIGINT  NOT NULL REFERENCES teachers(id),
   issued_at   INTEGER NOT NULL,
   expires_at  INTEGER NOT NULL
 );
 
 CREATE TABLE signup_attempts (
-  id           INTEGER PRIMARY KEY AUTOINCREMENT,
-  email        TEXT NOT NULL COLLATE NOCASE,
-  peer_ip      TEXT NOT NULL,
+  id           BIGSERIAL PRIMARY KEY,
+  email        CITEXT  NOT NULL,
+  peer_ip      TEXT    NOT NULL,
   attempted_at INTEGER NOT NULL
 );
 

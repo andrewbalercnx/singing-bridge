@@ -11,7 +11,7 @@
 
 use rand::RngCore;
 use sha2::{Digest, Sha256};
-use sqlx::SqlitePool;
+use sqlx::PgPool;
 
 use crate::error::{AppError, Result};
 
@@ -38,14 +38,14 @@ fn random_token_hex() -> String {
     hex::encode(bytes)
 }
 
-pub async fn issue(pool: &SqlitePool, teacher_id: TeacherId, ttl_secs: i64) -> Result<IssuedLink> {
+pub async fn issue(pool: &PgPool, teacher_id: TeacherId, ttl_secs: i64) -> Result<IssuedLink> {
     let raw = random_token_hex();
     let hash = hash_token(&raw);
     let issued = now_unix();
     let expires = issued + ttl_secs;
 
     sqlx::query(
-        "INSERT INTO magic_links (token_hash, teacher_id, issued_at, expires_at) VALUES (?, ?, ?, ?)",
+        "INSERT INTO magic_links (token_hash, teacher_id, issued_at, expires_at) VALUES ($1, $2, $3, $4)",
     )
     .bind(&hash)
     .bind(teacher_id)
@@ -61,10 +61,10 @@ pub async fn issue(pool: &SqlitePool, teacher_id: TeacherId, ttl_secs: i64) -> R
 }
 
 /// Invalidate all unconsumed magic links for a teacher. Used on re-signup.
-pub async fn invalidate_pending(pool: &SqlitePool, teacher_id: TeacherId) -> Result<()> {
+pub async fn invalidate_pending(pool: &PgPool, teacher_id: TeacherId) -> Result<()> {
     let now = now_unix();
     sqlx::query(
-        "UPDATE magic_links SET consumed_at = ? WHERE teacher_id = ? AND consumed_at IS NULL",
+        "UPDATE magic_links SET consumed_at = $1 WHERE teacher_id = $2 AND consumed_at IS NULL",
     )
     .bind(now)
     .bind(teacher_id)
@@ -75,14 +75,14 @@ pub async fn invalidate_pending(pool: &SqlitePool, teacher_id: TeacherId) -> Res
 
 /// Atomically mark a token consumed. Returns the teacher_id of the owner,
 /// or `Err(BadRequest)` if the token is unknown, expired, or already consumed.
-pub async fn consume(pool: &SqlitePool, raw: &str) -> Result<TeacherId> {
+pub async fn consume(pool: &PgPool, raw: &str) -> Result<TeacherId> {
     let hash = hash_token(raw);
     let now = now_unix();
 
     let row: Option<(TeacherId,)> = sqlx::query_as(
         "UPDATE magic_links
-         SET consumed_at = ?
-         WHERE token_hash = ? AND consumed_at IS NULL AND expires_at > ?
+         SET consumed_at = $1
+         WHERE token_hash = $2 AND consumed_at IS NULL AND expires_at > $3
          RETURNING teacher_id",
     )
     .bind(now)

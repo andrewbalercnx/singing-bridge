@@ -64,7 +64,7 @@ pub async fn get_session(
 // ---- helpers (pub for dashboard.rs reuse) ----
 
 pub async fn ensure_slug_exists(state: &AppState, slug: &str) -> Result<()> {
-    let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM teachers WHERE slug = ?")
+    let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM teachers WHERE slug = $1")
         .bind(slug)
         .fetch_one(&state.db)
         .await?;
@@ -76,7 +76,7 @@ pub async fn is_owner(state: &AppState, headers: &HeaderMap, slug: &str) -> bool
         return false;
     };
     let Ok((owned,)): std::result::Result<(i64,), _> = sqlx::query_as(
-        "SELECT COUNT(*) FROM teachers WHERE id = ? AND slug = ?",
+        "SELECT COUNT(*) FROM teachers WHERE id = $1 AND slug = $2",
     )
     .bind(tid)
     .bind(slug)

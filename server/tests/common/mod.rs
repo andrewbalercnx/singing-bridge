@@ -1,7 +1,7 @@
 // File: server/tests/common/mod.rs
 // Purpose: Shared test harness — spawn_app, dev-mail reader, WS client.
 // Role: Keep integration-test bodies short and behaviour-focused.
-// Last updated: Sprint 16 (2026-04-23) -- use named shared-cache in-memory URI for multi-connection test isolation
+// Last updated: Sprint 19 (2026-04-25) -- migrate SQLite → PostgreSQL; per-test DB via DATABASE_TEST_URL
 
 #![allow(dead_code)]
 
@@ -23,11 +23,12 @@ use singing_bridge_server::{
     },
     blob::{BlobStore, DevBlobStore},
     config::Config,
-    db::init_pool,
+    db::{init_pool, run_migrations},
     http::{media_token::MediaTokenStore, router},
     sidecar::SidecarClient,
     state::AppState,
 };
+use sqlx::postgres::PgPoolOptions;
 use tempfile::TempDir;
 use tokio::net::TcpListener;
 use tokio::sync::oneshot;
@@ -44,6 +45,8 @@ pub struct TestApp {
     pub server_handle: tokio::task::JoinHandle<()>,
     pub state: Arc<AppState>,
     pub client: reqwest::Client,
+    pub db_name: String,
+    pub admin_url: String,
 }
 
 pub struct TestOpts {
@@ -109,14 +112,35 @@ pub async fn spawn_app_with(opts: TestOpts) -> TestApp {
     let base_url = Url::parse(&format!("http://{addr}")).unwrap();
     let mail_dir = tempfile::tempdir().unwrap();
 
+    // Create a unique per-test PostgreSQL database.
+    let admin_url = std::env::var("DATABASE_TEST_URL")
+        .expect("DATABASE_TEST_URL must be set for integration tests");
+    let n = DB_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let pid = std::process::id();
+    let db_name = format!("singing_bridge_test_{pid}_{n}");
+
+    let admin = PgPoolOptions::new()
+        .max_connections(1)
+        .connect(&admin_url)
+        .await
+        .expect("connect admin pool");
+    sqlx::query(&format!("CREATE DATABASE \"{db_name}\""))
+        .execute(&admin)
+        .await
+        .expect("create test database");
+    admin.close().await;
+
+    let db_url = match admin_url.rfind('/') {
+        Some(idx) => format!("{}/{}", &admin_url[..idx], db_name),
+        None => format!("{}/{}", admin_url, db_name),
+    };
+
+    run_migrations(&db_url).await.expect("run_migrations");
+
     let mut config = Config::dev_default();
     config.bind = addr;
     config.base_url = base_url.clone();
-    // Use a named shared-cache in-memory URI so all pool connections (up to
-    // max_connections=4) share the same database. Each test gets a unique name
-    // to prevent cross-test contamination.
-    let n = DB_COUNTER.fetch_add(1, Ordering::Relaxed);
-    config.db_url = format!("sqlite:file:testmem{n}?mode=memory&cache=shared");
+    config.db_url = db_url.clone();
     config.dev_mail_dir = mail_dir.path().to_path_buf();
     config.static_dir = opts.static_dir.unwrap_or_else(locate_web_dir);
     config.lobby_cap_per_room = opts.lobby_cap_per_room;
@@ -131,7 +155,7 @@ pub async fn spawn_app_with(opts: TestOpts) -> TestApp {
         config.sidecar_url = url;
     }
 
-    let pool = init_pool(&config.db_url).await.unwrap();
+    let pool = init_pool(&db_url).await.unwrap();
     let mailer: Arc<dyn Mailer> = Arc::new(DevMailer::new(&config.dev_mail_dir).await.unwrap());
     let blob_dir = tempfile::tempdir().unwrap();
     let blob: Arc<dyn BlobStore> = match opts.blob {
@@ -198,6 +222,8 @@ pub async fn spawn_app_with(opts: TestOpts) -> TestApp {
         server_handle,
         state,
         client,
+        db_name,
+        admin_url,
     }
 }
 
@@ -211,9 +237,6 @@ impl TestApp {
         path: &str,
         cookie: Option<&str>,
     ) -> (reqwest::StatusCode, reqwest::header::HeaderMap, String) {
-        // Build a fresh client per request so the shared cookie jar from
-        // `signup_teacher` does not leak into subsequent calls — a
-        // `cookie: None` caller genuinely means "unauthenticated".
         let client = reqwest::Client::builder()
             .cookie_store(false)
             .redirect(reqwest::redirect::Policy::none())
@@ -246,7 +269,7 @@ impl TestApp {
             .unwrap()
             .as_secs() as i64;
         let (tid,): (i64,) = sqlx::query_as(
-            "INSERT INTO teachers (email, slug, created_at, password_hash) VALUES (?, ?, ?, ?) RETURNING id",
+            "INSERT INTO teachers (email, slug, created_at, password_hash) VALUES ($1, $2, $3, $4) RETURNING id",
         )
         .bind(email)
         .bind(slug)
@@ -273,7 +296,7 @@ impl TestApp {
             .unwrap()
             .as_secs() as i64;
         let (tid,): (i64,) = sqlx::query_as(
-            "INSERT INTO teachers (email, slug, created_at) VALUES (?, ?, ?) RETURNING id",
+            "INSERT INTO teachers (email, slug, created_at) VALUES ($1, $2, $3) RETURNING id",
         )
         .bind(email)
         .bind(slug)
@@ -294,7 +317,7 @@ impl TestApp {
     ) -> i64 {
         // Upsert student.
         sqlx::query(
-            "INSERT OR IGNORE INTO students (teacher_id, email, first_seen_at) VALUES (?, lower(?), ?)",
+            "INSERT INTO students (teacher_id, email, first_seen_at) VALUES ($1, lower($2), $3) ON CONFLICT DO NOTHING",
         )
         .bind(teacher_id)
         .bind(email)
@@ -303,7 +326,7 @@ impl TestApp {
         .await
         .expect("upsert student");
         let (student_id,): (i64,) =
-            sqlx::query_as("SELECT id FROM students WHERE teacher_id = ? AND email = lower(?)")
+            sqlx::query_as("SELECT id FROM students WHERE teacher_id = $1 AND email = lower($2)")
                 .bind(teacher_id)
                 .bind(email)
                 .fetch_one(&self.state.db)
@@ -314,7 +337,7 @@ impl TestApp {
         let ended_reason = ended_at.map(|_| "hangup");
         let (event_id,): (i64,) = sqlx::query_as(
             "INSERT INTO session_events (teacher_id, student_id, started_at, ended_at, duration_secs, ended_reason) \
-             VALUES (?, ?, ?, ?, ?, ?) RETURNING id",
+             VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
         )
         .bind(teacher_id)
         .bind(student_id)
@@ -396,6 +419,24 @@ impl TestApp {
         self.shutdown.cancel();
         let _ = tokio::time::timeout(Duration::from_secs(3), self.server_handle).await;
     }
+
+    /// Full teardown: shut down the server, close the pool, and drop the test database.
+    pub async fn cleanup(self) {
+        self.shutdown.cancel();
+        let _ = tokio::time::timeout(Duration::from_secs(3), self.server_handle).await;
+        self.state.db.close().await;
+        let admin_url = self.admin_url.clone();
+        let db_name = self.db_name.clone();
+        let admin = PgPoolOptions::new()
+            .max_connections(1)
+            .connect(&admin_url)
+            .await
+            .expect("connect admin for cleanup");
+        let _ = sqlx::query(&format!("DROP DATABASE \"{db_name}\" WITH (FORCE)"))
+            .execute(&admin)
+            .await;
+        admin.close().await;
+    }
 }
 
 pub type Ws = tokio_tungstenite::WebSocketStream<
@@ -473,7 +514,7 @@ pub async fn seed_accompaniment_asset(app: &TestApp, teacher_id: i64) -> Accompa
 
     let (asset_id,): (i64,) = sqlx::query_as(
         "INSERT INTO accompaniments (teacher_id, title, page_blob_keys_json, bar_coords_json, bar_timings_json, created_at)
-         VALUES (?, 'Test Asset', ?, ?, ?, ?) RETURNING id",
+         VALUES ($1, 'Test Asset', $2, $3, $4, $5) RETURNING id",
     )
     .bind(teacher_id)
     .bind(&page_blob_keys_json)
@@ -486,7 +527,7 @@ pub async fn seed_accompaniment_asset(app: &TestApp, teacher_id: i64) -> Accompa
 
     let (variant_id,): (i64,) = sqlx::query_as(
         "INSERT INTO accompaniment_variants (accompaniment_id, label, wav_blob_key, tempo_pct, transpose_semitones, respect_repeats, created_at)
-         VALUES (?, 'Normal', ?, 100, 0, 0, ?) RETURNING id",
+         VALUES ($1, 'Normal', $2, 100, 0, 0, $3) RETURNING id",
     )
     .bind(asset_id)
     .bind(&wav_blob_key)

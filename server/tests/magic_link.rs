@@ -12,14 +12,14 @@ use singing_bridge_server::auth::magic_link;
 async fn concurrent_consume_has_exactly_one_winner() {
     let app = spawn_app().await;
     // Create a teacher + issue a link.
-    sqlx::query("INSERT INTO teachers (email, slug, created_at) VALUES (?, ?, ?)")
+    sqlx::query("INSERT INTO teachers (email, slug, created_at) VALUES ($1, $2, $3)")
         .bind("c@example.test")
         .bind("concurrent")
         .bind(0_i64)
         .execute(&app.state.db)
         .await
         .unwrap();
-    let (tid,): (i64,) = sqlx::query_as("SELECT id FROM teachers WHERE email = ?")
+    let (tid,): (i64,) = sqlx::query_as("SELECT id FROM teachers WHERE email = $1")
         .bind("c@example.test")
         .fetch_one(&app.state.db)
         .await

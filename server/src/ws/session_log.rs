@@ -8,10 +8,10 @@
 //             raw email or IP is persisted. close_row is first-writer-wins
 //             (WHERE ended_at IS NULL), so concurrent calls are safe.
 //             record_peak is a no-op if the row is missing or already closed.
-// Last updated: Sprint 111 (2026-04-21) -- make as_str pub
+// Last updated: Sprint 19 (2026-04-25) -- migrate SQLite → PostgreSQL; $N placeholders
 
 use sha2::{Digest, Sha256};
-use sqlx::SqlitePool;
+use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::auth::magic_link::TeacherId;
@@ -74,7 +74,7 @@ pub fn hash_email(email: &str, pepper: &[u8]) -> [u8; 32] {
 }
 
 pub async fn open_row(
-    pool: &SqlitePool,
+    pool: &PgPool,
     id: &SessionLogId,
     teacher_id: TeacherId,
     email_hash: &[u8; 32],
@@ -91,7 +91,7 @@ pub async fn open_row(
     sqlx::query(
         "INSERT INTO session_log \
          (id, teacher_id, student_email_hash, browser, device_class, tier, started_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?)",
+         VALUES ($1, $2, $3, $4, $5, $6, $7)",
     )
     .bind(id.as_bytes())
     .bind(teacher_id)
@@ -108,15 +108,15 @@ pub async fn open_row(
 /// Update the peak metrics for a session row. No-op if the row is missing or
 /// already closed — the WHERE clause naturally matches nothing.
 pub async fn record_peak(
-    pool: &SqlitePool,
+    pool: &PgPool,
     id: &SessionLogId,
     loss_bp: u16,
     rtt_ms: u16,
 ) -> Result<()> {
     sqlx::query(
         "UPDATE session_log \
-         SET peak_loss_bp = MAX(peak_loss_bp, ?), peak_rtt_ms = MAX(peak_rtt_ms, ?) \
-         WHERE id = ? AND ended_at IS NULL",
+         SET peak_loss_bp = MAX(peak_loss_bp, $1), peak_rtt_ms = MAX(peak_rtt_ms, $2) \
+         WHERE id = $3 AND ended_at IS NULL",
     )
     .bind(loss_bp as i32)
     .bind(rtt_ms as i32)
@@ -131,17 +131,17 @@ pub async fn record_peak(
 /// duration_secs = MAX(0, ended_at - started_at) prevents negative values
 /// from clock skew.
 pub async fn close_row(
-    pool: &SqlitePool,
+    pool: &PgPool,
     id: &SessionLogId,
     ended_at: i64,
     reason: EndedReason,
 ) -> Result<()> {
     sqlx::query(
         "UPDATE session_log \
-         SET ended_at = ?, \
-             duration_secs = MAX(0, ? - started_at), \
-             ended_reason = ? \
-         WHERE id = ? AND ended_at IS NULL",
+         SET ended_at = $1, \
+             duration_secs = MAX(0, $2 - started_at), \
+             ended_reason = $3 \
+         WHERE id = $4 AND ended_at IS NULL",
     )
     .bind(ended_at)
     .bind(ended_at)
@@ -155,13 +155,27 @@ pub async fn close_row(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sqlx::SqlitePool;
+    use sqlx::{postgres::PgPoolOptions, PgPool};
+    use std::sync::atomic::{AtomicU64, Ordering};
 
-    async fn make_pool() -> SqlitePool {
-        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
-        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
-        // Insert a teacher so foreign key constraints are satisfied.
-        sqlx::query("INSERT INTO teachers (id, email, slug, created_at) VALUES (1, 'teacher@test.com', 'testslug', 0)")
+    static DB_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    async fn make_pool() -> PgPool {
+        let admin_url = std::env::var("DATABASE_TEST_URL")
+            .expect("DATABASE_TEST_URL must be set for session_log inline tests");
+        let n = DB_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let pid = std::process::id();
+        let db_name = format!("singing_bridge_test_{pid}_{n}");
+        let admin = PgPoolOptions::new().max_connections(1).connect(&admin_url).await.unwrap();
+        sqlx::query(&format!("CREATE DATABASE \"{db_name}\"")).execute(&admin).await.unwrap();
+        admin.close().await;
+        let db_url = match admin_url.rfind('/') {
+            Some(idx) => format!("{}/{}", &admin_url[..idx], db_name),
+            None => format!("{}/{}", admin_url, db_name),
+        };
+        crate::db::run_migrations(&db_url).await.unwrap();
+        let pool = crate::db::init_pool(&db_url).await.unwrap();
+        sqlx::query("INSERT INTO teachers (email, slug, created_at) VALUES ('teacher@test.com', 'testslug', 0)")
             .execute(&pool)
             .await
             .unwrap();
@@ -176,8 +190,10 @@ mod tests {
     async fn open_row_creates_row_with_null_ended_at() {
         let pool = make_pool().await;
         let id = SessionLogId::new();
-        open_row(&pool, &id, 1, &sample_hash(), "Firefox/99", "desktop", Tier::Supported, 1000).await.unwrap();
-        let row: (Option<i64>,) = sqlx::query_as("SELECT ended_at FROM session_log WHERE id = ?")
+        let (teacher_id,): (i64,) = sqlx::query_as("SELECT id FROM teachers WHERE slug = 'testslug'")
+            .fetch_one(&pool).await.unwrap();
+        open_row(&pool, &id, teacher_id, &sample_hash(), "Firefox/99", "desktop", Tier::Supported, 1000).await.unwrap();
+        let row: (Option<i64>,) = sqlx::query_as("SELECT ended_at FROM session_log WHERE id = $1")
             .bind(id.as_bytes())
             .fetch_one(&pool)
             .await
@@ -189,10 +205,12 @@ mod tests {
     async fn close_row_sets_ended_at_and_duration() {
         let pool = make_pool().await;
         let id = SessionLogId::new();
-        open_row(&pool, &id, 1, &sample_hash(), "Firefox/99", "desktop", Tier::Supported, 1000).await.unwrap();
+        let (teacher_id,): (i64,) = sqlx::query_as("SELECT id FROM teachers WHERE slug = 'testslug'")
+            .fetch_one(&pool).await.unwrap();
+        open_row(&pool, &id, teacher_id, &sample_hash(), "Firefox/99", "desktop", Tier::Supported, 1000).await.unwrap();
         close_row(&pool, &id, 1060, EndedReason::Hangup).await.unwrap();
         let row: (Option<i64>, Option<i64>, Option<String>) =
-            sqlx::query_as("SELECT ended_at, duration_secs, ended_reason FROM session_log WHERE id = ?")
+            sqlx::query_as("SELECT ended_at, duration_secs, ended_reason FROM session_log WHERE id = $1")
                 .bind(id.as_bytes())
                 .fetch_one(&pool)
                 .await
@@ -206,11 +224,13 @@ mod tests {
     async fn duration_secs_never_negative() {
         let pool = make_pool().await;
         let id = SessionLogId::new();
+        let (teacher_id,): (i64,) = sqlx::query_as("SELECT id FROM teachers WHERE slug = 'testslug'")
+            .fetch_one(&pool).await.unwrap();
         // ended_at < started_at (clock skew) → duration = 0
-        open_row(&pool, &id, 1, &sample_hash(), "Chrome/99", "mobile", Tier::Degraded, 1000).await.unwrap();
+        open_row(&pool, &id, teacher_id, &sample_hash(), "Chrome/99", "mobile", Tier::Degraded, 1000).await.unwrap();
         close_row(&pool, &id, 999, EndedReason::Disconnect).await.unwrap();
         let row: (Option<i64>,) =
-            sqlx::query_as("SELECT duration_secs FROM session_log WHERE id = ?")
+            sqlx::query_as("SELECT duration_secs FROM session_log WHERE id = $1")
                 .bind(id.as_bytes())
                 .fetch_one(&pool)
                 .await
@@ -222,11 +242,13 @@ mod tests {
     async fn close_row_is_idempotent() {
         let pool = make_pool().await;
         let id = SessionLogId::new();
-        open_row(&pool, &id, 1, &sample_hash(), "Firefox/99", "desktop", Tier::Supported, 1000).await.unwrap();
+        let (teacher_id,): (i64,) = sqlx::query_as("SELECT id FROM teachers WHERE slug = 'testslug'")
+            .fetch_one(&pool).await.unwrap();
+        open_row(&pool, &id, teacher_id, &sample_hash(), "Firefox/99", "desktop", Tier::Supported, 1000).await.unwrap();
         close_row(&pool, &id, 1060, EndedReason::Hangup).await.unwrap();
         // Second call should not change ended_at (first-writer-wins).
         close_row(&pool, &id, 9999, EndedReason::Disconnect).await.unwrap();
-        let row: (Option<i64>,) = sqlx::query_as("SELECT ended_at FROM session_log WHERE id = ?")
+        let row: (Option<i64>,) = sqlx::query_as("SELECT ended_at FROM session_log WHERE id = $1")
             .bind(id.as_bytes())
             .fetch_one(&pool)
             .await
@@ -238,11 +260,13 @@ mod tests {
     async fn record_peak_updates_high_watermark() {
         let pool = make_pool().await;
         let id = SessionLogId::new();
-        open_row(&pool, &id, 1, &sample_hash(), "Firefox/99", "desktop", Tier::Supported, 1000).await.unwrap();
+        let (teacher_id,): (i64,) = sqlx::query_as("SELECT id FROM teachers WHERE slug = 'testslug'")
+            .fetch_one(&pool).await.unwrap();
+        open_row(&pool, &id, teacher_id, &sample_hash(), "Firefox/99", "desktop", Tier::Supported, 1000).await.unwrap();
         record_peak(&pool, &id, 200, 50).await.unwrap();
         record_peak(&pool, &id, 100, 80).await.unwrap(); // lower loss, higher rtt
         let row: (i32, i32) =
-            sqlx::query_as("SELECT peak_loss_bp, peak_rtt_ms FROM session_log WHERE id = ?")
+            sqlx::query_as("SELECT peak_loss_bp, peak_rtt_ms FROM session_log WHERE id = $1")
                 .bind(id.as_bytes())
                 .fetch_one(&pool)
                 .await
@@ -271,9 +295,11 @@ mod tests {
     async fn session_log_no_plaintext_email_or_ip() {
         let pool = make_pool().await;
         let id = SessionLogId::new();
+        let (teacher_id,): (i64,) = sqlx::query_as("SELECT id FROM teachers WHERE slug = 'testslug'")
+            .fetch_one(&pool).await.unwrap();
         let email = "noshow@secret.com";
         let hash = hash_email(email, DEV_PEPPER);
-        open_row(&pool, &id, 1, &hash, "Firefox/99", "desktop", Tier::Supported, 1000).await.unwrap();
+        open_row(&pool, &id, teacher_id, &hash, "Firefox/99", "desktop", Tier::Supported, 1000).await.unwrap();
         record_peak(&pool, &id, 100, 50).await.unwrap();
         close_row(&pool, &id, 1060, EndedReason::Hangup).await.unwrap();
 

@@ -1,14 +1,14 @@
 -- File: server/migrations/0006_accompaniments.sql
 -- Purpose: Create accompaniments and accompaniment_variants tables for Sprint 12 library.
--- Last updated: Sprint 12 (2026-04-21) -- initial migration
+-- Last updated: Sprint 19 (2026-04-25) -- migrate SQLite → PostgreSQL; BIGSERIAL, BIGINT, DOUBLE PRECISION
 
 -- Migration 0006: accompaniment library — assets + variants
 -- Stores backing-track assets (PDF/MIDI + rasterised pages + bar data)
 -- and WAV variants (tempo/transpose/repeats variants of a MIDI asset).
 
 CREATE TABLE accompaniments (
-  id                   INTEGER PRIMARY KEY AUTOINCREMENT,
-  teacher_id           INTEGER NOT NULL REFERENCES teachers(id),
+  id                   BIGSERIAL PRIMARY KEY,
+  teacher_id           BIGINT  NOT NULL REFERENCES teachers(id),
   title                TEXT    NOT NULL,
   pdf_blob_key         TEXT,
   midi_blob_key        TEXT,
@@ -22,8 +22,8 @@ CREATE TABLE accompaniments (
 CREATE INDEX idx_accomp_teacher ON accompaniments(teacher_id, created_at DESC);
 
 CREATE TABLE accompaniment_variants (
-  id                  INTEGER PRIMARY KEY AUTOINCREMENT,
-  accompaniment_id    INTEGER NOT NULL REFERENCES accompaniments(id),
+  id                  BIGSERIAL PRIMARY KEY,
+  accompaniment_id    BIGINT  NOT NULL REFERENCES accompaniments(id),
   label               TEXT    NOT NULL,
   wav_blob_key        TEXT    NOT NULL,
   tempo_pct           INTEGER NOT NULL DEFAULT 100
@@ -32,7 +32,7 @@ CREATE TABLE accompaniment_variants (
                         CHECK (transpose_semitones >= -12 AND transpose_semitones <= 12),
   respect_repeats     INTEGER NOT NULL DEFAULT 0
                         CHECK (respect_repeats IN (0, 1)),
-  duration_s          REAL,
+  duration_s          DOUBLE PRECISION,
   created_at          INTEGER NOT NULL,
   deleted_at          INTEGER,
   CHECK (label != '')

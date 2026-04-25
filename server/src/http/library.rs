@@ -99,7 +99,7 @@ pub(crate) async fn get_library_page(
     let teacher_id = require_auth(&state, &headers).await?;
     let slug = validate(&slug).map_err(|_| AppError::NotFound)?;
     let (owned,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM teachers WHERE id = ? AND slug = ?",
+        "SELECT COUNT(*) FROM teachers WHERE id = $1 AND slug = $2",
     )
     .bind(teacher_id)
     .bind(&slug)
@@ -144,7 +144,7 @@ pub(crate) async fn list_assets(
                  WHERE deleted_at IS NULL
                  GROUP BY accompaniment_id
              ) vc ON vc.accompaniment_id = a.id
-             WHERE a.teacher_id = ? AND a.deleted_at IS NULL
+             WHERE a.teacher_id = $1 AND a.deleted_at IS NULL
              ORDER BY a.created_at DESC",
         )
         .bind(teacher_id)
@@ -248,7 +248,7 @@ async fn store_asset_blob(
 /// On any DB error the blob is deleted before returning.
 /// Returns (accompaniment_id, variant_id). variant_id is Some only for WAV.
 async fn db_insert_accompaniment(
-    db: &sqlx::SqlitePool,
+    db: &sqlx::PgPool,
     blob: &dyn BlobStore,
     teacher_id: i64,
     title: &str,
@@ -259,8 +259,8 @@ async fn db_insert_accompaniment(
     match kind {
         FileKind::Pdf | FileKind::Midi => {
             let sql = match kind {
-                FileKind::Pdf => "INSERT INTO accompaniments (teacher_id, title, pdf_blob_key, created_at) VALUES (?, ?, ?, ?) RETURNING id",
-                FileKind::Midi => "INSERT INTO accompaniments (teacher_id, title, midi_blob_key, created_at) VALUES (?, ?, ?, ?) RETURNING id",
+                FileKind::Pdf => "INSERT INTO accompaniments (teacher_id, title, pdf_blob_key, created_at) VALUES ($1, $2, $3, $4) RETURNING id",
+                FileKind::Midi => "INSERT INTO accompaniments (teacher_id, title, midi_blob_key, created_at) VALUES ($1, $2, $3, $4) RETURNING id",
                 FileKind::Wav => unreachable!(),
             };
             let r: std::result::Result<(i64,), sqlx::Error> = sqlx::query_as(sql)
@@ -279,7 +279,7 @@ async fn db_insert_accompaniment(
             };
             let acc_r: std::result::Result<(i64,), sqlx::Error> = sqlx::query_as(
                 "INSERT INTO accompaniments (teacher_id, title, created_at)
-                 VALUES (?, ?, ?) RETURNING id",
+                 VALUES ($1, $2, $3) RETURNING id",
             )
             .bind(teacher_id).bind(title).bind(now)
             .fetch_one(&mut *tx).await;
@@ -295,7 +295,7 @@ async fn db_insert_accompaniment(
                 "INSERT INTO accompaniment_variants
                    (accompaniment_id, label, wav_blob_key, tempo_pct, transpose_semitones,
                     respect_repeats, created_at)
-                 VALUES (?, ?, ?, 100, 0, 0, ?) RETURNING id",
+                 VALUES ($1, $2, $3, 100, 0, 0, $4) RETURNING id",
             )
             .bind(acc_id).bind(title).bind(blob_key).bind(now)
             .fetch_one(&mut *tx).await;
@@ -416,7 +416,7 @@ pub(crate) async fn get_asset(
             "SELECT id, title, pdf_blob_key, midi_blob_key, page_blob_keys_json,
                     bar_coords_json, bar_timings_json, created_at
              FROM accompaniments
-             WHERE id = ? AND teacher_id = ? AND deleted_at IS NULL",
+             WHERE id = $1 AND teacher_id = $2 AND deleted_at IS NULL",
         )
         .bind(asset_id)
         .bind(teacher_id)
@@ -442,7 +442,7 @@ pub(crate) async fn get_asset(
             "SELECT id, label, wav_blob_key, tempo_pct, transpose_semitones,
                     respect_repeats, duration_s, created_at
              FROM accompaniment_variants
-             WHERE accompaniment_id = ? AND deleted_at IS NULL
+             WHERE accompaniment_id = $1 AND deleted_at IS NULL
              ORDER BY created_at DESC",
         )
         .bind(id)
@@ -510,7 +510,7 @@ pub(crate) async fn delete_asset(
     let row: Option<(Option<String>, Option<String>, Option<String>)> = sqlx::query_as(
         "SELECT pdf_blob_key, midi_blob_key, page_blob_keys_json
          FROM accompaniments
-         WHERE id = ? AND teacher_id = ? AND deleted_at IS NULL",
+         WHERE id = $1 AND teacher_id = $2 AND deleted_at IS NULL",
     )
     .bind(asset_id)
     .bind(teacher_id)
@@ -521,14 +521,14 @@ pub(crate) async fn delete_asset(
 
     let variant_wav_keys: Vec<(String,)> = sqlx::query_as(
         "SELECT wav_blob_key FROM accompaniment_variants
-         WHERE accompaniment_id = ? AND deleted_at IS NULL",
+         WHERE accompaniment_id = $1 AND deleted_at IS NULL",
     )
     .bind(asset_id)
     .fetch_all(&state.db)
     .await?;
 
     // Soft-delete asset and all its variants.
-    sqlx::query("UPDATE accompaniments SET deleted_at = ? WHERE id = ? AND teacher_id = ?")
+    sqlx::query("UPDATE accompaniments SET deleted_at = $1 WHERE id = $2 AND teacher_id = $3")
         .bind(now)
         .bind(asset_id)
         .bind(teacher_id)
@@ -536,8 +536,8 @@ pub(crate) async fn delete_asset(
         .await?;
 
     sqlx::query(
-        "UPDATE accompaniment_variants SET deleted_at = ?
-         WHERE accompaniment_id = ?",
+        "UPDATE accompaniment_variants SET deleted_at = $1
+         WHERE accompaniment_id = $2",
     )
     .bind(now)
     .bind(asset_id)
@@ -634,7 +634,7 @@ pub(crate) async fn post_midi(
 
     // Invalidate any previous MIDI token (old key may change).
     let old_key: Option<(Option<String>,)> = sqlx::query_as(
-        "SELECT midi_blob_key FROM accompaniments WHERE id = ? AND teacher_id = ?",
+        "SELECT midi_blob_key FROM accompaniments WHERE id = $1 AND teacher_id = $2",
     )
     .bind(asset_id)
     .bind(teacher_id)
@@ -646,8 +646,8 @@ pub(crate) async fn post_midi(
     }
 
     let update = sqlx::query(
-        "UPDATE accompaniments SET midi_blob_key = ?, bar_timings_json = ?
-         WHERE id = ? AND teacher_id = ? AND deleted_at IS NULL",
+        "UPDATE accompaniments SET midi_blob_key = $1, bar_timings_json = $2
+         WHERE id = $3 AND teacher_id = $4 AND deleted_at IS NULL",
     )
     .bind(&midi_key)
     .bind(&timings_json)
@@ -724,7 +724,7 @@ pub(crate) async fn post_rasterise(
 
     // Invalidate old page tokens and delete old page blobs.
     let old_pages: Option<(Option<String>,)> = sqlx::query_as(
-        "SELECT page_blob_keys_json FROM accompaniments WHERE id = ? AND teacher_id = ?",
+        "SELECT page_blob_keys_json FROM accompaniments WHERE id = $1 AND teacher_id = $2",
     )
     .bind(asset_id)
     .bind(teacher_id)
@@ -739,8 +739,8 @@ pub(crate) async fn post_rasterise(
     }
 
     sqlx::query(
-        "UPDATE accompaniments SET page_blob_keys_json = ?, bar_coords_json = ?
-         WHERE id = ? AND teacher_id = ? AND deleted_at IS NULL",
+        "UPDATE accompaniments SET page_blob_keys_json = $1, bar_coords_json = $2
+         WHERE id = $3 AND teacher_id = $4 AND deleted_at IS NULL",
     )
     .bind(&page_keys_json)
     .bind(&coords_json)
@@ -814,7 +814,7 @@ pub(crate) async fn post_variant(
         "INSERT INTO accompaniment_variants
            (accompaniment_id, label, wav_blob_key, tempo_pct, transpose_semitones,
             respect_repeats, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id",
+         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id",
     )
     .bind(asset_id)
     .bind(&req.label)
@@ -859,7 +859,7 @@ pub(crate) async fn delete_variant(
         "SELECT v.wav_blob_key
          FROM accompaniment_variants v
          JOIN accompaniments a ON a.id = v.accompaniment_id
-         WHERE v.id = ? AND v.accompaniment_id = ? AND a.teacher_id = ?
+         WHERE v.id = $1 AND v.accompaniment_id = $2 AND a.teacher_id = $3
            AND v.deleted_at IS NULL AND a.deleted_at IS NULL",
     )
     .bind(variant_id)
@@ -871,8 +871,8 @@ pub(crate) async fn delete_variant(
     let (wav_key,) = variant_row.ok_or(AppError::NotFound)?;
 
     sqlx::query(
-        "UPDATE accompaniment_variants SET deleted_at = ?
-         WHERE id = ? AND accompaniment_id = ?",
+        "UPDATE accompaniment_variants SET deleted_at = $1
+         WHERE id = $2 AND accompaniment_id = $3",
     )
     .bind(now)
     .bind(variant_id)
@@ -945,7 +945,7 @@ async fn require_auth(state: &AppState, headers: &HeaderMap) -> Result<i64> {
 async fn require_slug_owner(state: &AppState, teacher_id: i64, raw_slug: &str) -> Result<()> {
     let slug = validate(raw_slug).map_err(|_| AppError::NotFound)?;
     let (owned,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM teachers WHERE id = ? AND slug = ?",
+        "SELECT COUNT(*) FROM teachers WHERE id = $1 AND slug = $2",
     )
     .bind(teacher_id)
     .bind(&slug)
@@ -960,7 +960,7 @@ async fn require_slug_owner(state: &AppState, teacher_id: i64, raw_slug: &str) -
 async fn require_pdf_key(state: &AppState, asset_id: i64, teacher_id: i64) -> Result<String> {
     let row: Option<(Option<String>,)> = sqlx::query_as(
         "SELECT pdf_blob_key FROM accompaniments
-         WHERE id = ? AND teacher_id = ? AND deleted_at IS NULL",
+         WHERE id = $1 AND teacher_id = $2 AND deleted_at IS NULL",
     )
     .bind(asset_id)
     .bind(teacher_id)
@@ -977,7 +977,7 @@ async fn require_pdf_key(state: &AppState, asset_id: i64, teacher_id: i64) -> Re
 async fn require_midi_key(state: &AppState, asset_id: i64, teacher_id: i64) -> Result<String> {
     let row: Option<(Option<String>,)> = sqlx::query_as(
         "SELECT midi_blob_key FROM accompaniments
-         WHERE id = ? AND teacher_id = ? AND deleted_at IS NULL",
+         WHERE id = $1 AND teacher_id = $2 AND deleted_at IS NULL",
     )
     .bind(asset_id)
     .bind(teacher_id)

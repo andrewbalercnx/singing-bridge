@@ -19,7 +19,7 @@ pub mod slug;
 use axum::http::HeaderMap;
 use rand::RngCore;
 use sha2::{Digest, Sha256};
-use sqlx::SqlitePool;
+use sqlx::PgPool;
 
 use crate::error::Result;
 
@@ -40,7 +40,7 @@ fn random_cookie_hex() -> String {
 /// Insert a new row in `sessions` and return the raw cookie value the
 /// browser should carry.
 pub async fn issue_session_cookie(
-    pool: &SqlitePool,
+    pool: &PgPool,
     teacher_id: magic_link::TeacherId,
     ttl_secs: i64,
 ) -> Result<String> {
@@ -49,7 +49,7 @@ pub async fn issue_session_cookie(
     let issued = time::OffsetDateTime::now_utc().unix_timestamp();
     let expires = issued + ttl_secs;
     sqlx::query(
-        "INSERT INTO sessions (cookie_hash, teacher_id, issued_at, expires_at) VALUES (?, ?, ?, ?)",
+        "INSERT INTO sessions (cookie_hash, teacher_id, issued_at, expires_at) VALUES ($1, $2, $3, $4)",
     )
     .bind(&hash)
     .bind(teacher_id)
@@ -65,14 +65,14 @@ pub async fn issue_session_cookie(
 /// missing / invalid / expired cookie returns None (never an error), so
 /// callers never branch on cookie-validity disclosure.
 pub async fn resolve_teacher_from_cookie(
-    pool: &SqlitePool,
+    pool: &PgPool,
     headers: &HeaderMap,
 ) -> Option<magic_link::TeacherId> {
     let raw = extract_cookie_value(headers, SESSION_COOKIE_NAME)?;
     let hash = cookie_hash(&raw);
     let now = time::OffsetDateTime::now_utc().unix_timestamp();
     match sqlx::query_as::<_, (magic_link::TeacherId,)>(
-        "SELECT teacher_id FROM sessions WHERE cookie_hash = ? AND expires_at > ?",
+        "SELECT teacher_id FROM sessions WHERE cookie_hash = $1 AND expires_at > $2",
     )
     .bind(&hash)
     .bind(now)

@@ -4,9 +4,11 @@
 // Exports: Config, ConfigError, MailerKind
 // Depends: url, serde, auth::secret
 // Invariants: from_env() calls parse_env() then validate_prod_config() for SB_ENV=prod.
-//             In prod: HTTPS required, secrets present, pepper ≥ 32 bytes.
+//             In prod: HTTPS required, secrets present, pepper ≥ 32 bytes,
+//             SB_DATABASE_URL must include sslmode=verify-full and must not be localhost.
+//             SB_DATABASE_URL is always required (no fallback) — server refuses to start without it.
 //             Secure cookie flag only omitted when dev=true.
-// Last updated: Sprint 12a (2026-04-21) -- sidecar SSRF validation, prod secret check
+// Last updated: Sprint 19 (2026-04-25) -- SB_DATABASE_URL required; sslmode=verify-full validation
 
 use std::net::SocketAddr;
 
@@ -94,7 +96,7 @@ impl Config {
         Self {
             bind: "127.0.0.1:8080".parse().expect("static addr"),
             base_url: Url::parse("http://localhost:8080").expect("static url"),
-            db_url: "sqlite::memory:".to_string(),
+            db_url: "postgres://localhost:5432/singing_bridge".to_string(),
             dev: true,
             data_dir: std::path::PathBuf::from("data"),
             max_active_rooms: 1024,
@@ -160,11 +162,8 @@ impl Config {
         let data_dir = std::path::PathBuf::from(
             std::env::var("SB_DATA_DIR").unwrap_or_else(|_| "data".into()),
         );
-        let db_url = if dev {
-            "sqlite::memory:".to_string()
-        } else {
-            format!("sqlite:{}/singing-bridge.db?mode=rwc", data_dir.display())
-        };
+        let db_url = std::env::var("SB_DATABASE_URL")
+            .map_err(|_| ConfigError::Missing("SB_DATABASE_URL"))?;
         let static_dir = std::path::PathBuf::from(
             std::env::var("SB_STATIC_DIR").unwrap_or_else(|_| "web".into()),
         );
@@ -270,6 +269,27 @@ impl Config {
 fn validate_prod_config(c: &Config) -> Result<(), ConfigError> {
     if c.base_url.scheme() != "https" {
         return Err(ConfigError::HttpsRequired);
+    }
+    // Require verified TLS for production database connections.
+    // Parse sslmode as a complete query parameter to avoid substring false-positives.
+    let has_verify_full = c.db_url.find('?').map_or(false, |idx| {
+        c.db_url[idx + 1..].split('&').any(|p| p == "sslmode=verify-full")
+    });
+    if !has_verify_full {
+        return Err(ConfigError::Invalid(
+            "SB_DATABASE_URL",
+            "production database URL must include sslmode=verify-full".into(),
+        ));
+    }
+    // Reject loopback database connections (catches test DB misconfiguration).
+    if c.db_url.contains("localhost")
+        || c.db_url.contains("127.0.0.1")
+        || c.db_url.contains("[::1]")
+    {
+        return Err(ConfigError::Invalid(
+            "SB_DATABASE_URL",
+            "production database URL must not point at localhost".into(),
+        ));
     }
     let secret = c
         .turn_shared_secret
@@ -385,6 +405,7 @@ mod tests {
         let mut c = Config::dev_default();
         c.dev = false;
         c.base_url = Url::parse("https://singing.rcnx.io").unwrap();
+        c.db_url = "postgres://sbapp:pass@vvp-postgres.postgres.database.azure.com/singing_bridge?sslmode=verify-full".to_string();
         c.turn_shared_secret = Some(SecretString::new("a".repeat(32)));
         c.session_log_pepper = Some(SecretString::new("y".repeat(32)));
         c.sidecar_secret = SecretString::new("s".repeat(32));
@@ -429,5 +450,40 @@ mod tests {
         let c = Config::dev_default();
         let err = validate_prod_config(&c).unwrap_err();
         assert!(matches!(err, ConfigError::HttpsRequired));
+    }
+
+    #[test]
+    fn prod_missing_verify_full_errors() {
+        let mut c = prod_base(true);
+        c.db_url = "postgres://sbapp:pass@vvp-postgres.postgres.database.azure.com/singing_bridge?sslmode=require".to_string();
+        let err = validate_prod_config(&c).unwrap_err();
+        assert!(matches!(err, ConfigError::Invalid("SB_DATABASE_URL", _)));
+    }
+
+    #[test]
+    fn prod_localhost_db_errors() {
+        let mut c = prod_base(true);
+        c.db_url = "postgres://sbapp:pass@localhost:5432/singing_bridge?sslmode=verify-full".to_string();
+        let err = validate_prod_config(&c).unwrap_err();
+        assert!(matches!(err, ConfigError::Invalid("SB_DATABASE_URL", _)));
+    }
+
+    #[test]
+    fn prod_ipv6_loopback_db_errors() {
+        let mut c = prod_base(true);
+        c.db_url = "postgres://sbapp:pass@[::1]:5432/singing_bridge?sslmode=verify-full".to_string();
+        let err = validate_prod_config(&c).unwrap_err();
+        assert!(matches!(err, ConfigError::Invalid("SB_DATABASE_URL", _)));
+    }
+
+    #[test]
+    fn prod_verify_full_substring_not_enough() {
+        // Ensure simple substring check is not used: sslmode in an unexpected position
+        // must not pass.
+        let mut c = prod_base(true);
+        // This has sslmode=verify-full embedded in the database name (malicious input guard).
+        c.db_url = "postgres://sbapp:pass@vvp-postgres.postgres.database.azure.com/singing_bridge_sslmode=verify-full".to_string();
+        let err = validate_prod_config(&c).unwrap_err();
+        assert!(matches!(err, ConfigError::Invalid("SB_DATABASE_URL", _)));
     }
 }

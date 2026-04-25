@@ -2,12 +2,12 @@
 -- Purpose: Session log table — start/end/peak metrics per admitted session.
 --          No raw PII: email is pepper-hashed (sha256(lower(email)||pepper)),
 --          peer IP is never stored.
--- Last updated: Sprint 5 (2026-04-18) -- initial implementation
+-- Last updated: Sprint 19 (2026-04-25) -- migrate SQLite → PostgreSQL; BYTEA, BIGINT
 
 CREATE TABLE session_log (
-  id                 BLOB    PRIMARY KEY,          -- SessionLogId (UUID v4, 16 bytes)
-  teacher_id         INTEGER NOT NULL REFERENCES teachers(id),
-  student_email_hash BLOB    NOT NULL,             -- sha256(lower(email) || pepper); 32 bytes
+  id                 BYTEA   PRIMARY KEY,          -- SessionLogId (UUID v4, 16 bytes)
+  teacher_id         BIGINT  NOT NULL REFERENCES teachers(id),
+  student_email_hash BYTEA   NOT NULL,             -- sha256(lower(email) || pepper); 32 bytes
   browser            TEXT    NOT NULL,
   device_class       TEXT    NOT NULL,
   tier               TEXT    NOT NULL,             -- 'supported'|'degraded'|'unworkable'

@@ -1,16 +1,10 @@
 // File: infra/bicep/container-app.bicep
-// Purpose: Container Apps environment + NFS Azure Files storage + singing-bridge app + OMR sidecar.
-// Role: Hosts the single-replica server with SQLite on NFS Azure Files Premium.
-// Invariants: min=max=1 replica — WAL file locks are node-local; a second replica would
-//             corrupt the database. This constraint is permanent until SQLite is replaced.
-//             CF IP allow-list codified in ipSecurityRestrictions (not a runbook step).
+// Purpose: Container Apps environment + singing-bridge app + OMR sidecar.
+// Role: Hosts the single-replica server backed by Azure Database for PostgreSQL.
+// Invariants: CF IP allow-list codified in ipSecurityRestrictions (not a runbook step).
 //             Ingress restricted to Cloudflare published IP ranges only.
-//             SB_DATA_DIR=/data: durable NFS volume; DB persists across deploys.
-//             NFS share uses NoRootSquash. EVERY container mounting sb-data MUST run as
-//             UID 65532:65532 with runAsNonRoot=true. Root-capable containers on this share
-//             would have unrestricted NFS server access. Enforce via securityContext on each
-//             container spec; never mount sb-data in a container without runAsUser=65532.
-// Last updated: Sprint 18 (2026-04-24) -- add sharedKvUri param; wire SB_DATABASE_URL via KV ref
+//             SB_DATABASE_URL wired via Key Vault reference (sbapp credential).
+// Last updated: Sprint 19 (2026-04-25) -- remove NFS storage; PostgreSQL via SB_DATABASE_URL
 
 param location string = resourceGroup().location
 param environmentName string = 'sb-env'
@@ -21,11 +15,6 @@ param sidecarImageName string = 'singing-bridge-sidecar:latest'
 param logWorkspaceCustomerId string
 @secure()
 param logWorkspaceKey string
-// NFS storage account — separate from old SMB account; supportsHttpsTrafficOnly must be false.
-param nfsStorageAccountName string = 'sbnfs${uniqueString(resourceGroup().id)}'
-// VNet subnet IDs from vnet.bicep outputs.
-param acaSubnetId string
-param storageSubnetId string
 
 // Shared Key Vault URI for KV-reference secrets (non-secret; just the vault URI).
 param sharedKvUri string = 'https://rcnx-shared-kv.vault.azure.net/'
@@ -44,49 +33,7 @@ param sbSidecarSecret string
 @secure()
 param sbAcsConnectionString string
 
-// ---- NFS Storage Account + File Share ----
-// NFS v4.1 requires supportsHttpsTrafficOnly=false; this cannot be changed in-place
-// on an existing account — a new account is required. Network rule denies all except
-// the storage subnet service endpoint.
-resource nfsStorageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' = {
-  name: nfsStorageAccountName
-  location: location
-  kind: 'FileStorage'
-  sku: { name: 'Premium_LRS' }
-  properties: {
-    minimumTlsVersion: 'TLS1_2'
-    supportsHttpsTrafficOnly: false  // required for NFS v4.1
-    largeFileSharesState: 'Enabled'
-    networkAcls: {
-      defaultAction: 'Deny'
-      virtualNetworkRules: [
-        {
-          id: storageSubnetId
-          action: 'Allow'
-        }
-      ]
-    }
-  }
-}
-
-resource nfsFileShare 'Microsoft.Storage/storageAccounts/fileServices/shares@2023-01-01' = {
-  name: '${nfsStorageAccount.name}/default/sb-data'
-  properties: {
-    shareQuota: 32
-    enabledProtocols: 'NFS'
-    // NoRootSquash is safe here because the server container runs as UID 65532
-    // (not root), enforced by both the Dockerfile USER directive and the
-    // securityContext below. An init container chowning /data is unnecessary and
-    // would fail under RootSquash anyway (root → nobody cannot chown). On first
-    // mount the NFS directory is world-writable, and SQLite creates the DB file
-    // as UID 65532. On subsequent mounts UID 65532 reads and writes its own file.
-    rootSquash: 'NoRootSquash'
-  }
-}
-
-// ---- Container Apps Environment (VNet-integrated) ----
-// VNet integration cannot be added to an existing CAE — this is a new resource.
-// See runbook/deploy.md for the cutover sequence.
+// ---- Container Apps Environment ----
 resource caEnv 'Microsoft.App/managedEnvironments@2024-03-01' = {
   name: environmentName
   location: location
@@ -97,24 +44,6 @@ resource caEnv 'Microsoft.App/managedEnvironments@2024-03-01' = {
         customerId: logWorkspaceCustomerId
         sharedKey: logWorkspaceKey
       }
-    }
-    vnetConfiguration: {
-      infrastructureSubnetId: acaSubnetId
-      // internal=false: environment remains externally reachable via Cloudflare.
-      internal: false
-    }
-  }
-}
-
-// NFS storage binding — uses nfsAzureFile (no accountKey; access via network rule).
-resource caStorage 'Microsoft.App/managedEnvironments/storages@2024-03-01' = {
-  name: 'sb-nfs-storage'
-  parent: caEnv
-  properties: {
-    nfsAzureFile: {
-      server: '${nfsStorageAccount.name}.file.core.windows.net'
-      shareName: 'sb-data'
-      accessMode: 'ReadWrite'
     }
   }
 }
@@ -170,18 +99,9 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
     }
     template: {
       scale: {
-        // CRITICAL: must remain 1/1 while SQLite is the DB engine.
-        // WAL file locks are node-local — a second replica corrupts the database.
         minReplicas: 1
         maxReplicas: 1
       }
-      volumes: [
-        {
-          name: 'sb-data'
-          storageType: 'NfsAzureFile'
-          storageName: 'sb-nfs-storage'
-        }
-      ]
       containers: [
         {
           name: 'server'
@@ -189,7 +109,6 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
           env: [
             { name: 'SB_ENV', value: 'prod' }
             { name: 'SB_BASE_URL', value: 'https://singing.rcnx.io' }
-            { name: 'SB_DATA_DIR', value: '/data' }
             { name: 'SB_STATIC_DIR', value: '/app/web' }
             { name: 'SB_TURN_HOST', value: 'turn.singing.rcnx.io' }
             { name: 'SB_TURN_SHARED_SECRET', secretRef: 'sb-turn-secret' }
@@ -202,15 +121,10 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'SB_DATABASE_URL', secretRef: 'sb-db-url' }
           ]
           resources: { cpu: json('0.5'), memory: '1Gi' }
-          // NFS share requires NoRootSquash; every container mounting sb-data MUST run as
-          // UID 65532 (non-root). Root-capable containers would have unrestricted NFS access.
           securityContext: {
             runAsNonRoot: true
             runAsUser: 65532
           }
-          volumeMounts: [
-            { volumeName: 'sb-data', mountPath: '/data' }
-          ]
           probes: [
             {
               type: 'Liveness'
@@ -241,4 +155,3 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
 
 output appFqdn string = app.properties.configuration.ingress.fqdn
 output appId string = app.id
-output nfsStorageAccountName string = nfsStorageAccount.name

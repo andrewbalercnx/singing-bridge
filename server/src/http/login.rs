@@ -88,7 +88,7 @@ pub async fn post_register(
 
     // Check slug uniqueness.
     let taken: Option<(magic_link::TeacherId,)> =
-        sqlx::query_as("SELECT id FROM teachers WHERE slug = ?")
+        sqlx::query_as("SELECT id FROM teachers WHERE slug = $1")
             .bind(&slug)
             .fetch_optional(&state.db)
             .await?;
@@ -103,7 +103,7 @@ pub async fn post_register(
 
     // Check email uniqueness.
     let email_taken: Option<(magic_link::TeacherId,)> =
-        sqlx::query_as("SELECT id FROM teachers WHERE email = ?")
+        sqlx::query_as("SELECT id FROM teachers WHERE email = $1")
             .bind(&email)
             .fetch_optional(&state.db)
             .await?;
@@ -118,7 +118,7 @@ pub async fn post_register(
     let hash = password::hash_password(&form.password).await?;
     let created = time::OffsetDateTime::now_utc().unix_timestamp();
     let (tid,): (magic_link::TeacherId,) = sqlx::query_as(
-        "INSERT INTO teachers (email, slug, created_at, password_hash) VALUES (?, ?, ?, ?) RETURNING id",
+        "INSERT INTO teachers (email, slug, created_at, password_hash) VALUES ($1, $2, $3, $4) RETURNING id",
     )
     .bind(&email)
     .bind(&slug)
@@ -167,7 +167,7 @@ pub async fn post_login(
 
     // 1. Look up teacher.
     let row: Option<(magic_link::TeacherId, Option<String>)> =
-        sqlx::query_as("SELECT id, password_hash FROM teachers WHERE email = ?")
+        sqlx::query_as("SELECT id, password_hash FROM teachers WHERE email = $1")
             .bind(&email)
             .fetch_optional(&state.db)
             .await?;
@@ -228,14 +228,14 @@ pub async fn post_login(
 
     // 5. Record success + issue session.
     sqlx::query(
-        "UPDATE login_attempts SET succeeded = 1 WHERE teacher_id = ? AND attempted_at = (SELECT MAX(attempted_at) FROM login_attempts WHERE teacher_id = ?)",
+        "UPDATE login_attempts SET succeeded = 1 WHERE teacher_id = $1 AND attempted_at = (SELECT MAX(attempted_at) FROM login_attempts WHERE teacher_id = $2)",
     )
     .bind(tid)
     .bind(tid)
     .execute(&state.db)
     .await?;
 
-    let (slug,): (String,) = sqlx::query_as("SELECT slug FROM teachers WHERE id = ?")
+    let (slug,): (String,) = sqlx::query_as("SELECT slug FROM teachers WHERE id = $1")
         .bind(tid)
         .fetch_one(&state.db)
         .await?;
@@ -259,7 +259,7 @@ pub async fn post_logout(
     let raw = extract_cookie_value(&headers, SESSION_COOKIE_NAME)
         .ok_or_else(|| AppError::Unauthorized)?;
     let hash = cookie_hash(&raw);
-    let deleted = sqlx::query("DELETE FROM sessions WHERE cookie_hash = ?")
+    let deleted = sqlx::query("DELETE FROM sessions WHERE cookie_hash = $1")
         .bind(&hash)
         .execute(&state.db)
         .await?

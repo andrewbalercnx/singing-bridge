@@ -363,7 +363,7 @@ const SIGNUP_HTML: &str = r#"<!doctype html>
     <div class="sb-field">
       <label class="sb-label" for="f-slug">Room slug</label>
       <input class="sb-input" id="f-slug" type="text" name="slug" required pattern="[a-z][a-z0-9\-]{1,30}[a-z0-9]">
-      <span class="sb-help">Appears in your lesson URL, e.g. /teach/your-name</span>
+      <span id="slug-hint" class="sb-help">Appears in your lesson URL, e.g. /teach/your-name</span>
     </div>
     <div class="sb-field">
       <label class="sb-label" for="f-pass">Password</label>

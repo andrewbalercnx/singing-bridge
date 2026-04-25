@@ -360,6 +360,8 @@
   color: var(--sb-fg-subtle);
   margin-top: var(--sb-space-2);
 }
+.sb-help--ok    { color: var(--sb-success); }
+.sb-help--error { color: var(--sb-danger); }
 
 .sb-input,
 .sb-select,

@@ -2,7 +2,7 @@
 # Purpose: CI + deploy pipeline. On push to main: run tests, then deploy if green.
 #   Skips rebuilding server or sidecar image if their source hasn't changed.
 #   On pull requests: run tests only. workflow_dispatch triggers full pipeline.
-# Last updated: Sprint 20 (2026-04-25) -- WEB_CACHE_BUST build-arg to prevent ACR caching web assets
+# Last updated: Sprint 20 (2026-04-25) -- WEB_CACHE_BUST; revision health poll + SHA check in verify step
 
 name: CI
 
@@ -136,10 +136,41 @@ jobs:
 
       - name: Verify health
         run: |
-          sleep 10
-          FQDN=$(az containerapp show \
-            --name sb-server \
-            --resource-group sb-prod-rg \
-            --query "properties.configuration.ingress.fqdn" \
+          # 1. Find the revision just created (latest by createdTime).
+          NEW_REV=$(az containerapp revision list \
+            --name sb-server --resource-group sb-prod-rg \
+            --query "sort_by([?properties.active], &properties.createdTime)[-1].name" \
             --output tsv)
-          curl --fail "https://$FQDN/healthz" | grep '"ok"'
+          echo "New revision: $NEW_REV"
+
+          # 2. Poll until Provisioned/Healthy or Failed (up to 3 min, 10 s intervals).
+          for i in $(seq 1 18); do
+            PSTATE=$(az containerapp revision show \
+              --name sb-server --resource-group sb-prod-rg --revision "$NEW_REV" \
+              --query "properties.provisioningState" --output tsv)
+            HSTATE=$(az containerapp revision show \
+              --name sb-server --resource-group sb-prod-rg --revision "$NEW_REV" \
+              --query "properties.healthState" --output tsv)
+            echo "  attempt $i: provisioningState=$PSTATE healthState=$HSTATE"
+            [ "$PSTATE" = "Provisioned" ] && [ "$HSTATE" = "Healthy" ] && break
+            if [ "$PSTATE" = "Failed" ] || [ "$HSTATE" = "Unhealthy" ]; then
+              echo "Revision $NEW_REV failed — fetching logs:"
+              az containerapp logs show \
+                --name sb-server --resource-group sb-prod-rg \
+                --revision "$NEW_REV" --tail 30 || true
+              exit 1
+            fi
+            sleep 10
+          done
+          [ "$PSTATE" = "Provisioned" ] && [ "$HSTATE" = "Healthy" ] || \
+            { echo "Revision $NEW_REV did not become healthy within 3 min"; exit 1; }
+
+          # 3. Verify /healthz returns the expected SHA (catches old-revision false-green).
+          FQDN=$(az containerapp show \
+            --name sb-server --resource-group sb-prod-rg \
+            --query "properties.configuration.ingress.fqdn" --output tsv)
+          ACTUAL_SHA=$(curl --fail --silent "https://$FQDN/healthz" | \
+            python3 -c "import sys,json; print(json.load(sys.stdin)['sha'])")
+          echo "healthz sha: $ACTUAL_SHA (expected: $SHA)"
+          [ "$ACTUAL_SHA" = "$SHA" ] || \
+            { echo "SHA mismatch — old revision is still serving"; exit 1; }

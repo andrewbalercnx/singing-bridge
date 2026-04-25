@@ -11,6 +11,34 @@
 > **Commit:** `<sha>`
 > ```
 
+## Sprint 19: PostgreSQL application migration — 2026-04-25
+
+**Files changed:**
+- `server/src/db.rs` — replaced `SqlitePool`/WAL pragma with `PgPool`; `init_pool` + `run_migrations` separation (ADR 0002); added `test_helpers` module with `TestDb` RAII guard and `make_test_db()` for panic-safe per-test DB lifecycle
+- `server/src/auth/rate_limit.rs` — INSERT-before-COUNT tightens signup TOCTOU race; updated invariant docs
+- `server/src/auth/password.rs` — `and_then` → `map` cleanup; SQL `$N` placeholders throughout
+- `server/src/config.rs` — `SB_DATABASE_URL` mandatory (no SQLite fallback); `sslmode=verify-full` + localhost rejection in prod; DSN-style URL detection with clear error; `parse_env_missing_database_url_errors` test added
+- `server/src/cleanup.rs` — `PgPool`; `$N` placeholders; inline tests use `TestDb` (panic-safe, deduplicated)
+- `server/src/ws/session_history.rs` — `PgPool`; `$N` placeholders; `ON CONFLICT DO NOTHING`; inline tests use `TestDb`
+- `server/src/ws/session_log.rs` — `PgPool`; `$N` placeholders
+- `server/src/ws/mod.rs` — `$N` placeholders in slug queries
+- `server/src/http/login.rs` — `PgPool`; `$N` placeholders; `RETURNING id`
+- `server/src/http/signup.rs` — `$N` placeholder
+- `server/src/http/teach.rs` — `$N` placeholders
+- `server/src/http/history.rs` — `PgPool`; `$N` placeholders
+- `server/src/http/library.rs` — `PgPool`; `$N` placeholders; `RETURNING id`
+- `server/src/http/recordings.rs` — `PgPool`; `$N` placeholders; `RETURNING id`
+- `server/src/http/recording_gate.rs` — `PgPool`; `$N` placeholders
+- `server/tests/common/mod.rs` — per-test PostgreSQL DB via `DATABASE_TEST_URL`; panic-safe `Drop` impl; URL construction preserves query params; unified `shutdown()` replaces split `shutdown`/`cleanup`
+- `server/tests/regression.rs` — new: CITEXT case-insensitivity + uniqueness guards; FK enforcement (invalid teacher_id, cascade deletion); session persistence across simulated restart
+- `server/tests/db_pool.rs` — rewritten to use `spawn_app()`; concurrent-connection verification
+- `server/tests/ws_shutdown.rs` — updated for private `server_handle` field
+- `server/migrations/` — all 6 files rewritten for PostgreSQL (BIGSERIAL, BYTEA, CITEXT, `$N`)
+- `server/tests/db_pragmas.rs` — deleted (SQLite-specific)
+- `infra/bicep/container-app.bicep` — NFS storage removed; `SB_DATABASE_URL` wired via KV reference; Cloudflare IPv6 ranges added to `ipSecurityRestrictions`
+
+**Commit:** `3bbfd38`
+
 ## Sprint 18: Shared PostgreSQL platform — 2026-04-24
 
 **Files changed:**

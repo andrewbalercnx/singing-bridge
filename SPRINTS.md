@@ -635,7 +635,7 @@ _Accompaniment panel (teacher-only)_
 - Teacher logs in before a deploy; is still logged in after
 - No `SqlitePool` symbol remaining in `server/src/`
 
-**Status:** PENDING
+**Status:** COMPLETE — 2026-04-25, commit `3bbfd38` (code review APPROVED R2, 92% convergence)
 
 ---
 

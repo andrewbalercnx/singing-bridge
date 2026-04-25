@@ -11,6 +11,30 @@
 > **Commit:** `<sha>`
 > ```
 
+## Sprint 20: Lesson support for students without headphones (and iOS) — 2026-04-25
+
+**Files changed:**
+- `web/assets/browser.js` — iOS UA reclassified to `supported`; `iosAecForced: true` added to return shape
+- `web/assets/self-check.js` — iOS path: hide headphones checkbox, show iOS label, `onConfirm(false)`
+- `web/student.html` — added `#ios-note` section
+- `web/assets/student.js` — `deriveAcousticProfile()`, `applyChatMode()` with `lastChatModeApplied` debounce, `onChattingMode` callback
+- `web/assets/signalling.js` — `connectStudent` sends `acoustic_profile`; handles `chatting_mode`/`acoustic_profile_changed`; `connectTeacher` adds `sendSetAcousticProfile`/`sendChattingMode`
+- `web/assets/vad.js` — new: energy+hysteresis VAD; `create(track, opts)`, `tickVad` pure export, `suppress`/`forceMode`/`teardown` API
+- `web/assets/tests/vad.test.js` — new: 33 tests covering all 9 state×event cells, boundary values, forceMode/suppress compound interactions
+- `web/assets/accompaniment-drawer.js` — `setAcousticProfile(profile)` handle method; `audio.muted` when profile ≠ `headphones`; teacher-only muting banner
+- `web/assets/tests/accompaniment-drawer.test.js` — 8 Sprint 20 acoustic profile tests added
+- `web/teacher.html` — added `<script src="/assets/vad.js">`
+- `web/assets/teacher.js` — VAD creation/teardown in session lifecycle; chat chip (4 states + ios_forced non-interactive); override button hidden for ios_forced; `onAcousticProfileChanged` calls `updateChatChip()`
+- `server/src/ws/protocol.rs` — `AcousticProfile` enum; `SetAcousticProfile`/`ChattingMode` in `ClientMsg`; `AcousticProfileChanged`/`ChattingMode` in `ServerMsg`; `acoustic_profile` on `LobbyEntryView`/`LobbyJoin`
+- `server/src/state.rs` — `LobbyEntry.acoustic_profile: AcousticProfile` replaces `headphones_confirmed: bool`
+- `server/src/ws/lobby.rs` — `join_lobby` accepts `acoustic_profile`; `confirm_headphones` no-op for `IosForced`
+- `server/src/ws/mod.rs` — `handle_set_acoustic_profile` + `handle_chatting_mode` (both teacher-only with role guards)
+- `server/tests/ws_acoustic_profile.rs` — new: 12 integration tests
+- `server/tests/ws_headphones.rs` — updated assertions to use `acoustic_profile` field
+- `knowledge/decisions/0001-mvp-architecture.md` — Sprint 20 amendment: iOS reclassification rationale, `iosAecForced` signal, iOS audio limitations
+
+**Commit:** `fdefc1f`
+
 ## Sprint 19: PostgreSQL application migration — 2026-04-25
 
 **Files changed:**

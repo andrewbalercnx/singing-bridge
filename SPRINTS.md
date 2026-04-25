@@ -683,4 +683,4 @@ _Backwards compatibility_
 - iOS student sees "Supported" (not "degraded") in the browser compatibility flow
 - Council code review APPROVED
 
-**Status:** PENDING
+**Status:** COMPLETE

@@ -21,8 +21,8 @@ RUN GIT_SHA=${GIT_SHA} cargo build --release -p singing-bridge-server
 # stage 2: minimal runtime (glibc via cc variant)
 FROM gcr.io/distroless/cc-debian12
 COPY --from=build /src/target/release/singing-bridge-server /app/server
-# ARG here busts the ACR layer cache for web assets whenever GIT_SHA changes.
-ARG GIT_SHA=unknown
+# ARG here busts the ACR layer cache for web assets on every build.
+ARG WEB_CACHE_BUST=0
 COPY web /app/web
 COPY server/migrations /app/migrations
 

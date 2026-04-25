@@ -2,7 +2,7 @@
 # Purpose: CI + deploy pipeline. On push to main: run tests, then deploy if green.
 #   Skips rebuilding server or sidecar image if their source hasn't changed.
 #   On pull requests: run tests only. workflow_dispatch triggers full pipeline.
-# Last updated: Sprint 13 (2026-04-22) -- skip unchanged image builds
+# Last updated: Sprint 20 (2026-04-25) -- WEB_CACHE_BUST build-arg to prevent ACR caching web assets
 
 name: CI
 
@@ -111,6 +111,7 @@ jobs:
             --image singing-bridge:$SHA \
             --image singing-bridge:latest \
             --build-arg GIT_SHA=$SHA \
+            --build-arg WEB_CACHE_BUST=$(date +%s) \
             .
 
       - name: Build and push sidecar image

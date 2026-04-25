@@ -38,6 +38,7 @@ use crate::state::AppState;
 
 pub fn router(state: Arc<AppState>) -> Router {
     let dev = state.config.dev;
+    #[allow(unused_mut)]
     let mut r = Router::new()
         .route("/signup", get(login::get_signup_form))
         .route("/auth/register", post(login::post_register))

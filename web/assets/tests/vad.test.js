@@ -264,6 +264,31 @@ test('forceMode(on) → forceMode(auto): voice_start does not re-fire', () => {
   assert.deepEqual(events, [], 'forceMode(auto) does not re-emit start');
 });
 
+test('forceMode(on) while VAD already ACTIVE: resets to SILENT and re-emits start', () => {
+  // forceMode('on') resets state to SILENT unconditionally (so VAD resumes cleanly when
+  // auto is later restored), then fires onVoiceStart. This is deliberate: the teacher
+  // explicitly requested chat mode on, so we honour that even from ACTIVE state.
+  var { handle, events } = makeWrapper();
+  var id = lastIntervalId();
+  _lastCtx._analyser._setBuf(134);
+  firePoll(id); // → ACTIVE via poll, start emitted
+  assert.ok(events.includes('start'), 'pre-condition: ACTIVE via poll');
+  events.length = 0;
+  handle.forceMode('on');
+  assert.ok(events.includes('start'), 'forceMode(on) while ACTIVE re-emits start (state reset)');
+});
+
+test('forceMode(auto) while voice still present: VAD re-detects voice on next poll', () => {
+  var { handle, events } = makeWrapper();
+  handle.forceMode('on'); // fires start
+  events.length = 0;
+  handle.forceMode('auto'); // resets to SILENT
+  var id = lastIntervalId();
+  _lastCtx._analyser._setBuf(134); // high RMS still present
+  firePoll(id); // VAD detects voice again → start
+  assert.ok(events.includes('start'), 'forceMode(auto) with voice present re-detects on next poll');
+});
+
 // ---------------------------------------------------------------------------
 // suppress + forceMode compound interactions
 // ---------------------------------------------------------------------------
@@ -343,6 +368,16 @@ test('teardown() is idempotent — no throw on double call', () => {
     handle.teardown();
     handle.teardown();
   });
+});
+
+test('teardown() from ACTIVE state: no onVoiceSilence emitted (cleanup is silent)', () => {
+  var { handle, events } = makeWrapper();
+  var id = lastIntervalId();
+  _lastCtx._analyser._setBuf(134);
+  firePoll(id); // → ACTIVE, start emitted
+  events.length = 0;
+  handle.teardown();
+  assert.deepEqual(events, [], 'teardown() from ACTIVE emits no silence event');
 });
 
 // ---------------------------------------------------------------------------

@@ -54,6 +54,13 @@
 
   function updateChatChip() {
     if (!chatChipEl || !vadHandle) return;
+    if (lastStudentAcousticProfile === 'ios_forced') {
+      chatChipEl.textContent = 'Always on (iOS forces voice processing)';
+      chatChipEl.className = 'sb-chat-chip sb-chat-chip--ios';
+      chatChipEl.disabled = true;
+      return;
+    }
+    chatChipEl.disabled = false;
     if (accompanimentIsPlaying) {
       chatChipEl.textContent = 'Suppressed (track playing)';
       chatChipEl.className = 'sb-chat-chip sb-chat-chip--suppressed';
@@ -171,11 +178,16 @@
     const overrideBtn = document.createElement('button');
     overrideBtn.type = 'button';
     overrideBtn.className = 'sb-btn sb-btn--sm';
-    overrideBtn.textContent = profile === 'headphones' ? 'Mark: Speakers' : 'Mark: Headphones';
-    overrideBtn.addEventListener('click', () => {
-      const newProfile = profile === 'headphones' ? 'speakers' : 'headphones';
-      if (sessionHandle) sessionHandle.sendSetAcousticProfile(entry.id, newProfile);
-    });
+    if (profile === 'ios_forced') {
+      // iOS AEC is OS-enforced — the profile cannot be meaningfully overridden.
+      overrideBtn.hidden = true;
+    } else {
+      overrideBtn.textContent = profile === 'headphones' ? 'Mark: Speakers' : 'Mark: Headphones';
+      overrideBtn.addEventListener('click', () => {
+        const newProfile = profile === 'headphones' ? 'speakers' : 'headphones';
+        if (sessionHandle) sessionHandle.sendSetAcousticProfile(entry.id, newProfile);
+      });
+    }
     li.append(meta, document.createTextNode(' '), badge, document.createTextNode(' '), profileChip, document.createTextNode(' '), overrideBtn);
     if (entry.tier_reason) {
       const r = document.createElement('span');
@@ -262,6 +274,7 @@
     onAcousticProfileChanged(profile) {
       lastStudentAcousticProfile = profile;
       if (accompanimentHandle) accompanimentHandle.setAcousticProfile(profile);
+      updateChatChip();
     },
     onPeerConnected({ dataChannel, audioTrack, videoTrack, localStream, remoteStream, getOneWayLatencyMs }) {
       statusEl.textContent = 'Connected.';

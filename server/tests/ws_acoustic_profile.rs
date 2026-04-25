@@ -8,6 +8,7 @@ mod common;
 
 use common::{recv_json, send_ws, spawn_app, make_session};
 use futures_util::StreamExt as _;
+use uuid::Uuid;
 
 // ---------------------------------------------------------------------------
 // LobbyJoin with ios_forced acoustic_profile
@@ -329,4 +330,67 @@ async fn set_acoustic_profile_unknown_normalizes_to_speakers() {
     let lobby_update = recv_json(&mut teacher).await;
     assert_eq!(lobby_update["type"], "lobby_state");
     assert_eq!(lobby_update["entries"][0]["acoustic_profile"], "speakers");
+}
+
+// ---------------------------------------------------------------------------
+// SetAcousticProfile — unknown entry_id returns EntryNotFound
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn set_acoustic_profile_unknown_entry_returns_entry_not_found() {
+    let app = spawn_app().await;
+    let cookie = app.signup_teacher("t@example.test", "alice").await;
+
+    let mut teacher = app.open_ws(Some(&cookie), None).await;
+    send_ws(&mut teacher, &serde_json::json!({"type":"lobby_watch","slug":"alice"})).await;
+    let _ = recv_json(&mut teacher).await;
+
+    let bogus_id = Uuid::new_v4().to_string();
+    send_ws(&mut teacher, &serde_json::json!({
+        "type": "set_acoustic_profile",
+        "entry_id": bogus_id,
+        "profile": "headphones"
+    })).await;
+
+    let err = recv_json(&mut teacher).await;
+    assert_eq!(err["type"], "error");
+    assert_eq!(err["code"], "entry_not_found");
+}
+
+// ---------------------------------------------------------------------------
+// Teacher can override ios_forced student to headphones (authority rule)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn teacher_can_override_ios_forced_to_headphones() {
+    let app = spawn_app().await;
+    let cookie = app.signup_teacher("t@example.test", "alice").await;
+
+    let mut teacher = app.open_ws(Some(&cookie), None).await;
+    send_ws(&mut teacher, &serde_json::json!({"type":"lobby_watch","slug":"alice"})).await;
+    let _ = recv_json(&mut teacher).await;
+
+    let mut student = app.open_ws(None, None).await;
+    send_ws(&mut student, &serde_json::json!({
+        "type": "lobby_join",
+        "slug": "alice",
+        "email": "s@example.test",
+        "browser": "CriOS/120",
+        "device_class": "phone",
+        "acoustic_profile": "ios_forced"
+    })).await;
+    let update = recv_json(&mut teacher).await;
+    let entry_id = update["entries"][0]["id"].as_str().unwrap().to_string();
+    assert_eq!(update["entries"][0]["acoustic_profile"], "ios_forced");
+
+    // Teacher explicitly overrides to headphones (their authority wins).
+    send_ws(&mut teacher, &serde_json::json!({
+        "type": "set_acoustic_profile",
+        "entry_id": entry_id,
+        "profile": "headphones"
+    })).await;
+
+    let lobby_update = recv_json(&mut teacher).await;
+    assert_eq!(lobby_update["type"], "lobby_state");
+    assert_eq!(lobby_update["entries"][0]["acoustic_profile"], "headphones");
 }

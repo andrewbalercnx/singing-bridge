@@ -1,13 +1,13 @@
 // File: server/tests/common/mod.rs
 // Purpose: Shared test harness — spawn_app, dev-mail reader, WS client.
 // Role: Keep integration-test bodies short and behaviour-focused.
-// Last updated: Sprint 19 (2026-04-25) -- migrate SQLite → PostgreSQL; per-test DB via DATABASE_TEST_URL
+// Last updated: Sprint 19 (2026-04-25) -- panic-safe TestApp Drop; unified shutdown; URL query-param fix
 
 #![allow(dead_code)]
 
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
 static DB_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -42,11 +42,55 @@ pub struct TestApp {
     pub mail_dir: TempDir,
     pub blob_dir: TempDir,
     pub shutdown: CancellationToken,
-    pub server_handle: tokio::task::JoinHandle<()>,
+    /// Wrapped in Option so Drop can take it (abort) without moving out of the struct.
+    server_handle: Option<tokio::task::JoinHandle<()>>,
     pub state: Arc<AppState>,
     pub client: reqwest::Client,
     pub db_name: String,
     pub admin_url: String,
+    /// Set to true by explicit `shutdown()` so the Drop impl skips double-cleanup.
+    db_dropped: Arc<AtomicBool>,
+}
+
+/// Panic-safe cleanup: if the test panics before calling `shutdown()`, Drop
+/// cancels the server and drops the per-test database via a dedicated runtime.
+impl Drop for TestApp {
+    fn drop(&mut self) {
+        self.shutdown.cancel();
+        if let Some(h) = self.server_handle.take() {
+            h.abort();
+        }
+        if self.db_dropped.compare_exchange(
+            false, true, Ordering::AcqRel, Ordering::Acquire,
+        ).is_ok() {
+            let db_name = self.db_name.clone();
+            let admin_url = self.admin_url.clone();
+            let pool = self.state.db.clone();
+            std::thread::spawn(move || {
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("TestApp Drop runtime")
+                    .block_on(async move {
+                        pool.close().await;
+                        if let Ok(admin) = PgPoolOptions::new()
+                            .max_connections(1)
+                            .connect(&admin_url)
+                            .await
+                        {
+                            let _ = sqlx::query(
+                                &format!("DROP DATABASE \"{db_name}\" WITH (FORCE)"),
+                            )
+                            .execute(&admin)
+                            .await;
+                            admin.close().await;
+                        }
+                    });
+            })
+            .join()
+            .ok();
+        }
+    }
 }
 
 pub struct TestOpts {
@@ -130,9 +174,17 @@ pub async fn spawn_app_with(opts: TestOpts) -> TestApp {
         .expect("create test database");
     admin.close().await;
 
-    let db_url = match admin_url.rfind('/') {
-        Some(idx) => format!("{}/{}", &admin_url[..idx], db_name),
-        None => format!("{}/{}", admin_url, db_name),
+    // Replace only the database-name segment, preserving query parameters
+    // (e.g. sslmode=require) from DATABASE_TEST_URL.
+    let db_url = match Url::parse(&admin_url) {
+        Ok(mut u) => {
+            u.set_path(&format!("/{db_name}"));
+            u.to_string()
+        }
+        Err(_) => match admin_url.rfind('/') {
+            Some(idx) => format!("{}/{}", &admin_url[..idx], db_name),
+            None => format!("{}/{}", admin_url, db_name),
+        },
     };
 
     run_migrations(&db_url).await.expect("run_migrations");
@@ -219,11 +271,12 @@ pub async fn spawn_app_with(opts: TestOpts) -> TestApp {
         mail_dir,
         blob_dir,
         shutdown,
-        server_handle,
+        server_handle: Some(server_handle),
         state,
         client,
         db_name,
         admin_url,
+        db_dropped: Arc::new(AtomicBool::new(false)),
     }
 }
 
@@ -415,27 +468,30 @@ impl TestApp {
         ws
     }
 
-    pub async fn shutdown(self) {
+    /// Full teardown: stop the server, close the pool, and drop the per-test database.
+    /// Safe to call explicitly; the Drop impl is the panic-safe fallback and skips
+    /// double-cleanup when `shutdown()` has already run.
+    pub async fn shutdown(mut self) {
+        // Mark as done before async work so that when `self` is consumed at the
+        // end of this function and Drop runs, it sees db_dropped = true and skips.
+        self.db_dropped.store(true, Ordering::Release);
         self.shutdown.cancel();
-        let _ = tokio::time::timeout(Duration::from_secs(3), self.server_handle).await;
-    }
-
-    /// Full teardown: shut down the server, close the pool, and drop the test database.
-    pub async fn cleanup(self) {
-        self.shutdown.cancel();
-        let _ = tokio::time::timeout(Duration::from_secs(3), self.server_handle).await;
+        if let Some(h) = self.server_handle.take() {
+            let _ = tokio::time::timeout(Duration::from_secs(3), h).await;
+        }
         self.state.db.close().await;
         let admin_url = self.admin_url.clone();
         let db_name = self.db_name.clone();
-        let admin = PgPoolOptions::new()
+        if let Ok(admin) = PgPoolOptions::new()
             .max_connections(1)
             .connect(&admin_url)
             .await
-            .expect("connect admin for cleanup");
-        let _ = sqlx::query(&format!("DROP DATABASE \"{db_name}\" WITH (FORCE)"))
-            .execute(&admin)
-            .await;
-        admin.close().await;
+        {
+            let _ = sqlx::query(&format!("DROP DATABASE \"{db_name}\" WITH (FORCE)"))
+                .execute(&admin)
+                .await;
+            admin.close().await;
+        }
     }
 }
 

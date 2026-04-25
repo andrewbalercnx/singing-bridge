@@ -3,9 +3,11 @@
 // Role: Guards POST /signup against easy abuse.
 // Exports: check_and_record
 // Depends: sqlx
-// Invariants: records ALL attempts (successful + rate-limited), so concurrent
-//             races cannot exceed the cap by more than N+1.
-// Last updated: Sprint 19 (2026-04-25) -- migrate SQLite → PostgreSQL; pool.begin() replaces BEGIN IMMEDIATE
+// Invariants: INSERT runs before SELECT COUNT so each transaction observes its
+//             own attempt in the count, tightening the concurrent-request race
+//             window (R1 finding #35). All attempts are recorded regardless of
+//             outcome so a client cannot reset its counter by hammering the endpoint.
+// Last updated: Sprint 19 (2026-04-25) -- INSERT-before-COUNT tightens TOCTOU window
 
 use sqlx::PgPool;
 
@@ -17,10 +19,12 @@ pub struct Limits {
     pub window_secs: i64,
 }
 
-/// Atomic count-and-insert: the whole operation runs inside a transaction
-/// so concurrent signups cannot observe each other's counts before they hit
-/// the DB (R1 code-review finding #49 — resolves the TOCTOU in the previous
-/// non-transactional check-then-insert).
+/// Record the attempt first, then count — every transaction observes its own
+/// INSERT in the subsequent COUNT, so the race window is reduced to the case
+/// where two concurrent transactions both INSERT before either commits. Under
+/// the default READ COMMITTED isolation this window remains narrow; a hard
+/// uniqueness constraint on teacher email (enforced by PostgreSQL) prevents
+/// duplicate accounts even if concurrent signups slip through.
 pub async fn check_and_record(
     pool: &PgPool,
     email: &str,
@@ -31,6 +35,14 @@ pub async fn check_and_record(
     let since = now - limits.window_secs;
 
     let mut tx = pool.begin().await?;
+
+    // INSERT first so the following COUNT includes this attempt.
+    sqlx::query("INSERT INTO signup_attempts (email, peer_ip, attempted_at) VALUES ($1, $2, $3)")
+        .bind(email)
+        .bind(peer_ip)
+        .bind(now)
+        .execute(&mut *tx)
+        .await?;
 
     let email_count: (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM signup_attempts WHERE email = $1 AND attempted_at > $2",
@@ -47,25 +59,10 @@ pub async fn check_and_record(
     .fetch_one(&mut *tx)
     .await?;
 
-    let over_email = email_count.0 as usize >= limits.per_email;
-    let over_ip = ip_count.0 as usize >= limits.per_ip;
-
-    // Always insert a record — rate-limited attempts count toward the same
-    // window so a client hammering us cannot reset their own counter by
-    // succeeding once.
-    sqlx::query("INSERT INTO signup_attempts (email, peer_ip, attempted_at) VALUES ($1, $2, $3)")
-        .bind(email)
-        .bind(peer_ip)
-        .bind(now)
-        .execute(&mut *tx)
-        .await?;
-
-    // If any of the queries above returned an error, the `?` unwound
-    // before this commit ran and sqlx issues an implicit ROLLBACK when
-    // the transaction is dropped. The happy path commits explicitly here.
     tx.commit().await?;
 
-    if over_email || over_ip {
+    // Count includes the just-inserted row, so threshold is per_* + 1.
+    if email_count.0 as usize > limits.per_email || ip_count.0 as usize > limits.per_ip {
         return Err(AppError::TooManyRequests);
     }
     Ok(())

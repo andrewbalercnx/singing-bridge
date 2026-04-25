@@ -196,72 +196,56 @@ pub async fn archive_old_events(pool: &PgPool) -> Result<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sqlx::{postgres::PgPoolOptions, PgPool};
-    use std::sync::atomic::{AtomicU64, Ordering};
+    use crate::db::test_helpers::TestDb;
 
-    static DB_COUNTER: AtomicU64 = AtomicU64::new(0);
-
-    async fn make_pool() -> (PgPool, TeacherId, TeacherId) {
-        let admin_url = std::env::var("DATABASE_TEST_URL")
-            .expect("DATABASE_TEST_URL must be set for session_history inline tests");
-        let n = DB_COUNTER.fetch_add(1, Ordering::Relaxed);
-        let pid = std::process::id();
-        let db_name = format!("singing_bridge_test_{pid}_{n}");
-        let admin = PgPoolOptions::new().max_connections(1).connect(&admin_url).await.unwrap();
-        sqlx::query(&format!("CREATE DATABASE \"{db_name}\"")).execute(&admin).await.unwrap();
-        admin.close().await;
-        let db_url = match admin_url.rfind('/') {
-            Some(idx) => format!("{}/{}", &admin_url[..idx], db_name),
-            None => format!("{}/{}", admin_url, db_name),
-        };
-        crate::db::run_migrations(&db_url).await.unwrap();
-        let pool = crate::db::init_pool(&db_url).await.unwrap();
+    async fn make_pool() -> (TestDb, TeacherId, TeacherId) {
+        let td = crate::db::test_helpers::make_test_db().await;
         sqlx::query("INSERT INTO teachers (email, slug, created_at) VALUES ('t@test.com', 'slug1', 0)")
-            .execute(&pool).await.unwrap();
+            .execute(&td.pool).await.unwrap();
         sqlx::query("INSERT INTO teachers (email, slug, created_at) VALUES ('t2@test.com', 'slug2', 0)")
-            .execute(&pool).await.unwrap();
+            .execute(&td.pool).await.unwrap();
         let (t1,): (TeacherId,) = sqlx::query_as("SELECT id FROM teachers WHERE slug = 'slug1'")
-            .fetch_one(&pool).await.unwrap();
+            .fetch_one(&td.pool).await.unwrap();
         let (t2,): (TeacherId,) = sqlx::query_as("SELECT id FROM teachers WHERE slug = 'slug2'")
-            .fetch_one(&pool).await.unwrap();
-        (pool, t1, t2)
+            .fetch_one(&td.pool).await.unwrap();
+        (td, t1, t2)
     }
 
     #[tokio::test]
     async fn upsert_student_idempotent() {
-        let (pool, t1, _) = make_pool().await;
-        let id1 = upsert_student(&pool, t1, "alice@test.com").await.unwrap();
-        let id2 = upsert_student(&pool, t1, "alice@test.com").await.unwrap();
+        let (td, t1, _) = make_pool().await;
+        let id1 = upsert_student(&td.pool, t1, "alice@test.com").await.unwrap();
+        let id2 = upsert_student(&td.pool, t1, "alice@test.com").await.unwrap();
         assert_eq!(id1, id2);
     }
 
     #[tokio::test]
     async fn upsert_student_case_insensitive() {
-        let (pool, t1, _) = make_pool().await;
-        let id1 = upsert_student(&pool, t1, "ALICE@TEST.COM").await.unwrap();
-        let id2 = upsert_student(&pool, t1, "alice@test.com").await.unwrap();
-        let id3 = upsert_student(&pool, t1, "Alice@Test.Com").await.unwrap();
+        let (td, t1, _) = make_pool().await;
+        let id1 = upsert_student(&td.pool, t1, "ALICE@TEST.COM").await.unwrap();
+        let id2 = upsert_student(&td.pool, t1, "alice@test.com").await.unwrap();
+        let id3 = upsert_student(&td.pool, t1, "Alice@Test.Com").await.unwrap();
         assert_eq!(id1, id2);
         assert_eq!(id2, id3);
     }
 
     #[tokio::test]
     async fn upsert_student_different_teachers_separate() {
-        let (pool, t1, t2) = make_pool().await;
-        let id1 = upsert_student(&pool, t1, "alice@test.com").await.unwrap();
-        let id2 = upsert_student(&pool, t2, "alice@test.com").await.unwrap();
+        let (td, t1, t2) = make_pool().await;
+        let id1 = upsert_student(&td.pool, t1, "alice@test.com").await.unwrap();
+        let id2 = upsert_student(&td.pool, t2, "alice@test.com").await.unwrap();
         assert_ne!(id1, id2);
     }
 
     #[tokio::test]
     async fn open_event_has_null_ended_at() {
-        let (pool, t1, _) = make_pool().await;
-        let student_id = upsert_student(&pool, t1, "s@test.com").await.unwrap();
-        let event_id = open_event(&pool, t1, student_id, 1000).await.unwrap();
+        let (td, t1, _) = make_pool().await;
+        let student_id = upsert_student(&td.pool, t1, "s@test.com").await.unwrap();
+        let event_id = open_event(&td.pool, t1, student_id, 1000).await.unwrap();
         let row: (Option<i64>, Option<i64>) =
             sqlx::query_as("SELECT ended_at, duration_secs FROM session_events WHERE id = $1")
                 .bind(event_id)
-                .fetch_one(&pool)
+                .fetch_one(&td.pool)
                 .await
                 .unwrap();
         assert!(row.0.is_none());
@@ -270,17 +254,17 @@ mod tests {
 
     #[tokio::test]
     async fn close_event_sets_duration() {
-        let (pool, t1, _) = make_pool().await;
-        let student_id = upsert_student(&pool, t1, "s@test.com").await.unwrap();
-        let event_id = open_event(&pool, t1, student_id, 1000).await.unwrap();
-        close_event(&pool, event_id, t1, 1060, EndedReason::Hangup)
+        let (td, t1, _) = make_pool().await;
+        let student_id = upsert_student(&td.pool, t1, "s@test.com").await.unwrap();
+        let event_id = open_event(&td.pool, t1, student_id, 1000).await.unwrap();
+        close_event(&td.pool, event_id, t1, 1060, EndedReason::Hangup)
             .await
             .unwrap();
         let row: (Option<i64>, Option<i64>, Option<String>) = sqlx::query_as(
             "SELECT ended_at, duration_secs, ended_reason FROM session_events WHERE id = $1",
         )
         .bind(event_id)
-        .fetch_one(&pool)
+        .fetch_one(&td.pool)
         .await
         .unwrap();
         assert_eq!(row.0, Some(1060));
@@ -290,16 +274,16 @@ mod tests {
 
     #[tokio::test]
     async fn close_event_duration_clamps_negative() {
-        let (pool, t1, _) = make_pool().await;
-        let student_id = upsert_student(&pool, t1, "s@test.com").await.unwrap();
-        let event_id = open_event(&pool, t1, student_id, 1000).await.unwrap();
-        close_event(&pool, event_id, t1, 999, EndedReason::Disconnect)
+        let (td, t1, _) = make_pool().await;
+        let student_id = upsert_student(&td.pool, t1, "s@test.com").await.unwrap();
+        let event_id = open_event(&td.pool, t1, student_id, 1000).await.unwrap();
+        close_event(&td.pool, event_id, t1, 999, EndedReason::Disconnect)
             .await
             .unwrap();
         let (duration,): (Option<i64>,) =
             sqlx::query_as("SELECT duration_secs FROM session_events WHERE id = $1")
                 .bind(event_id)
-                .fetch_one(&pool)
+                .fetch_one(&td.pool)
                 .await
                 .unwrap();
         assert_eq!(duration, Some(0));
@@ -307,20 +291,19 @@ mod tests {
 
     #[tokio::test]
     async fn close_event_first_writer_wins() {
-        let (pool, t1, _) = make_pool().await;
-        let student_id = upsert_student(&pool, t1, "s@test.com").await.unwrap();
-        let event_id = open_event(&pool, t1, student_id, 1000).await.unwrap();
-        close_event(&pool, event_id, t1, 1060, EndedReason::Hangup)
+        let (td, t1, _) = make_pool().await;
+        let student_id = upsert_student(&td.pool, t1, "s@test.com").await.unwrap();
+        let event_id = open_event(&td.pool, t1, student_id, 1000).await.unwrap();
+        close_event(&td.pool, event_id, t1, 1060, EndedReason::Hangup)
             .await
             .unwrap();
-        // Second close should be a no-op (first-writer-wins).
-        close_event(&pool, event_id, t1, 9999, EndedReason::Disconnect)
+        close_event(&td.pool, event_id, t1, 9999, EndedReason::Disconnect)
             .await
             .unwrap();
         let (ended_at,): (Option<i64>,) =
             sqlx::query_as("SELECT ended_at FROM session_events WHERE id = $1")
                 .bind(event_id)
-                .fetch_one(&pool)
+                .fetch_one(&td.pool)
                 .await
                 .unwrap();
         assert_eq!(ended_at, Some(1060));
@@ -328,17 +311,16 @@ mod tests {
 
     #[tokio::test]
     async fn close_event_wrong_teacher_is_noop() {
-        let (pool, t1, t2) = make_pool().await;
-        let student_id = upsert_student(&pool, t1, "s@test.com").await.unwrap();
-        let event_id = open_event(&pool, t1, student_id, 1000).await.unwrap();
-        // teacher 2 should not be able to close teacher 1's event.
-        close_event(&pool, event_id, t2, 1060, EndedReason::Hangup)
+        let (td, t1, t2) = make_pool().await;
+        let student_id = upsert_student(&td.pool, t1, "s@test.com").await.unwrap();
+        let event_id = open_event(&td.pool, t1, student_id, 1000).await.unwrap();
+        close_event(&td.pool, event_id, t2, 1060, EndedReason::Hangup)
             .await
             .unwrap();
         let (ended_at,): (Option<i64>,) =
             sqlx::query_as("SELECT ended_at FROM session_events WHERE id = $1")
                 .bind(event_id)
-                .fetch_one(&pool)
+                .fetch_one(&td.pool)
                 .await
                 .unwrap();
         assert!(ended_at.is_none());
@@ -346,7 +328,7 @@ mod tests {
 
     #[tokio::test]
     async fn link_recording_sets_recording_id() {
-        let (pool, t1, _) = make_pool().await;
+        let (td, t1, _) = make_pool().await;
         let token_hash: Vec<u8> = vec![0u8; 32];
         let email_hash: Vec<u8> = vec![0u8; 32];
         let (recording_id,): (i64,) = sqlx::query_as(
@@ -356,19 +338,19 @@ mod tests {
         .bind(t1)
         .bind(&email_hash)
         .bind(&token_hash)
-        .fetch_one(&pool)
+        .fetch_one(&td.pool)
         .await
         .unwrap();
 
-        let student_id = upsert_student(&pool, t1, "s@test.com").await.unwrap();
-        let event_id = open_event(&pool, t1, student_id, 1000).await.unwrap();
-        link_recording(&pool, event_id, t1, recording_id)
+        let student_id = upsert_student(&td.pool, t1, "s@test.com").await.unwrap();
+        let event_id = open_event(&td.pool, t1, student_id, 1000).await.unwrap();
+        link_recording(&td.pool, event_id, t1, recording_id)
             .await
             .unwrap();
         let (rid,): (Option<i64>,) =
             sqlx::query_as("SELECT recording_id FROM session_events WHERE id = $1")
                 .bind(event_id)
-                .fetch_one(&pool)
+                .fetch_one(&td.pool)
                 .await
                 .unwrap();
         assert_eq!(rid, Some(recording_id));
@@ -376,7 +358,7 @@ mod tests {
 
     #[tokio::test]
     async fn link_recording_wrong_teacher_is_noop() {
-        let (pool, t1, t2) = make_pool().await;
+        let (td, t1, t2) = make_pool().await;
         let token_hash: Vec<u8> = vec![0u8; 32];
         let email_hash: Vec<u8> = vec![0u8; 32];
         let (recording_id,): (i64,) = sqlx::query_as(
@@ -386,19 +368,18 @@ mod tests {
         .bind(t1)
         .bind(&email_hash)
         .bind(&token_hash)
-        .fetch_one(&pool)
+        .fetch_one(&td.pool)
         .await
         .unwrap();
-        let student_id = upsert_student(&pool, t1, "s@test.com").await.unwrap();
-        let event_id = open_event(&pool, t1, student_id, 1000).await.unwrap();
-        // teacher 2 cannot link to teacher 1's event.
-        link_recording(&pool, event_id, t2, recording_id)
+        let student_id = upsert_student(&td.pool, t1, "s@test.com").await.unwrap();
+        let event_id = open_event(&td.pool, t1, student_id, 1000).await.unwrap();
+        link_recording(&td.pool, event_id, t2, recording_id)
             .await
             .unwrap();
         let (rid,): (Option<i64>,) =
             sqlx::query_as("SELECT recording_id FROM session_events WHERE id = $1")
                 .bind(event_id)
-                .fetch_one(&pool)
+                .fetch_one(&td.pool)
                 .await
                 .unwrap();
         assert!(rid.is_none());
@@ -406,30 +387,28 @@ mod tests {
 
     #[tokio::test]
     async fn recording_slot_roundtrip() {
-        let (pool, t1, _) = make_pool().await;
-        let student_id = upsert_student(&pool, t1, "s@test.com").await.unwrap();
-        let event_id = open_event(&pool, t1, student_id, 1000).await.unwrap();
-        set_recording_slot(&pool, t1, event_id).await.unwrap();
-        let got = consume_recording_slot(&pool, t1).await.unwrap();
+        let (td, t1, _) = make_pool().await;
+        let student_id = upsert_student(&td.pool, t1, "s@test.com").await.unwrap();
+        let event_id = open_event(&td.pool, t1, student_id, 1000).await.unwrap();
+        set_recording_slot(&td.pool, t1, event_id).await.unwrap();
+        let got = consume_recording_slot(&td.pool, t1).await.unwrap();
         assert_eq!(got, Some(event_id));
-        // Second consume: slot deleted.
-        let got2 = consume_recording_slot(&pool, t1).await.unwrap();
+        let got2 = consume_recording_slot(&td.pool, t1).await.unwrap();
         assert!(got2.is_none());
     }
 
     #[tokio::test]
     async fn recording_slot_absent_returns_none() {
-        let (pool, t1, _) = make_pool().await;
-        let got = consume_recording_slot(&pool, t1).await.unwrap();
+        let (td, t1, _) = make_pool().await;
+        let got = consume_recording_slot(&td.pool, t1).await.unwrap();
         assert!(got.is_none());
     }
 
     #[tokio::test]
     async fn recording_slot_expired_returns_none() {
-        let (pool, t1, _) = make_pool().await;
-        let student_id = upsert_student(&pool, t1, "s@test.com").await.unwrap();
-        let event_id = open_event(&pool, t1, student_id, 1000).await.unwrap();
-        // Manually insert an expired slot.
+        let (td, t1, _) = make_pool().await;
+        let student_id = upsert_student(&td.pool, t1, "s@test.com").await.unwrap();
+        let event_id = open_event(&td.pool, t1, student_id, 1000).await.unwrap();
         let expired_at = time::OffsetDateTime::now_utc().unix_timestamp() - RECORDING_SLOT_TTL_SECS - 1;
         sqlx::query(
             "INSERT INTO recording_sessions (teacher_id, session_event_id, created_at) VALUES ($1, $2, $3)",
@@ -437,16 +416,15 @@ mod tests {
         .bind(t1)
         .bind(event_id)
         .bind(expired_at)
-        .execute(&pool)
+        .execute(&td.pool)
         .await
         .unwrap();
-        let got = consume_recording_slot(&pool, t1).await.unwrap();
+        let got = consume_recording_slot(&td.pool, t1).await.unwrap();
         assert!(got.is_none());
-        // Row must be deleted even on TTL expiry (atomic DELETE RETURNING consumed it).
         let (count,): (i64,) =
             sqlx::query_as("SELECT COUNT(*) FROM recording_sessions WHERE teacher_id = $1")
                 .bind(t1)
-                .fetch_one(&pool)
+                .fetch_one(&td.pool)
                 .await
                 .unwrap();
         assert_eq!(count, 0, "expired slot must be deleted on consume attempt");
@@ -454,33 +432,30 @@ mod tests {
 
     #[tokio::test]
     async fn archive_old_events_by_completion_time() {
-        let (pool, t1, _) = make_pool().await;
-        let student_id = upsert_student(&pool, t1, "s@test.com").await.unwrap();
+        let (td, t1, _) = make_pool().await;
+        let student_id = upsert_student(&td.pool, t1, "s@test.com").await.unwrap();
         let now = time::OffsetDateTime::now_utc().unix_timestamp();
         let cutoff_secs = SESSION_ARCHIVE_DAYS * 86_400;
 
-        // Event ended exactly at boundary — should NOT be archived (strict <).
-        let e_boundary = open_event(&pool, t1, student_id, now - cutoff_secs - 100).await.unwrap();
-        close_event(&pool, e_boundary, t1, now - cutoff_secs, EndedReason::Hangup)
+        let e_boundary = open_event(&td.pool, t1, student_id, now - cutoff_secs - 100).await.unwrap();
+        close_event(&td.pool, e_boundary, t1, now - cutoff_secs, EndedReason::Hangup)
             .await
             .unwrap();
 
-        // Event ended 1 second past boundary — should be archived.
-        let e_old = open_event(&pool, t1, student_id, now - cutoff_secs - 200).await.unwrap();
-        close_event(&pool, e_old, t1, now - cutoff_secs - 1, EndedReason::Hangup)
+        let e_old = open_event(&td.pool, t1, student_id, now - cutoff_secs - 200).await.unwrap();
+        close_event(&td.pool, e_old, t1, now - cutoff_secs - 1, EndedReason::Hangup)
             .await
             .unwrap();
 
-        // Live session started 91 days ago — archived via started_at COALESCE.
-        let e_live_old = open_event(&pool, t1, student_id, now - cutoff_secs - 1).await.unwrap();
+        let e_live_old = open_event(&td.pool, t1, student_id, now - cutoff_secs - 1).await.unwrap();
 
-        let archived = archive_old_events(&pool).await.unwrap();
+        let archived = archive_old_events(&td.pool).await.unwrap();
         assert_eq!(archived, 2, "expected e_old and e_live_old archived");
 
         let (a1,): (Option<i64>,) =
             sqlx::query_as("SELECT archived_at FROM session_events WHERE id = $1")
                 .bind(e_boundary)
-                .fetch_one(&pool)
+                .fetch_one(&td.pool)
                 .await
                 .unwrap();
         assert!(a1.is_none(), "boundary event must not be archived");
@@ -488,7 +463,7 @@ mod tests {
         let (a2,): (Option<i64>,) =
             sqlx::query_as("SELECT archived_at FROM session_events WHERE id = $1")
                 .bind(e_old)
-                .fetch_one(&pool)
+                .fetch_one(&td.pool)
                 .await
                 .unwrap();
         assert!(a2.is_some(), "old event must be archived");
@@ -496,7 +471,7 @@ mod tests {
         let (a3,): (Option<i64>,) =
             sqlx::query_as("SELECT archived_at FROM session_events WHERE id = $1")
                 .bind(e_live_old)
-                .fetch_one(&pool)
+                .fetch_one(&td.pool)
                 .await
                 .unwrap();
         assert!(a3.is_some(), "live old session must be archived via started_at");
@@ -504,8 +479,8 @@ mod tests {
 
     #[tokio::test]
     async fn ended_reason_all_variants_stored() {
-        let (pool, t1, _) = make_pool().await;
-        let student_id = upsert_student(&pool, t1, "s@test.com").await.unwrap();
+        let (td, t1, _) = make_pool().await;
+        let student_id = upsert_student(&td.pool, t1, "s@test.com").await.unwrap();
         let cases = [
             (EndedReason::Hangup, "hangup"),
             (EndedReason::Disconnect, "disconnect"),
@@ -515,14 +490,14 @@ mod tests {
         ];
         for (i, (reason, expected_str)) in cases.into_iter().enumerate() {
             let started = 1000 + i as i64 * 100;
-            let event_id = open_event(&pool, t1, student_id, started).await.unwrap();
-            close_event(&pool, event_id, t1, started + 60, reason)
+            let event_id = open_event(&td.pool, t1, student_id, started).await.unwrap();
+            close_event(&td.pool, event_id, t1, started + 60, reason)
                 .await
                 .unwrap();
             let (stored,): (Option<String>,) =
                 sqlx::query_as("SELECT ended_reason FROM session_events WHERE id = $1")
                     .bind(event_id)
-                    .fetch_one(&pool)
+                    .fetch_one(&td.pool)
                     .await
                     .unwrap();
             assert_eq!(stored.as_deref(), Some(expected_str));

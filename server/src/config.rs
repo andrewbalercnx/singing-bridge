@@ -270,6 +270,14 @@ fn validate_prod_config(c: &Config) -> Result<(), ConfigError> {
     if c.base_url.scheme() != "https" {
         return Err(ConfigError::HttpsRequired);
     }
+    // Reject libpq DSN-style strings (e.g. "host=... sslmode=require") — these
+    // are not URLs and the rest of the validation assumes URL form.
+    if !c.db_url.starts_with("postgres://") && !c.db_url.starts_with("postgresql://") {
+        return Err(ConfigError::Invalid(
+            "SB_DATABASE_URL",
+            "must be a URL starting with postgres:// or postgresql://, not a libpq DSN string".into(),
+        ));
+    }
     // Require verified TLS for production database connections.
     // Parse sslmode as a complete query parameter to avoid substring false-positives.
     let has_verify_full = c.db_url.find('?').map_or(false, |idx| {
@@ -478,12 +486,48 @@ mod tests {
 
     #[test]
     fn prod_verify_full_substring_not_enough() {
-        // Ensure simple substring check is not used: sslmode in an unexpected position
-        // must not pass.
         let mut c = prod_base(true);
-        // This has sslmode=verify-full embedded in the database name (malicious input guard).
         c.db_url = "postgres://sbapp:pass@vvp-postgres.postgres.database.azure.com/singing_bridge_sslmode=verify-full".to_string();
         let err = validate_prod_config(&c).unwrap_err();
         assert!(matches!(err, ConfigError::Invalid("SB_DATABASE_URL", _)));
+    }
+
+    #[test]
+    fn prod_dsn_style_url_errors() {
+        let mut c = prod_base(true);
+        c.db_url = "host=vvp-postgres.postgres.database.azure.com dbname=singing_bridge sslmode=verify-full".to_string();
+        let err = validate_prod_config(&c).unwrap_err();
+        assert!(
+            matches!(err, ConfigError::Invalid("SB_DATABASE_URL", _)),
+            "DSN-style string must be rejected with a clear message"
+        );
+    }
+
+    /// Verify that `from_env()` returns `Missing("SB_DATABASE_URL")` when the
+    /// variable is absent. Uses `remove_var` which is process-global — this test
+    /// must run in isolation (unit tests are single-threaded by default with
+    /// `cargo test -- --test-threads=1`, or rely on no concurrent test touching
+    /// the same var).
+    #[test]
+    fn parse_env_missing_database_url_errors() {
+        let saved = std::env::var("SB_DATABASE_URL").ok();
+        let saved_env = std::env::var("SB_ENV").ok();
+        // SAFETY: single-threaded unit test context; no other thread reads these vars.
+        unsafe {
+            std::env::remove_var("SB_DATABASE_URL");
+            std::env::remove_var("SB_ENV");
+        }
+
+        let result = Config::from_env();
+
+        unsafe {
+            if let Some(v) = saved { std::env::set_var("SB_DATABASE_URL", v); }
+            if let Some(v) = saved_env { std::env::set_var("SB_ENV", v); }
+        }
+
+        assert!(
+            matches!(result, Err(ConfigError::Missing("SB_DATABASE_URL"))),
+            "expected Missing(SB_DATABASE_URL), got {result:?}"
+        );
     }
 }

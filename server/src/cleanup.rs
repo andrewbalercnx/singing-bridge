@@ -119,27 +119,11 @@ pub async fn cleanup_loop(
 mod tests {
     use super::*;
     use std::sync::Arc;
-    use sqlx::{postgres::PgPoolOptions, PgPool};
-    use std::sync::atomic::{AtomicU64, Ordering};
     use crate::blob::DevBlobStore;
+    use crate::db::test_helpers::TestDb;
 
-    static DB_COUNTER: AtomicU64 = AtomicU64::new(0);
-
-    async fn make_db() -> PgPool {
-        let admin_url = std::env::var("DATABASE_TEST_URL")
-            .expect("DATABASE_TEST_URL must be set for cleanup inline tests");
-        let n = DB_COUNTER.fetch_add(1, Ordering::Relaxed);
-        let pid = std::process::id();
-        let db_name = format!("singing_bridge_test_{pid}_{n}");
-        let admin = PgPoolOptions::new().max_connections(1).connect(&admin_url).await.unwrap();
-        sqlx::query(&format!("CREATE DATABASE \"{db_name}\"")).execute(&admin).await.unwrap();
-        admin.close().await;
-        let db_url = match admin_url.rfind('/') {
-            Some(idx) => format!("{}/{}", &admin_url[..idx], db_name),
-            None => format!("{}/{}", admin_url, db_name),
-        };
-        crate::db::run_migrations(&db_url).await.unwrap();
-        crate::db::init_pool(&db_url).await.unwrap()
+    async fn make_db() -> TestDb {
+        crate::db::test_helpers::make_test_db().await
     }
 
     async fn make_blob() -> Arc<dyn BlobStore> {
@@ -152,7 +136,7 @@ mod tests {
         Box::pin(std::io::Cursor::new(data.to_vec()))
     }
 
-    async fn insert_recording(db: &PgPool, teacher_id: i64, blob_key: Option<&str>, deleted_at: Option<i64>) -> i64 {
+    async fn insert_recording(db: &sqlx::PgPool, teacher_id: i64, blob_key: Option<&str>, deleted_at: Option<i64>) -> i64 {
         let now = time::OffsetDateTime::now_utc().unix_timestamp();
         let token_hash: Vec<u8> = rand::random::<[u8; 32]>().to_vec();
         let email_hash: Vec<u8> = rand::random::<[u8; 32]>().to_vec();
@@ -174,7 +158,7 @@ mod tests {
         id
     }
 
-    async fn ensure_teacher(db: &PgPool) -> i64 {
+    async fn ensure_teacher(db: &sqlx::PgPool) -> i64 {
         let now = time::OffsetDateTime::now_utc().unix_timestamp();
         let (id,): (i64,) = sqlx::query_as(
             "INSERT INTO teachers (email, slug, created_at) VALUES ('t@test.com', 'testslug', $1) RETURNING id",
@@ -188,21 +172,21 @@ mod tests {
 
     #[tokio::test]
     async fn purges_old_blob_and_nulls_key() {
-        let db = make_db().await;
+        let td = make_db().await;
         let blob = make_blob().await;
-        let teacher_id = ensure_teacher(&db).await;
+        let teacher_id = ensure_teacher(&td.pool).await;
         let key = "test-purge.webm";
         blob.put(key, box_reader(b"data")).await.unwrap();
         let old_deleted_at = time::OffsetDateTime::now_utc().unix_timestamp() - BLOB_GRACE_SECS - 1;
-        let id = insert_recording(&db, teacher_id, Some(key), Some(old_deleted_at)).await;
+        let id = insert_recording(&td.pool, teacher_id, Some(key), Some(old_deleted_at)).await;
 
-        let purged = run_one_cleanup_cycle(&db, &blob, 300).await.unwrap();
+        let purged = run_one_cleanup_cycle(&td.pool, &blob, 300).await.unwrap();
         assert_eq!(purged, 1);
 
         let (blob_key,): (Option<String>,) =
             sqlx::query_as("SELECT blob_key FROM recordings WHERE id = $1")
                 .bind(id)
-                .fetch_one(&db)
+                .fetch_one(&td.pool)
                 .await
                 .unwrap();
         assert!(blob_key.is_none());
@@ -210,42 +194,44 @@ mod tests {
 
     #[tokio::test]
     async fn does_not_purge_within_grace() {
-        let db = make_db().await;
+        let td = make_db().await;
         let blob = make_blob().await;
-        let teacher_id = ensure_teacher(&db).await;
+        let teacher_id = ensure_teacher(&td.pool).await;
         let key = "test-grace.webm";
         blob.put(key, box_reader(b"data")).await.unwrap();
         let recent_deleted_at = time::OffsetDateTime::now_utc().unix_timestamp() - 100;
-        insert_recording(&db, teacher_id, Some(key), Some(recent_deleted_at)).await;
+        insert_recording(&td.pool, teacher_id, Some(key), Some(recent_deleted_at)).await;
 
-        let purged = run_one_cleanup_cycle(&db, &blob, 300).await.unwrap();
+        let purged = run_one_cleanup_cycle(&td.pool, &blob, 300).await.unwrap();
         assert_eq!(purged, 0);
     }
 
+    /// DevBlobStore treats NotFound as success, so a missing blob is considered
+    /// purged (blob_key is nulled). This test asserts the correct behavior.
     #[tokio::test]
-    async fn blob_delete_failure_retains_key() {
-        let db = make_db().await;
-        let teacher_id = ensure_teacher(&db).await;
+    async fn blob_delete_not_found_is_treated_as_purged() {
+        let td = make_db().await;
+        let teacher_id = ensure_teacher(&td.pool).await;
         let blob = make_blob().await;
         let old_deleted_at = time::OffsetDateTime::now_utc().unix_timestamp() - BLOB_GRACE_SECS - 1;
-        let id = insert_recording(&db, teacher_id, Some("ghost.webm"), Some(old_deleted_at)).await;
+        let id = insert_recording(&td.pool, teacher_id, Some("ghost.webm"), Some(old_deleted_at)).await;
 
-        // File doesn't exist — DevBlobStore treats NotFound as success (so blob_key IS nulled).
-        let purged = run_one_cleanup_cycle(&db, &blob, 300).await.unwrap();
-        assert_eq!(purged, 1); // DevBlobStore ignores NotFound, so it counts as purged
+        // DevBlobStore silently succeeds on NotFound — so blob_key IS nulled.
+        let purged = run_one_cleanup_cycle(&td.pool, &blob, 300).await.unwrap();
+        assert_eq!(purged, 1);
 
         let (blob_key,): (Option<String>,) =
             sqlx::query_as("SELECT blob_key FROM recordings WHERE id = $1")
                 .bind(id)
-                .fetch_one(&db)
+                .fetch_one(&td.pool)
                 .await
                 .unwrap();
-        assert!(blob_key.is_none());
+        assert!(blob_key.is_none(), "blob_key must be nulled after DevBlobStore NotFound-as-success");
     }
 
     #[tokio::test]
     async fn prunes_stale_gate_attempts() {
-        let db = make_db().await;
+        let td = make_db().await;
         let blob = make_blob().await;
         let now = time::OffsetDateTime::now_utc().unix_timestamp();
         let old = now - 300 - 1;
@@ -254,21 +240,21 @@ mod tests {
         sqlx::query("INSERT INTO recording_gate_attempts (peer_ip, attempted_at) VALUES ($1, $2)")
             .bind("1.2.3.4")
             .bind(old)
-            .execute(&db)
+            .execute(&td.pool)
             .await
             .unwrap();
         sqlx::query("INSERT INTO recording_gate_attempts (peer_ip, attempted_at) VALUES ($1, $2)")
             .bind("1.2.3.4")
             .bind(fresh)
-            .execute(&db)
+            .execute(&td.pool)
             .await
             .unwrap();
 
-        run_one_cleanup_cycle(&db, &blob, 300).await.unwrap();
+        run_one_cleanup_cycle(&td.pool, &blob, 300).await.unwrap();
 
         let (count,): (i64,) =
             sqlx::query_as("SELECT COUNT(*) FROM recording_gate_attempts")
-                .fetch_one(&db)
+                .fetch_one(&td.pool)
                 .await
                 .unwrap();
         assert_eq!(count, 1);

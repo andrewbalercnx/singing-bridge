@@ -128,7 +128,7 @@ pub async fn record_and_check_limits(
         .bind(tid)
         .fetch_optional(&mut *tx)
         .await?;
-        let last_success_ts = last_success.and_then(|(t,)| Some(t)).unwrap_or(0);
+        let last_success_ts = last_success.map(|(t,)| t).unwrap_or(0);
         let failure_since = last_success_ts.max(account_cutoff);
 
         let (failure_count,): (i64,) = sqlx::query_as(

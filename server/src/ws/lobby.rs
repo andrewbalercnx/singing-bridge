@@ -319,7 +319,7 @@ enum AdmitOutcome {
 /// event is closed immediately as an orphan.
 pub(crate) async fn open_history_row(
     state: &Arc<AppState>,
-    ctx: &ConnContext,
+    slug: Option<SlugKey>,
     teacher_id: TeacherId,
     log_id: &SessionLogId,
     email: &str,
@@ -340,8 +340,8 @@ pub(crate) async fn open_history_row(
         }
     };
     let mut orphan = true;
-    if let Some(slug) = ctx.slug.as_ref() {
-        if let Some(room) = state.room(slug) {
+    if let Some(ref slug_key) = slug {
+        if let Some(room) = state.room(slug_key) {
             let mut rs = room.write().await;
             if let Some(ref mut session) = rs.active_session {
                 if session.log_id.as_ref() == Some(log_id) {
@@ -449,53 +449,54 @@ pub async fn admit(state: &Arc<AppState>, ctx: &ConnContext, entry_id: EntryId) 
             .await;
             send(&ctx.tx, lobby_update).await;
 
-            // Open session log row outside the room lock.
+            // Spawn DB-heavy session-log writes so the inbound loop is freed
+            // immediately to handle the next WS message (e.g. accompaniment_play).
+            // Orphan detection inside the task guards against disconnect races.
             if let Some(tid) = teacher_id {
                 let pepper = state.session_log_pepper_bytes();
                 let email_hash = session_log::hash_email(&email, pepper);
-                match session_log::open_row(
-                    &state.db,
-                    &log_id,
-                    tid,
-                    &email_hash,
-                    &browser,
-                    &device_class,
-                    tier,
-                    started_at,
-                )
-                .await
-                {
-                    Ok(()) => {
-                        // Re-acquire write to store the log_id. If the session
-                        // ended (disconnect race) before we got back in, close
-                        // the orphaned row immediately.
-                        let mut log_orphan = true;
-                        if let Some(slug) = ctx.slug.as_ref() {
-                            if let Some(room) = state.room(slug) {
-                                let mut rs = room.write().await;
-                                if let Some(ref mut session) = rs.active_session {
-                                    session.log_id = Some(log_id.clone());
-                                    log_orphan = false;
+                let state2 = Arc::clone(state);
+                let slug2 = ctx.slug.clone();
+                tokio::spawn(async move {
+                    match session_log::open_row(
+                        &state2.db,
+                        &log_id,
+                        tid,
+                        &email_hash,
+                        &browser,
+                        &device_class,
+                        tier,
+                        started_at,
+                    )
+                    .await
+                    {
+                        Ok(()) => {
+                            let mut log_orphan = true;
+                            if let Some(ref slug_key) = slug2 {
+                                if let Some(room) = state2.room(slug_key) {
+                                    let mut rs = room.write().await;
+                                    if let Some(ref mut session) = rs.active_session {
+                                        session.log_id = Some(log_id.clone());
+                                        log_orphan = false;
+                                    }
                                 }
                             }
-                        }
-                        if log_orphan {
-                            let ended_at = time::OffsetDateTime::now_utc().unix_timestamp();
-                            if let Err(e) = session_log::close_row(
-                                &state.db, &log_id, ended_at,
-                                session_log::EndedReason::Disconnect,
-                            ).await {
-                                tracing::warn!(error = %e, "session_log orphan close failed");
+                            if log_orphan {
+                                let ended_at = time::OffsetDateTime::now_utc().unix_timestamp();
+                                if let Err(e) = session_log::close_row(
+                                    &state2.db, &log_id, ended_at,
+                                    session_log::EndedReason::Disconnect,
+                                ).await {
+                                    tracing::warn!(error = %e, "session_log orphan close failed");
+                                }
                             }
+                            open_history_row(&state2, slug2, tid, &log_id, &email, started_at).await;
                         }
-
-                        // Open session history (best-effort; session proceeds on failure).
-                        open_history_row(state, ctx, tid, &log_id, &email, started_at).await;
+                        Err(e) => {
+                            tracing::warn!(error = %e, "session_log open_row failed; session continues without logging");
+                        }
                     }
-                    Err(e) => {
-                        tracing::warn!(error = %e, "session_log open_row failed; session continues without logging");
-                    }
-                }
+                });
             }
         }
         AdmitOutcome::SessionInProgress => {

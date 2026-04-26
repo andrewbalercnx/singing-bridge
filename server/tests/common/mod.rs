@@ -220,6 +220,9 @@ pub async fn spawn_app_with(opts: TestOpts) -> TestApp {
         .connect(&admin_url)
         .await
         .expect("connect admin pool");
+    let _ = sqlx::query(&format!("DROP DATABASE IF EXISTS \"{db_name}\""))
+        .execute(&admin)
+        .await;
     sqlx::query(&format!(
         "CREATE DATABASE \"{db_name}\" TEMPLATE \"{template}\""
     ))

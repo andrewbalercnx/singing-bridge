@@ -115,7 +115,7 @@ pub async fn record_peak(
 ) -> Result<()> {
     sqlx::query(
         "UPDATE session_log \
-         SET peak_loss_bp = MAX(peak_loss_bp, $1), peak_rtt_ms = MAX(peak_rtt_ms, $2) \
+         SET peak_loss_bp = GREATEST(peak_loss_bp, $1), peak_rtt_ms = GREATEST(peak_rtt_ms, $2) \
          WHERE id = $3 AND ended_at IS NULL",
     )
     .bind(loss_bp as i32)
@@ -128,7 +128,7 @@ pub async fn record_peak(
 
 /// Close a session row. First-writer-wins: if ended_at is already set
 /// (concurrent close), the update matches zero rows and returns Ok.
-/// duration_secs = MAX(0, ended_at - started_at) prevents negative values
+/// duration_secs = GREATEST(0, ended_at - started_at) prevents negative values
 /// from clock skew.
 pub async fn close_row(
     pool: &PgPool,
@@ -139,7 +139,7 @@ pub async fn close_row(
     sqlx::query(
         "UPDATE session_log \
          SET ended_at = $1, \
-             duration_secs = MAX(0, $2 - started_at), \
+             duration_secs = GREATEST(0, $2 - started_at), \
              ended_reason = $3 \
          WHERE id = $4 AND ended_at IS NULL",
     )

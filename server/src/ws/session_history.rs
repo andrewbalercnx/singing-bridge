@@ -96,7 +96,7 @@ pub async fn close_event(
     sqlx::query(
         "UPDATE session_events \
          SET ended_at = $1, \
-             duration_secs = MAX(0, $2 - started_at), \
+             duration_secs = GREATEST(0, $2 - started_at), \
              ended_reason = $3 \
          WHERE id = $4 AND teacher_id = $5 AND ended_at IS NULL",
     )

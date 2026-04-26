@@ -171,11 +171,6 @@
         extractMidiBtn.className = 'extract-midi-btn';
         extractMidiBtn.textContent = 'Extract MIDI';
 
-        var rasteriseBtn = document.createElement('button');
-        rasteriseBtn.type = 'button';
-        rasteriseBtn.className = 'rasterise-btn';
-        rasteriseBtn.textContent = 'Rasterise pages';
-        rasteriseBtn.disabled = false;
 
         var synthesiseSection = document.createElement('section');
         synthesiseSection.className = 'synthesise-form';
@@ -211,17 +206,11 @@
             var indices = [];
             checked.forEach(function (cb) { indices.push(Number(cb.value)); });
             extractMidiBtn.disabled = true;
-            extractMidi(id, indices, omrStatusEl, rasteriseBtn, synthesiseSection, base, bannerEl);
-          });
-
-          rasteriseBtn.addEventListener('click', function () {
-            rasteriseBtn.disabled = true;
-            rasterise(id, omrStatusEl, base, bannerEl);
+            extractMidi(id, indices, omrStatusEl, synthesiseSection, base, bannerEl);
           });
 
           omrSection.appendChild(omrBtn);
           omrSection.appendChild(partPickerEl);
-          omrSection.appendChild(rasteriseBtn);
           omrSection.appendChild(omrStatusEl);
           detailEl.appendChild(omrSection);
         }
@@ -322,6 +311,8 @@
         var extractBtn = partPickerEl.querySelector('.extract-midi-btn');
         if (extractBtn) partPickerEl.appendChild(extractBtn);
         partPickerEl.hidden = false;
+        // Rasterise automatically — no user action needed.
+        rasterise(assetId, statusEl, base, bannerEl);
       })
       .catch(function (err) {
         omrBtn.disabled = false;
@@ -330,7 +321,7 @@
       });
   }
 
-  function extractMidi(assetId, partIndices, statusEl, rasteriseBtn, synthesiseFormEl, base, bannerEl) {
+  function extractMidi(assetId, partIndices, statusEl, synthesiseFormEl, base, bannerEl) {
     fetch(base + '/' + assetId + '/midi', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -344,7 +335,6 @@
           return;
         }
         statusEl.textContent = res.data.bar_count + ' bars extracted';
-        if (rasteriseBtn) rasteriseBtn.disabled = false;
         if (synthesiseFormEl) synthesiseFormEl.hidden = false;
       })
       .catch(function (err) {

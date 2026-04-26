@@ -548,24 +548,24 @@ test('extractMidi_sends_correct_part_indices', async function () {
     capturedBody = JSON.parse(opts.body);
     return Promise.resolve({ ok: true, status: 200, json: function() { return Promise.resolve({ bar_count: 4 }); } });
   };
-  var statusEl = makeEl(); var rasteriseBtn = makeEl(); var synthFormEl = makeEl(); synthFormEl.hidden = true;
-  await new Promise(function(r) { lib.extractMidi(1, [0, 2], statusEl, rasteriseBtn, synthFormEl, '/base', makeBannerEl()); setTimeout(r, 20); });
+  var statusEl = makeEl(); var synthFormEl = makeEl(); synthFormEl.hidden = true;
+  await new Promise(function(r) { lib.extractMidi(1, [0, 2], statusEl, synthFormEl, '/base', makeBannerEl()); setTimeout(r, 20); });
   assert.deepEqual(capturedBody.part_indices, [0, 2]);
   delete globalThis.fetch;
 });
 
 test('extractMidi_updates_status_on_success', async function () {
   globalThis.fetch = fetchStub(200, { bar_count: 4 });
-  var statusEl = makeEl(); var rasteriseBtn = makeEl(); var synthFormEl = makeEl(); synthFormEl.hidden = true;
-  await new Promise(function(r) { lib.extractMidi(1, [0], statusEl, rasteriseBtn, synthFormEl, '/base', makeBannerEl()); setTimeout(r, 20); });
+  var statusEl = makeEl(); var synthFormEl = makeEl(); synthFormEl.hidden = true;
+  await new Promise(function(r) { lib.extractMidi(1, [0], statusEl, synthFormEl, '/base', makeBannerEl()); setTimeout(r, 20); });
   assert.ok(statusEl.textContent.indexOf('4') !== -1);
   delete globalThis.fetch;
 });
 
 test('extractMidi_unhides_synthesise_form_on_success', async function () {
   globalThis.fetch = fetchStub(200, { bar_count: 2 });
-  var statusEl = makeEl(); var rasteriseBtn = makeEl(); var synthFormEl = makeEl(); synthFormEl.hidden = true;
-  await new Promise(function(r) { lib.extractMidi(1, [0], statusEl, rasteriseBtn, synthFormEl, '/base', makeBannerEl()); setTimeout(r, 20); });
+  var statusEl = makeEl(); var synthFormEl = makeEl(); synthFormEl.hidden = true;
+  await new Promise(function(r) { lib.extractMidi(1, [0], statusEl, synthFormEl, '/base', makeBannerEl()); setTimeout(r, 20); });
   assert.equal(synthFormEl.hidden, false);
   delete globalThis.fetch;
 });
@@ -573,8 +573,8 @@ test('extractMidi_unhides_synthesise_form_on_success', async function () {
 test('extractMidi_shows_banner_on_503', async function () {
   globalThis.fetch = fetchStub(503, { message: 'unavail' });
   var bannerEl = makeBannerEl();
-  var statusEl = makeEl(); var rasteriseBtn = makeEl(); var synthFormEl = makeEl();
-  await new Promise(function(r) { lib.extractMidi(1, [], statusEl, rasteriseBtn, synthFormEl, '/base', bannerEl); setTimeout(r, 20); });
+  var statusEl = makeEl(); var synthFormEl = makeEl();
+  await new Promise(function(r) { lib.extractMidi(1, [], statusEl, synthFormEl, '/base', bannerEl); setTimeout(r, 20); });
   assert.equal(bannerEl.hidden, false);
   delete globalThis.fetch;
 });
@@ -582,8 +582,8 @@ test('extractMidi_shows_banner_on_503', async function () {
 test('extractMidi_does_not_show_banner_on_422', async function () {
   globalThis.fetch = fetchStub(422, { message: 'bad' });
   var bannerEl = makeBannerEl();
-  var statusEl = makeEl(); var rasteriseBtn = makeEl(); var synthFormEl = makeEl();
-  await new Promise(function(r) { lib.extractMidi(1, [], statusEl, rasteriseBtn, synthFormEl, '/base', bannerEl); setTimeout(r, 20); });
+  var statusEl = makeEl(); var synthFormEl = makeEl();
+  await new Promise(function(r) { lib.extractMidi(1, [], statusEl, synthFormEl, '/base', bannerEl); setTimeout(r, 20); });
   assert.equal(bannerEl.hidden, true);
   assert.ok(statusEl.textContent.length > 0);
   delete globalThis.fetch;

@@ -520,10 +520,13 @@ async fn test_15_rapid_sequence_final_state_cleared() {
     send_ws(&mut teacher, &serde_json::json!({"type": "accompaniment_stop"})).await;
 
     // Drain all messages and find the last AccompanimentState.
+    // Use 3s for the first read (WAN DB round-trip may exceed 500ms), then
+    // 500ms for subsequent reads to exit once the burst has settled.
     let mut last_state: Option<serde_json::Value> = None;
-    for _ in 0..8 {
+    for i in 0..8 {
+        let timeout_ms = if i == 0 { 3000 } else { 500 };
         match tokio::time::timeout(
-            std::time::Duration::from_millis(500),
+            std::time::Duration::from_millis(timeout_ms),
             recv_json(&mut teacher),
         )
         .await

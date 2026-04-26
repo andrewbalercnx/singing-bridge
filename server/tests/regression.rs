@@ -26,8 +26,11 @@ async fn citext_email_column_is_case_insensitive() {
     .unwrap();
 
     // Query with uppercase — CITEXT equality is case-insensitive.
+    // Cast parameter to citext so PostgreSQL uses the citext = citext operator
+    // rather than resolving citext = text (which may be case-sensitive depending
+    // on the operator resolution order in this PostgreSQL build).
     let row: Option<(i64,)> =
-        sqlx::query_as("SELECT id FROM teachers WHERE email = $1")
+        sqlx::query_as("SELECT id FROM teachers WHERE email = $1::citext")
             .bind("ALICE@EXAMPLE.TEST")
             .fetch_optional(&app.state.db)
             .await
@@ -39,7 +42,7 @@ async fn citext_email_column_is_case_insensitive() {
 
     // Mixed case.
     let row2: Option<(i64,)> =
-        sqlx::query_as("SELECT id FROM teachers WHERE email = $1")
+        sqlx::query_as("SELECT id FROM teachers WHERE email = $1::citext")
             .bind("Alice@Example.Test")
             .fetch_optional(&app.state.db)
             .await

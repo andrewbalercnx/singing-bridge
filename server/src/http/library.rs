@@ -749,6 +749,12 @@ pub(crate) async fn post_midi(
     let teacher_id = require_auth(&state, &headers).await?;
     require_slug_owner(&state, teacher_id, &slug).await?;
 
+    if req.part_indices.len() > 32 {
+        return Err(AppError::BadRequest(
+            "too many part_indices (max 32)".into(),
+        ));
+    }
+
     // Use cached MusicXML from a prior OMR run to avoid re-running Audiveris.
     let musicxml = get_cached_musicxml_or_rerun_omr(&state, asset_id, teacher_id).await?;
 
@@ -928,6 +934,16 @@ pub(crate) async fn post_variant(
     }
     if req.label.len() > 255 {
         return Err(AppError::BadRequest("label exceeds 255 bytes".into()));
+    }
+    if req.tempo_pct < 25 || req.tempo_pct > 300 {
+        return Err(AppError::BadRequest(
+            "tempo_pct must be between 25 and 300".into(),
+        ));
+    }
+    if req.transpose_semitones < -12 || req.transpose_semitones > 12 {
+        return Err(AppError::BadRequest(
+            "transpose_semitones must be between -12 and 12".into(),
+        ));
     }
 
     let midi_key = require_midi_key(&state, asset_id, teacher_id).await?;

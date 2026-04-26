@@ -415,11 +415,11 @@ test('renderSummary_shows_wav_badge', function () {
   var asset = { id: 2, title: 'S', has_pdf: false, has_midi: false, variant_count: 0, created_at: 0 };
   var li = lib.renderSummary(asset, '/base', makeBannerEl());
   var found = false;
-  function walk(node) {
+  function walkForWav(node) {
     if (node.textContent && node.textContent.indexOf('WAV') !== -1) found = true;
-    (node.children || []).forEach(walk);
+    (node.children || []).forEach(walkForWav);
   }
-  walk(li);
+  walkForWav(li);
   assert.equal(found, true);
 });
 
@@ -692,7 +692,7 @@ function makeModalDom() {
 test('openSynthModal_opens_dialog_with_parts_when_no_midi', function () {
   var m = makeModalDom();
   var variantListEl = makeEl();
-  lib.openSynthModal(1, ['Soprano', 'Alto'], false, variantListEl, null, '/base', makeBannerEl());
+  lib.openSynthModal(1, [{index: 0, name: 'Soprano'}, {index: 1, name: 'Alto'}], false, variantListEl, null, '/base', makeBannerEl());
   assert.equal(m.dialog.open, true);
   assert.equal(m.voicesSection.hidden, false);
   globalThis.document.getElementById = function() { return null; };
@@ -754,6 +754,18 @@ test('openSynthModal_null_prefill_resets_to_defaults', function () {
   assert.equal(m.labelInput.value, '');
   assert.equal(m.tempoInput.value, '100');
   assert.equal(m.transposeInput.value, '0');
+  globalThis.document.getElementById = function() { return null; };
+});
+
+test('openSynthModal_checkbox_value_uses_part_index_not_position', function () {
+  var m = makeModalDom();
+  // Non-contiguous backend indices — should round-trip unchanged, not use array positions.
+  lib.openSynthModal(1, [{index: 3, name: 'Cello'}, {index: 7, name: 'Violin'}], false, makeEl(), null, '/base', makeBannerEl());
+  assert.equal(m.voiceList._children.length, 2);
+  var cb0 = m.voiceList._children[0].children[0].children[0];
+  var cb1 = m.voiceList._children[1].children[0].children[0];
+  assert.equal(cb0.value, '3');
+  assert.equal(cb1.value, '7');
   globalThis.document.getElementById = function() { return null; };
 });
 
@@ -1505,7 +1517,7 @@ test('renderVariantRow_resynthesize_button_calls_synthesise', function () {
   var calledWith = null;
   var variant = { id: 7, label: 'Slow', tempo_pct: 75, transpose_semitones: -2, respect_repeats: true };
   var li = lib.renderVariantRow(1, variant, '/base', makeBannerEl(), function(req) { calledWith = req; });
-  // resynth button is the 3rd child
+  // resynth button is the 3rd child (after label, meta)
   var resynBtn = li.children[2];
   resynBtn._fire('click');
   assert.ok(calledWith !== null);
@@ -1513,6 +1525,41 @@ test('renderVariantRow_resynthesize_button_calls_synthesise', function () {
   assert.equal(calledWith.tempo_pct, 75);
   assert.equal(calledWith.transpose_semitones, -2);
   assert.equal(calledWith.respect_repeats, true);
+});
+
+test('renderVariantRow_no_resynth_button_when_no_synthesise_fn', function () {
+  var variant = { id: 8, label: 'Full', tempo_pct: 100, transpose_semitones: 0 };
+  var li = lib.renderVariantRow(1, variant, '/base', makeBannerEl(), null);
+  var hasResynth = li.children.some(function(c) { return c.className === 'variant-resynth-btn'; });
+  assert.equal(hasResynth, false, 'WAV-only rows must not expose a re-synthesise button');
+});
+
+test('expandAsset_variants_for_wav_only_have_no_resynth_button', async function () {
+  globalThis.fetch = fetchStub(200, {
+    id: 1, title: 'S', has_pdf: false, has_midi: false,
+    variants: [{ id: 10, label: 'Full', tempo_pct: 100, transpose_semitones: 0 }],
+    page_tokens: [], bar_coords: [], bar_timings: []
+  });
+  // Capture the variant list element at createElement time (rows are appended before detailEl.appendChild).
+  var capturedVariantList = null;
+  var origCreate = globalThis.document.createElement;
+  globalThis.document.createElement = function(tag) {
+    var el = origCreate(tag);
+    if (tag === 'ul') capturedVariantList = el;
+    return el;
+  };
+  var detailEl = makeEl();
+  var expandBtn = makeEl(); expandBtn.setAttribute('aria-expanded', 'false');
+  await new Promise(function(r) {
+    lib.expandAsset(1, detailEl, expandBtn, '/base', makeBannerEl());
+    setTimeout(r, 20);
+  });
+  globalThis.document.createElement = origCreate;
+  assert.ok(capturedVariantList !== null, 'expected a variant list to be created');
+  assert.equal(capturedVariantList.children.length, 1, 'expected 1 variant row');
+  var hasResynth = capturedVariantList.children[0].children.some(function(c) { return c.className === 'variant-resynth-btn'; });
+  assert.equal(hasResynth, false, 'WAV-only variant must not have re-synthesise button');
+  delete globalThis.fetch;
 });
 
 // ---------------------------------------------------------------------------

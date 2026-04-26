@@ -30,7 +30,6 @@
   // Module-level synthesis modal state — set by openSynthModal, read by submit handler.
   var _modalAssetId = null;
   var _modalHasMidi = false;
-  var _modalParts = null;       // string[] | null
   var _modalVariantListEl = null;
   var _modalResynFn = null;     // (variant) => void — passed to renderVariantRow for new rows
   var _modalBannerEl = null;
@@ -155,6 +154,35 @@
   // Asset detail (expand)
   // ---------------------------------------------------------------------------
 
+  function buildOmrSection(id, variantListEl, base, bannerEl) {
+    var statusEl = document.createElement('p');
+    statusEl.className = 'omr-status';
+    statusEl.setAttribute('aria-live', 'polite');
+
+    var section = document.createElement('section');
+    section.className = 'omr-flow';
+
+    var omrBtn = document.createElement('button');
+    omrBtn.type = 'button';
+    omrBtn.className = 'omr-btn';
+    omrBtn.textContent = 'Run OMR';
+
+    var partPickerEl = document.createElement('div');
+    partPickerEl.className = 'part-picker';
+    partPickerEl.hidden = true;
+
+    omrBtn.addEventListener('click', function () {
+      omrBtn.disabled = true;
+      omrBtn.textContent = 'Running\u2026';
+      runOmr(id, partPickerEl, omrBtn, statusEl, variantListEl, base, bannerEl);
+    });
+
+    section.appendChild(omrBtn);
+    section.appendChild(partPickerEl);
+    section.appendChild(statusEl);
+    return section;
+  }
+
   function expandAsset(id, detailEl, expandBtn, base, bannerEl) {
     detailEl.hidden = false;
     expandBtn.setAttribute('aria-expanded', 'true');
@@ -167,10 +195,6 @@
         }
         var detail = res.data;
         detailEl.textContent = '';
-
-        var omrStatusEl = document.createElement('p');
-        omrStatusEl.className = 'omr-status';
-        omrStatusEl.setAttribute('aria-live', 'polite');
 
         var variantListEl = document.createElement('ul');
         variantListEl.className = 'variant-list';
@@ -186,30 +210,8 @@
           };
         }
 
-        // OMR section (PDF only)
         if (detail.has_pdf) {
-          var omrSection = document.createElement('section');
-          omrSection.className = 'omr-flow';
-
-          var omrBtn = document.createElement('button');
-          omrBtn.type = 'button';
-          omrBtn.className = 'omr-btn';
-          omrBtn.textContent = 'Run OMR';
-
-          var partPickerEl = document.createElement('div');
-          partPickerEl.className = 'part-picker';
-          partPickerEl.hidden = true;
-
-          omrBtn.addEventListener('click', function () {
-            omrBtn.disabled = true;
-            omrBtn.textContent = 'Running\u2026';
-            runOmr(id, partPickerEl, omrBtn, omrStatusEl, variantListEl, base, bannerEl);
-          });
-
-          omrSection.appendChild(omrBtn);
-          omrSection.appendChild(partPickerEl);
-          omrSection.appendChild(omrStatusEl);
-          detailEl.appendChild(omrSection);
+          detailEl.appendChild(buildOmrSection(id, variantListEl, base, bannerEl));
         }
 
         // "New variant" button (shown only when MIDI exists — parts already extracted).
@@ -225,10 +227,11 @@
           detailEl.appendChild(newVariantBtn);
         }
 
-        // Variant list
+        // Variant list — re-synthesise only available when MIDI exists.
         if (detail.variants) {
           detail.variants.forEach(function (variant) {
-            variantListEl.appendChild(renderVariantRow(id, variant, base, bannerEl, makeResynFn(variantListEl)));
+            var resynCb = detail.has_midi ? makeResynFn(variantListEl) : null;
+            variantListEl.appendChild(renderVariantRow(id, variant, base, bannerEl, resynCb));
           });
         }
         detailEl.appendChild(variantListEl);
@@ -240,7 +243,14 @@
 
   // Show the "New variant" button on an already-expanded card after first MIDI creation.
   function showNewVariantButton(assetId, variantListEl, base, bannerEl) {
-    var btn = document.querySelector('.new-variant-btn[data-asset-id="' + assetId + '"]');
+    var allBtns = document.querySelectorAll('.new-variant-btn');
+    var btn = null;
+    for (var i = 0; i < allBtns.length; i++) {
+      if (allBtns[i].getAttribute('data-asset-id') === String(assetId)) {
+        btn = allBtns[i];
+        break;
+      }
+    }
     if (btn) {
       btn.hidden = false;
       return;
@@ -317,8 +327,11 @@
         var parts = res.data.parts || [];
         partPickerEl.hidden = true; // part picker no longer needed; modal handles voice selection
         rasterise(assetId, statusEl, base, bannerEl);
-        var partNames = parts.map(function (p) { return p.name; });
-        openSynthModal(assetId, partNames, false, variantListEl, null, base, bannerEl);
+        if (parts.length > 0) {
+          openSynthModal(assetId, parts, false, variantListEl, null, base, bannerEl);
+        } else {
+          statusEl.textContent = 'No voices detected \u2014 re-run OMR.';
+        }
       })
       .catch(function (err) {
         omrBtn.disabled = false;
@@ -433,21 +446,6 @@
     metaEl.className = 'variant-meta';
     metaEl.textContent = variant.tempo_pct + '% · ' + (variant.transpose_semitones >= 0 ? '+' : '') + variant.transpose_semitones + ' semitones';
 
-    var resynBtn = document.createElement('button');
-    resynBtn.type = 'button';
-    resynBtn.className = 'variant-resynth-btn';
-    resynBtn.textContent = 'Re-synthesise';
-    resynBtn.addEventListener('click', function () {
-      if (synthesiseFn) {
-        synthesiseFn({
-          label: variant.label,
-          tempo_pct: variant.tempo_pct,
-          transpose_semitones: variant.transpose_semitones,
-          respect_repeats: variant.respect_repeats || false,
-        });
-      }
-    });
-
     var deleteBtn = document.createElement('button');
     deleteBtn.type = 'button';
     deleteBtn.className = 'variant-delete-btn';
@@ -458,7 +456,21 @@
 
     li.appendChild(labelEl);
     li.appendChild(metaEl);
-    li.appendChild(resynBtn);
+    if (synthesiseFn) {
+      var resynBtn = document.createElement('button');
+      resynBtn.type = 'button';
+      resynBtn.className = 'variant-resynth-btn';
+      resynBtn.textContent = 'Re-synthesise';
+      resynBtn.addEventListener('click', function () {
+        synthesiseFn({
+          label: variant.label,
+          tempo_pct: variant.tempo_pct,
+          transpose_semitones: variant.transpose_semitones,
+          respect_repeats: variant.respect_repeats || false,
+        });
+      });
+      li.appendChild(resynBtn);
+    }
     li.appendChild(deleteBtn);
     return li;
   }
@@ -478,7 +490,8 @@
   }
 
   function confirmDelete(assetId, title, li, base, confirmFn, alertFn) {
-    doDelete(base + '/' + assetId, li, confirmFn, 'Delete "' + title + '"? This cannot be undone.', alertFn);
+    var safeTitle = title.replace(/[\r\n]/g, ' ');
+    doDelete(base + '/' + assetId, li, confirmFn, 'Delete "' + safeTitle + '"? This cannot be undone.', alertFn);
   }
 
   function confirmDeleteVariant(assetId, variantId, variantLi, base, confirmFn, alertFn) {
@@ -963,18 +976,12 @@
 
     // Guard: if no MIDI yet and no parts, cannot synthesise.
     if (!hasMidi && (!parts || parts.length === 0)) {
-      var statusEl = document.getElementById('synth-modal-status');
-      if (statusEl) {
-        statusEl.textContent = 'No voices detected \u2014 re-run OMR.';
-        statusEl.hidden = false;
-      }
       return;
     }
 
     // Store state for the submit handler.
     _modalAssetId = assetId;
     _modalHasMidi = hasMidi;
-    _modalParts = parts;
     _modalVariantListEl = variantListEl;
     _modalBase = base;
     _modalBannerEl = bannerEl;
@@ -1007,15 +1014,15 @@
     if (voicesSection) {
       if (!hasMidi && parts && parts.length > 0) {
         voiceList.replaceChildren();
-        parts.forEach(function (name, idx) {
+        parts.forEach(function (part) {
           var li = document.createElement('li');
           var lbl = document.createElement('label');
           var cb = document.createElement('input');
           cb.type = 'checkbox';
-          cb.value = String(idx);
+          cb.value = String(part.index); // backend-authoritative index (not array position)
           cb.checked = true;
           var span = document.createElement('span');
-          span.textContent = name; // .textContent only — no innerHTML
+          span.textContent = part.name; // .textContent only — no innerHTML
           lbl.appendChild(cb);
           lbl.appendChild(span);
           li.appendChild(lbl);
@@ -1032,6 +1039,79 @@
       dialog.showModal();
     } else {
       dialog.setAttribute('open', '');
+    }
+  }
+
+  // Submit handler body — extracted to keep initSynthModal under the logic-length threshold.
+  function handleSynthSubmit(dialog, submitBtn, statusP, showError, resetSubmitBtn) {
+    if (!statusP) return;
+    statusP.hidden = true;
+
+    var labelInput = document.getElementById('synth-modal-label');
+    var tempoInput = document.getElementById('synth-modal-tempo');
+    var transposeInput = document.getElementById('synth-modal-transpose');
+    var voicesSection = dialog.querySelector('.synth-modal__voices');
+    var voicesError = document.getElementById('synth-modal-voices-error');
+
+    var label = labelInput ? labelInput.value : '';
+    var tempo = tempoInput ? Number(tempoInput.value) : NaN;
+    var transpose = transposeInput ? Number(transposeInput.value) : NaN;
+
+    if (!label || !label.trim()) { showError('Name is required'); return; }
+    if (!Number.isInteger(tempo) || tempo < 25 || tempo > 300) { showError('Tempo must be between 25 and 300'); return; }
+    if (!Number.isInteger(transpose) || transpose < -12 || transpose > 12) { showError('Transpose must be between \u221212 and +12'); return; }
+
+    var checkedIndices = [];
+    if (!_modalHasMidi && voicesSection && !voicesSection.hidden) {
+      var checked = voicesSection.querySelectorAll('input[type=checkbox]:checked');
+      if (checked.length === 0) {
+        if (voicesError) { voicesError.textContent = 'Select at least one voice'; voicesError.hidden = false; }
+        return;
+      }
+      checked.forEach(function (cb) { checkedIndices.push(Number(cb.value)); });
+    }
+
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Synthesising\u2026';
+
+    var req = { label: label.trim(), tempo_pct: tempo, transpose_semitones: transpose, respect_repeats: false };
+    var assetId = _modalAssetId;
+    var hasMidi = _modalHasMidi;
+    var variantListEl = _modalVariantListEl;
+    var resynFn = _modalResynFn;
+    var base = _modalBase;
+    var bannerEl = _modalBannerEl;
+
+    var wrappedList = {
+      prepend: function (el) {
+        if (variantListEl) variantListEl.prepend(el);
+        dialog.close();
+        if (!hasMidi) showNewVariantButton(assetId, variantListEl, base, bannerEl);
+      }
+    };
+
+    function doSynth() {
+      // statusProxy intercepts textContent assignments so that any error message
+      // written by synthesise() also re-enables the submit button.
+      var statusProxy = { _el: statusP };
+      Object.defineProperty(statusProxy, 'textContent', {
+        get: function () { return statusProxy._el ? statusProxy._el.textContent : ''; },
+        set: function (v) {
+          if (statusProxy._el) { statusProxy._el.textContent = v; statusProxy._el.hidden = !v; }
+          if (v) resetSubmitBtn();
+        },
+      });
+      synthesise(assetId, req, statusProxy, wrappedList, null, base, bannerEl, resynFn);
+    }
+
+    if (!hasMidi) {
+      extractMidi(assetId, checkedIndices, statusP,
+        function onSuccess() { doSynth(); },
+        function onFailure() { resetSubmitBtn(); },
+        base, bannerEl
+      );
+    } else {
+      doSynth();
     }
   }
 
@@ -1055,98 +1135,18 @@
     function showError(msg) {
       if (statusP) { statusP.textContent = msg; statusP.hidden = false; }
     }
-
     function resetSubmitBtn() {
       if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = 'Create Backing Track'; }
     }
 
     if (cancelBtn) {
-      cancelBtn.addEventListener('click', function () {
-        if (typeof dialog.close === 'function') dialog.close();
-        else dialog.removeAttribute('open');
-      });
+      cancelBtn.addEventListener('click', function () { dialog.close(); });
     }
 
     // Submit registered once — reads module-scoped _modal* vars.
     if (submitBtn) {
       submitBtn.addEventListener('click', function () {
-        if (!statusP) return;
-        statusP.hidden = true;
-
-        var labelInput = document.getElementById('synth-modal-label');
-        var tempoInput = document.getElementById('synth-modal-tempo');
-        var transposeInput = document.getElementById('synth-modal-transpose');
-        var voicesSection = dialog.querySelector('.synth-modal__voices');
-        var voicesError = document.getElementById('synth-modal-voices-error');
-
-        var label = labelInput ? labelInput.value : '';
-        var tempo = tempoInput ? Number(tempoInput.value) : NaN;
-        var transpose = transposeInput ? Number(transposeInput.value) : NaN;
-
-        // Client-side validation.
-        if (!label || !label.trim()) { showError('Name is required'); return; }
-        if (!Number.isInteger(tempo) || tempo < 25 || tempo > 300) { showError('Tempo must be between 25 and 300'); return; }
-        if (!Number.isInteger(transpose) || transpose < -12 || transpose > 12) { showError('Transpose must be between \u221212 and +12'); return; }
-
-        var checkedIndices = [];
-        if (!_modalHasMidi && voicesSection && !voicesSection.hidden) {
-          var checked = voicesSection.querySelectorAll('input[type=checkbox]:checked');
-          if (checked.length === 0) {
-            if (voicesError) { voicesError.textContent = 'Select at least one voice'; voicesError.hidden = false; }
-            return;
-          }
-          checked.forEach(function (cb) { checkedIndices.push(Number(cb.value)); });
-        }
-
-        submitBtn.disabled = true;
-        submitBtn.textContent = 'Synthesising\u2026';
-
-        var req = {
-          label: label.trim(),
-          tempo_pct: tempo,
-          transpose_semitones: transpose,
-          respect_repeats: false,
-        };
-
-        var assetId = _modalAssetId;
-        var hasMidi = _modalHasMidi;
-        var variantListEl = _modalVariantListEl;
-        var resynFn = _modalResynFn;
-        var base = _modalBase;
-        var bannerEl = _modalBannerEl;
-
-        var wrappedList = {
-          prepend: function (el) {
-            if (variantListEl) variantListEl.prepend(el);
-            if (typeof dialog.close === 'function') dialog.close();
-            else dialog.removeAttribute('open');
-            if (!hasMidi) showNewVariantButton(assetId, variantListEl, base, bannerEl);
-          }
-        };
-
-        function doSynth() {
-          // statusProxy intercepts textContent assignments so that any error message
-          // written by synthesise() also re-enables the submit button.
-          var statusProxy = { _el: statusP };
-          Object.defineProperty(statusProxy, 'textContent', {
-            get: function () { return statusProxy._el ? statusProxy._el.textContent : ''; },
-            set: function (v) {
-              if (statusProxy._el) { statusProxy._el.textContent = v; statusProxy._el.hidden = !v; }
-              if (v) resetSubmitBtn();
-            },
-          });
-          synthesise(assetId, req, statusProxy, wrappedList, null, base, bannerEl, resynFn);
-        }
-
-        if (!hasMidi) {
-          extractMidi(assetId, checkedIndices, statusP,
-            function onSuccess() { doSynth(); },
-            function onFailure() { resetSubmitBtn(); },
-            base, bannerEl
-          );
-        } else {
-          doSynth();
-        }
+        handleSynthSubmit(dialog, submitBtn, statusP, showError, resetSubmitBtn);
       });
     }
   }
@@ -1208,7 +1208,6 @@
     _setModalState: function (s) {
       if (s.assetId !== undefined) _modalAssetId = s.assetId;
       if (s.hasMidi !== undefined) _modalHasMidi = s.hasMidi;
-      if (s.parts !== undefined) _modalParts = s.parts;
       if (s.variantListEl !== undefined) _modalVariantListEl = s.variantListEl;
       if (s.resynFn !== undefined) _modalResynFn = s.resynFn;
       if (s.base !== undefined) _modalBase = s.base;

@@ -568,17 +568,21 @@ pub(crate) async fn post_parts(
     Path((slug, asset_id)): Path<(String, i64)>,
     headers: HeaderMap,
 ) -> Result<Response> {
+    tracing::info!(asset_id, "post_parts: start");
     let teacher_id = require_auth(&state, &headers).await?;
     require_slug_owner(&state, teacher_id, &slug).await?;
 
     let pdf_key = require_pdf_key(&state, asset_id, teacher_id).await?;
+    tracing::info!(asset_id, pdf_key, "post_parts: fetching pdf from blob");
     let pdf = state
         .blob
         .get_bytes(&pdf_key)
         .await
         .map_err(|_| AppError::Internal("pdf blob read".into()))?;
 
+    tracing::info!(asset_id, pdf_bytes = pdf.len(), "post_parts: calling sidecar omr");
     let omr = state.sidecar.omr(pdf).await?;
+    tracing::info!(asset_id, parts = omr.parts.len(), "post_parts: omr complete");
 
     // Store MusicXML to blob so post_midi can skip re-running Audiveris.
     let xml_key = format!("{}.musicxml", uuid::Uuid::new_v4());

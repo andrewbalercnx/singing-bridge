@@ -83,6 +83,22 @@ function fetchStub(status, body) {
   };
 }
 
+// Returns a stub that replays each { status, body } entry in order;
+// repeats the last entry once exhausted.
+function fetchSequence() {
+  var entries = Array.prototype.slice.call(arguments);
+  var calls = 0;
+  return function() {
+    var entry = entries[Math.min(calls, entries.length - 1)];
+    calls++;
+    return Promise.resolve({
+      ok: entry.status >= 200 && entry.status < 300,
+      status: entry.status,
+      json: function() { return Promise.resolve(entry.body); },
+    });
+  };
+}
+
 function fetchReject(msg) {
   return function() { return Promise.reject(new Error(msg)); };
 }
@@ -453,22 +469,30 @@ test('renderVariantRow_uses_data_label_not_req_label', function () {
 // runOmr tests
 // ---------------------------------------------------------------------------
 
+// Helper: two-step fetch for async OMR — POST returns 202, poll returns 200 with parts.
+function omrSuccessStub(parts) {
+  return fetchSequence(
+    { status: 202, body: { job_id: 'test-job', poll_url: '/base/1/parts/test-job' } },
+    { status: 200, body: { status: 'done', parts: parts } }
+  );
+}
+
 test('runOmr_shows_part_picker_on_success', async function () {
-  globalThis.fetch = fetchStub(200, [{ index: 0, name: 'Piano' }]);
+  globalThis.fetch = omrSuccessStub([{ index: 0, name: 'Piano' }]);
   var partPickerEl = makeEl(); partPickerEl.hidden = true;
   var omrBtn = makeEl();
   var statusEl = makeEl();
   var bannerEl = makeBannerEl();
   await new Promise(function(resolve) {
     lib.runOmr(1, partPickerEl, omrBtn, statusEl, '/base', bannerEl);
-    setTimeout(resolve, 20);
+    setTimeout(resolve, 50);
   });
   assert.equal(partPickerEl.hidden, false);
   delete globalThis.fetch;
 });
 
 test('runOmr_renders_correct_checkbox_count', async function () {
-  globalThis.fetch = fetchStub(200, [{ index: 0, name: 'Violin' }, { index: 1, name: 'Cello' }]);
+  globalThis.fetch = omrSuccessStub([{ index: 0, name: 'Violin' }, { index: 1, name: 'Cello' }]);
   var partPickerEl = makeEl(); partPickerEl.hidden = true;
   var children = [];
   partPickerEl.appendChild = function(c) { children.push(c); return c; };
@@ -477,7 +501,7 @@ test('runOmr_renders_correct_checkbox_count', async function () {
   var statusEl = makeEl();
   await new Promise(function(resolve) {
     lib.runOmr(1, partPickerEl, omrBtn, statusEl, '/base', makeBannerEl());
-    setTimeout(resolve, 20);
+    setTimeout(resolve, 50);
   });
   // Each part renders a <label> element
   var labelCount = children.filter(function(c) { return !c.className || c.className !== 'extract-midi-btn'; }).length;
@@ -486,7 +510,7 @@ test('runOmr_renders_correct_checkbox_count', async function () {
 });
 
 test('runOmr_checkbox_value_uses_part_index', async function () {
-  globalThis.fetch = fetchStub(200, [{ index: 3, name: 'Flute' }]);
+  globalThis.fetch = omrSuccessStub([{ index: 3, name: 'Flute' }]);
   var checkboxValue = null;
   var partPickerEl = makeEl(); partPickerEl.hidden = true;
   partPickerEl.appendChild = function(labelEl) {
@@ -497,13 +521,13 @@ test('runOmr_checkbox_value_uses_part_index', async function () {
   };
   partPickerEl.replaceChildren = function() {};
   var omrBtn = makeEl(); var statusEl = makeEl();
-  await new Promise(function(r) { lib.runOmr(1, partPickerEl, omrBtn, statusEl, '/base', makeBannerEl()); setTimeout(r, 20); });
+  await new Promise(function(r) { lib.runOmr(1, partPickerEl, omrBtn, statusEl, '/base', makeBannerEl()); setTimeout(r, 50); });
   assert.equal(checkboxValue, '3');
   delete globalThis.fetch;
 });
 
 test('runOmr_renders_part_name_via_textContent', async function () {
-  globalThis.fetch = fetchStub(200, [{ index: 0, name: '<b>XSS</b>' }]);
+  globalThis.fetch = omrSuccessStub([{ index: 0, name: '<b>XSS</b>' }]);
   var spanText = null;
   var partPickerEl = makeEl(); partPickerEl.hidden = true;
   partPickerEl.appendChild = function(labelEl) {
@@ -514,7 +538,7 @@ test('runOmr_renders_part_name_via_textContent', async function () {
   };
   partPickerEl.replaceChildren = function() {};
   var omrBtn = makeEl(); var statusEl = makeEl();
-  await new Promise(function(r) { lib.runOmr(1, partPickerEl, omrBtn, statusEl, '/base', makeBannerEl()); setTimeout(r, 20); });
+  await new Promise(function(r) { lib.runOmr(1, partPickerEl, omrBtn, statusEl, '/base', makeBannerEl()); setTimeout(r, 50); });
   assert.equal(spanText, '<b>XSS</b>');
   delete globalThis.fetch;
 });

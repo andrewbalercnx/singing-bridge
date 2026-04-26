@@ -9,7 +9,7 @@ Invariants: Every non-/healthz endpoint requires Authorization: Bearer <SIDECAR_
             SIDECAR_SECRET must be set at startup; missing → process exits.
             Upload size is capped at MAX_UPLOAD_BYTES before processing.
             All temp files are cleaned up even on error.
-Last updated: Sprint 12a (2026-04-21) -- initial production sidecar
+Last updated: Sprint 21 (2026-04-26) -- detailed /healthz probing audiveris/fluidsynth/ghostscript/sf2
 """
 from __future__ import annotations
 
@@ -116,7 +116,37 @@ def _int_field(field: str, default: int | None = None) -> tuple[int | None, tupl
 
 @app.route("/healthz")
 def healthz():
-    return jsonify({"status": "ok"})
+    import shutil
+
+    def _probe(cmd_env: str, *candidates: str) -> dict:
+        override = os.environ.get(cmd_env)
+        if override:
+            found = shutil.which(override) or override
+            return {"status": "ok", "path": found}
+        for name in candidates:
+            path = shutil.which(name)
+            if path:
+                return {"status": "ok", "path": path}
+        return {"status": "missing", "candidates": list(candidates)}
+
+    audiveris = _probe("AUDIVERIS_CMD", "audiveris")
+    fluidsynth = _probe("", "fluidsynth")
+    ghostscript = _probe("", "gs", "ghostscript")
+
+    sf2_path = PIANO_SF2
+    sf2 = {"status": "ok", "path": sf2_path} if Path(sf2_path).exists() else {"status": "missing", "path": sf2_path}
+
+    all_ok = all(
+        d["status"] == "ok"
+        for d in [audiveris, fluidsynth, ghostscript, sf2]
+    )
+    return jsonify({
+        "status": "ok" if all_ok else "degraded",
+        "audiveris": audiveris,
+        "fluidsynth": fluidsynth,
+        "ghostscript": ghostscript,
+        "sf2": sf2,
+    }), 200
 
 
 @app.route("/omr", methods=["POST"])

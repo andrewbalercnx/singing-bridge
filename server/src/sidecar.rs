@@ -8,7 +8,7 @@
 //             AUDIVERIS_MISSING / FLUIDSYNTH_MISSING / connection failure → SidecarUnavailable.
 //             All other sidecar error codes → SidecarBadInput (surfaces as 422).
 //             ZIP response from /rasterise is unzipped here; caller receives Vec<(filename, bytes)>.
-// Last updated: Sprint 12a (2026-04-21) -- SidecarUnavailable / SidecarBadInput variants
+// Last updated: Sprint 21 (2026-04-26) -- add base_url() accessor for health probe
 
 use std::time::Duration;
 
@@ -80,6 +80,10 @@ pub struct SidecarClient {
 }
 
 impl SidecarClient {
+    pub fn base_url(&self) -> &str {
+        self.base.as_str()
+    }
+
     pub fn new(base: url::Url, secret: SecretString) -> Self {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(180))

@@ -706,3 +706,21 @@ _Backwards compatibility_
 - Council code review APPROVED
 
 **Status:** COMPLETE — 2026-04-26, infra provisioned + AzureBlobStore implemented
+
+## Sprint 23: Single-pass OMR
+
+**Goal:** Run Audiveris exactly once per PDF by caching MusicXML in blob storage and computing bar coords + parts list in the same sidecar call.
+
+**Deliverables:**
+- Migration `0008_musicxml_blob_key.sql` — adds `musicxml_blob_key TEXT` to `accompaniments`
+- Sidecar `/omr` response gains `parts` (list-parts folded in) and `bar_coords` (measure coords extracted before tempdir closes)
+- `post_parts` stores MusicXML to blob and bar_coords to DB; returns `omr.parts` directly
+- `post_midi` reads MusicXML from blob; falls back to re-running OMR if blob missing
+- `post_rasterise` skips `/bar_coords` sidecar call when bar_coords already in DB; only calls `/rasterise`
+- `SidecarClient.list_parts()` removed (folded into `/omr`)
+
+**Exit criteria:**
+- OMR log shows Audiveris invoked once; subsequent MIDI extraction and rasterise produce no further Audiveris invocations
+- Council code review APPROVED
+
+**Status:** COMPLETE — 2026-04-26

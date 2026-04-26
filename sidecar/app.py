@@ -180,18 +180,43 @@ def omr():
             app.logger.error("OMR runtime error: %s", e)
             return error_resp("OMR_FAILED", str(e), 422)
 
-        try:
-            import mido
-            mido.MidiFile  # just check import
-        except Exception:
-            pass
-
         musicxml_bytes = xml_path.read_bytes()
         page_count = _count_pdf_pages(pdf_path)
+
+        # Extract parts (cheap — just parses MusicXML with music21).
+        try:
+            parts = [p.to_dict() for p in list_parts(xml_path)]
+        except Exception as e:
+            app.logger.warning("list_parts failed: %s", e)
+            parts = []
+
+        # Extract bar coords while the .omr file is still alive in the tempdir.
+        omr_files = list((tmp_path / "omr_out").rglob("*.omr"))
+        if omr_files:
+            try:
+                raw_coords = extract_measure_coords(omr_files[0])
+                bar_coords = [
+                    {
+                        "bar": c["bar_seq"],
+                        "page": c["page"],
+                        "x_frac": c["x_frac"],
+                        "y_frac": c["y_frac"],
+                        "w_frac": c["w_frac"],
+                        "h_frac": c["h_frac"],
+                    }
+                    for c in raw_coords
+                ]
+            except Exception as e:
+                app.logger.warning("extract_measure_coords failed: %s", e)
+                bar_coords = []
+        else:
+            bar_coords = []
 
     return jsonify({
         "musicxml": base64.b64encode(musicxml_bytes).decode(),
         "page_count": page_count,
+        "parts": parts,
+        "bar_coords": bar_coords,
     })
 
 

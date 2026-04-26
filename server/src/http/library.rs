@@ -15,7 +15,7 @@
 //             page_blob_keys_json ≤ 10 KB.
 //             GET /api/media/:token returns 404 for both unknown and expired tokens (no oracle).
 //             Blob keys are never returned directly — callers receive short-lived media tokens.
-// Last updated: Sprint 14 (2026-04-23) -- Cache-Control: no-store on get_asset; Referrer-Policy: no-referrer on get_media
+// Last updated: Sprint 23 (2026-04-26) -- single-pass OMR: cache MusicXML blob + bar_coords; post_midi uses cache
 
 use std::pin::Pin;
 use std::sync::Arc;
@@ -579,9 +579,65 @@ pub(crate) async fn post_parts(
         .map_err(|_| AppError::Internal("pdf blob read".into()))?;
 
     let omr = state.sidecar.omr(pdf).await?;
-    let parts = state.sidecar.list_parts(omr.musicxml).await?;
 
-    Ok(Json(parts).into_response())
+    // Store MusicXML to blob so post_midi can skip re-running Audiveris.
+    let xml_key = format!("{}.musicxml", uuid::Uuid::new_v4());
+    state
+        .blob
+        .put(&xml_key, Box::pin(std::io::Cursor::new(omr.musicxml.to_vec())))
+        .await
+        .map_err(|e| AppError::Internal(e.to_string().into()))?;
+
+    // Store bar_coords now so post_rasterise only needs to rasterise the PDF.
+    let coords_json = if !omr.bar_coords.is_empty() {
+        let j = serde_json::to_string(&omr.bar_coords)
+            .map_err(|_| AppError::Internal("coords json".into()))?;
+        if j.len() <= BAR_COORDS_LIMIT { Some(j) } else { None }
+    } else {
+        None
+    };
+
+    // Delete any previous MusicXML blob (re-running OMR replaces it).
+    let old_xml: Option<(Option<String>,)> = sqlx::query_as(
+        "SELECT musicxml_blob_key FROM accompaniments WHERE id = $1 AND teacher_id = $2",
+    )
+    .bind(asset_id)
+    .bind(teacher_id)
+    .fetch_optional(&state.db)
+    .await?;
+    if let Some((Some(old),)) = old_xml {
+        let _ = state.blob.delete(&old).await;
+    }
+
+    let update = if let Some(ref cj) = coords_json {
+        sqlx::query(
+            "UPDATE accompaniments SET musicxml_blob_key = $1, bar_coords_json = $2
+             WHERE id = $3 AND teacher_id = $4 AND deleted_at IS NULL",
+        )
+        .bind(&xml_key)
+        .bind(cj)
+        .bind(asset_id)
+        .bind(teacher_id)
+        .execute(&state.db)
+        .await
+    } else {
+        sqlx::query(
+            "UPDATE accompaniments SET musicxml_blob_key = $1
+             WHERE id = $2 AND teacher_id = $3 AND deleted_at IS NULL",
+        )
+        .bind(&xml_key)
+        .bind(asset_id)
+        .bind(teacher_id)
+        .execute(&state.db)
+        .await
+    };
+
+    if let Err(e) = update {
+        let _ = state.blob.delete(&xml_key).await;
+        return Err(AppError::Sqlx(e));
+    }
+
+    Ok(Json(omr.parts).into_response())
 }
 
 // ---------------------------------------------------------------------------
@@ -602,17 +658,12 @@ pub(crate) async fn post_midi(
     let teacher_id = require_auth(&state, &headers).await?;
     require_slug_owner(&state, teacher_id, &slug).await?;
 
-    let pdf_key = require_pdf_key(&state, asset_id, teacher_id).await?;
-    let pdf = state
-        .blob
-        .get_bytes(&pdf_key)
-        .await
-        .map_err(|_| AppError::Internal("pdf blob read".into()))?;
+    // Use cached MusicXML from a prior OMR run to avoid re-running Audiveris.
+    let musicxml = get_cached_musicxml_or_rerun_omr(&state, asset_id, teacher_id).await?;
 
-    let omr = state.sidecar.omr(pdf).await?;
     let midi = state
         .sidecar
-        .extract_midi(omr.musicxml, &req.part_indices)
+        .extract_midi(musicxml, &req.part_indices)
         .await?;
     let timings = state.sidecar.bar_timings(midi.clone()).await?;
 
@@ -676,28 +727,31 @@ pub(crate) async fn post_rasterise(
     let teacher_id = require_auth(&state, &headers).await?;
     require_slug_owner(&state, teacher_id, &slug).await?;
 
-    let pdf_key = require_pdf_key(&state, asset_id, teacher_id).await?;
+    let (pdf_key, existing_coords_json) = require_pdf_key_and_coords(&state, asset_id, teacher_id).await?;
     let pdf = state
         .blob
         .get_bytes(&pdf_key)
         .await
         .map_err(|_| AppError::Internal("pdf blob read".into()))?;
 
-    // Run bar-coords and rasterise in parallel.
-    let (coords_result, pages_result) = tokio::join!(
-        state.sidecar.bar_coords(pdf.clone()),
-        state.sidecar.rasterise(pdf, 150),
-    );
-    let coords = coords_result?;
-    let pages = pages_result?;
-
-    let coords_json =
-        serde_json::to_string(&coords).map_err(|_| AppError::Internal("coords json".into()))?;
-    if coords_json.len() > BAR_COORDS_LIMIT {
-        return Err(AppError::BadRequest(
-            "bar coords JSON exceeds 500 KB limit".into(),
-        ));
-    }
+    // If bar_coords were computed during OMR, skip the /bar_coords sidecar call.
+    let (coords_json, pages) = if let Some(cj) = existing_coords_json {
+        let pages = state.sidecar.rasterise(pdf, 150).await?;
+        (cj, pages)
+    } else {
+        let (coords_result, pages_result) = tokio::join!(
+            state.sidecar.bar_coords(pdf.clone()),
+            state.sidecar.rasterise(pdf, 150),
+        );
+        let coords = coords_result?;
+        let pages = pages_result?;
+        let cj = serde_json::to_string(&coords)
+            .map_err(|_| AppError::Internal("coords json".into()))?;
+        if cj.len() > BAR_COORDS_LIMIT {
+            return Err(AppError::BadRequest("bar coords JSON exceeds 500 KB limit".into()));
+        }
+        (cj, pages)
+    };
 
     // Store page image blobs, collecting their keys.
     let mut page_keys: Vec<String> = Vec::with_capacity(pages.len());
@@ -989,6 +1043,79 @@ async fn require_midi_key(state: &AppState, asset_id: i64, teacher_id: i64) -> R
         Some((None,)) => Err(AppError::BadRequest("asset has no MIDI — run /midi first".into())),
         Some((Some(k),)) => Ok(k),
     }
+}
+
+/// Returns (pdf_blob_key, Option<bar_coords_json>) for post_rasterise.
+async fn require_pdf_key_and_coords(
+    state: &AppState,
+    asset_id: i64,
+    teacher_id: i64,
+) -> Result<(String, Option<String>)> {
+    let row: Option<(Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT pdf_blob_key, bar_coords_json FROM accompaniments
+         WHERE id = $1 AND teacher_id = $2 AND deleted_at IS NULL",
+    )
+    .bind(asset_id)
+    .bind(teacher_id)
+    .fetch_optional(&state.db)
+    .await?;
+    match row {
+        None => Err(AppError::NotFound),
+        Some((None, _)) => Err(AppError::BadRequest("asset has no PDF".into())),
+        Some((Some(k), coords)) => Ok((k, coords)),
+    }
+}
+
+/// Returns cached MusicXML bytes from blob if available, otherwise re-runs OMR on the PDF.
+async fn get_cached_musicxml_or_rerun_omr(
+    state: &AppState,
+    asset_id: i64,
+    teacher_id: i64,
+) -> Result<bytes::Bytes> {
+    let row: Option<(Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT musicxml_blob_key, pdf_blob_key FROM accompaniments
+         WHERE id = $1 AND teacher_id = $2 AND deleted_at IS NULL",
+    )
+    .bind(asset_id)
+    .bind(teacher_id)
+    .fetch_optional(&state.db)
+    .await?;
+
+    match row {
+        None => Err(AppError::NotFound),
+        Some((None, None)) => Err(AppError::BadRequest("asset has no PDF".into())),
+        Some((Some(xml_key), _)) => {
+            match state.blob.get_bytes(&xml_key).await {
+                Ok(b) => Ok(b),
+                Err(crate::blob::BlobError::NotFound) => {
+                    // Blob gone (e.g. pre-Sprint-22 upload) — fall back to OMR.
+                    tracing::warn!(asset_id, "musicxml blob missing, re-running OMR");
+                    rerun_omr_from_pdf(state, asset_id, teacher_id).await
+                }
+                Err(e) => Err(AppError::Internal(e.to_string().into())),
+            }
+        }
+        Some((None, Some(pdf_key))) => {
+            // OMR has not been run yet or predates Sprint 23.
+            let _ = pdf_key; // pdf_key not needed; rerun_omr_from_pdf fetches it
+            rerun_omr_from_pdf(state, asset_id, teacher_id).await
+        }
+    }
+}
+
+async fn rerun_omr_from_pdf(
+    state: &AppState,
+    asset_id: i64,
+    teacher_id: i64,
+) -> Result<bytes::Bytes> {
+    let pdf_key = require_pdf_key(state, asset_id, teacher_id).await?;
+    let pdf = state
+        .blob
+        .get_bytes(&pdf_key)
+        .await
+        .map_err(|_| AppError::Internal("pdf blob read".into()))?;
+    let omr = state.sidecar.omr(pdf).await?;
+    Ok(omr.musicxml)
 }
 
 fn mime_for_key(key: &str) -> &'static str {

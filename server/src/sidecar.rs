@@ -8,7 +8,8 @@
 //             AUDIVERIS_MISSING / FLUIDSYNTH_MISSING / connection failure → SidecarUnavailable.
 //             All other sidecar error codes → SidecarBadInput (surfaces as 422).
 //             ZIP response from /rasterise is unzipped here; caller receives Vec<(filename, bytes)>.
-// Last updated: Sprint 21 (2026-04-26) -- add base_url() accessor for health probe
+//             /omr response includes parts + bar_coords so Audiveris runs exactly once per PDF.
+// Last updated: Sprint 23 (2026-04-26) -- OmrResult gains parts + bar_coords; remove list_parts()
 
 use std::time::Duration;
 
@@ -26,6 +27,8 @@ use crate::error::{AppError, Result};
 pub struct OmrResult {
     pub musicxml: Bytes,
     pub page_count: u32,
+    pub parts: Vec<PartInfo>,
+    pub bar_coords: Vec<BarCoord>,
 }
 
 #[derive(Debug, Deserialize, serde::Serialize, Clone)]
@@ -167,28 +170,19 @@ impl SidecarClient {
         struct OmrResponse {
             musicxml: String, // base64
             page_count: u32,
+            #[serde(default)]
+            parts: Vec<PartInfo>,
+            #[serde(default)]
+            bar_coords: Vec<BarCoord>,
         }
         let body: OmrResponse = resp.json().await.map_err(|_| AppError::Internal("sidecar omr parse".into()))?;
         let musicxml = base64_decode(&body.musicxml)?;
-        Ok(OmrResult { musicxml: Bytes::from(musicxml), page_count: body.page_count })
-    }
-
-    pub async fn list_parts(&self, musicxml: Bytes) -> Result<Vec<PartInfo>> {
-        let form = reqwest::multipart::Form::new()
-            .part("musicxml", reqwest::multipart::Part::bytes(musicxml.to_vec()).file_name("score.musicxml"));
-
-        let resp = self
-            .client
-            .post(self.url("/list-parts"))
-            .header("Authorization", self.auth())
-            .multipart(form)
-            .send()
-            .await
-            .map_err(|e| Self::send_err(e, "list-parts"))?;
-
-        let resp = Self::check(resp).await?;
-        let parts: Vec<PartInfo> = resp.json().await.map_err(|_| AppError::Internal("sidecar list-parts parse".into()))?;
-        Ok(parts)
+        Ok(OmrResult {
+            musicxml: Bytes::from(musicxml),
+            page_count: body.page_count,
+            parts: body.parts,
+            bar_coords: body.bar_coords,
+        })
     }
 
     pub async fn extract_midi(&self, musicxml: Bytes, part_indices: &[usize]) -> Result<Bytes> {

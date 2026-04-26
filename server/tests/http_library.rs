@@ -736,28 +736,21 @@ async fn media_token_library_cache_control() {
 async fn post_parts_proxies_to_sidecar() {
     let mock_server = MockServer::start().await;
 
-    // OMR endpoint returns a stub musicxml.
+    // OMR endpoint returns musicxml + parts (list_parts removed; parts inline).
     let omr_body = serde_json::json!({
         "musicxml": base64::Engine::encode(
             &base64::engine::general_purpose::STANDARD,
             b"<score-partwise></score-partwise>",
         ),
         "page_count": 1u32,
+        "parts": [
+            { "index": 0, "name": "Piano", "instrument": "Piano", "has_notes": true },
+            { "index": 1, "name": "Violin", "instrument": "Violin", "has_notes": true },
+        ],
     });
     Mock::given(method("POST"))
         .and(path("/omr"))
         .respond_with(ResponseTemplate::new(200).set_body_json(&omr_body))
-        .mount(&mock_server)
-        .await;
-
-    // list-parts returns two parts.
-    let parts_body = serde_json::json!([
-        { "index": 0, "name": "Piano", "instrument": "Piano", "has_notes": true },
-        { "index": 1, "name": "Violin", "instrument": "Violin", "has_notes": true },
-    ]);
-    Mock::given(method("POST"))
-        .and(path("/list-parts"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(&parts_body))
         .mount(&mock_server)
         .await;
 
@@ -1257,16 +1250,16 @@ async fn post_parts_sidecar_503_returns_503() {
 }
 
 // ---------------------------------------------------------------------------
-// Test 32 — /omr ok + /list-parts INVALID_MUSICXML → 422 sidecar_bad_input
+// Test 32 — /omr 422 INVALID_MUSICXML → job fails → poll 422 status=failed
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn post_parts_list_parts_bad_input_returns_422() {
     let mock_server = MockServer::start().await;
-    mount_omr_stub(&mock_server).await;
 
+    // OMR itself returns 422 with a known error code — job should fail.
     Mock::given(method("POST"))
-        .and(path("/list-parts"))
+        .and(path("/omr"))
         .respond_with(ResponseTemplate::new(422)
             .set_body_json(serde_json::json!({
                 "code": "INVALID_MUSICXML",

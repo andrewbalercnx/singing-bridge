@@ -7,7 +7,7 @@
 //             Selects mailer based on MailerKind. Spawns WS join rate sweeper
 //             and aborts it on shutdown. AppState.ws_join_rate_sweeper is
 //             always a valid JoinHandle for the life of the process.
-// Last updated: Sprint 12a (2026-04-21) -- SidecarClient + MediaTokenStore in AppState
+// Last updated: Sprint 21 (2026-04-26) -- run_migrations at startup when SB_MIGRATE_URL is set
 
 use std::{net::SocketAddr, sync::Arc};
 
@@ -19,7 +19,7 @@ use singing_bridge_server::{
     blob::{BlobStore, DevBlobStore},
     cleanup::cleanup_loop,
     config::{Config, MailerKind},
-    db::init_pool,
+    db::{init_pool, run_migrations},
     http::{media_token::MediaTokenStore, router},
     sidecar::SidecarClient,
     state::AppState,
@@ -53,6 +53,13 @@ async fn main() -> anyhow::Result<()> {
             )
         }
     };
+
+    if let Some(ref migrate_url) = config.migrate_url {
+        tracing::info!("running database migrations");
+        run_migrations(migrate_url).await
+            .map_err(|e| anyhow::anyhow!("migration failed: {e}"))?;
+        tracing::info!("migrations complete");
+    }
 
     let pool = init_pool(&config.db_url).await?;
     let shutdown = CancellationToken::new();

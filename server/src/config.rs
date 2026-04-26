@@ -8,7 +8,7 @@
 //             SB_DATABASE_URL must include sslmode=verify-full and must not be localhost.
 //             SB_DATABASE_URL is always required (no fallback) — server refuses to start without it.
 //             Secure cookie flag only omitted when dev=true.
-// Last updated: Sprint 19 (2026-04-25) -- SB_DATABASE_URL required; sslmode=verify-full validation
+// Last updated: Sprint 21 (2026-04-26) -- add migrate_url (SB_MIGRATE_URL) for auto-migration at startup
 
 use std::net::SocketAddr;
 
@@ -80,6 +80,8 @@ pub struct Config {
     pub login_account_max_failures: u32,
     pub login_ip_window_secs: i64,
     pub login_ip_max_attempts: u32,
+    // Migrations — optional DDL-capable URL; when set, run sqlx migrations at startup.
+    pub migrate_url: Option<String>,
     // Sidecar
     pub sidecar_url: Url,
     pub sidecar_secret: SecretString,
@@ -130,6 +132,7 @@ impl Config {
             login_account_max_failures: 10,
             login_ip_window_secs: 300,
             login_ip_max_attempts: 20,
+            migrate_url: None,
             sidecar_url: Url::parse("http://127.0.0.1:5050").expect("static sidecar url"),
             sidecar_secret: SecretString::new("dev-sidecar-secret"),
             sidecar_host_allowlist: vec![],
@@ -186,6 +189,8 @@ impl Config {
         let session_log_pepper = std::env::var("SB_SESSION_LOG_PEPPER")
             .ok()
             .map(SecretString::new);
+
+        let migrate_url = std::env::var("SB_MIGRATE_URL").ok();
 
         let sidecar_url_str = std::env::var("SIDECAR_URL")
             .unwrap_or_else(|_| "http://127.0.0.1:5050".into());
@@ -253,6 +258,7 @@ impl Config {
             login_account_max_failures: 10,
             login_ip_window_secs: 300,
             login_ip_max_attempts: 20,
+            migrate_url,
             sidecar_url,
             sidecar_secret,
             sidecar_host_allowlist,

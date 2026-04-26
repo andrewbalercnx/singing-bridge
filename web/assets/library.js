@@ -323,6 +323,7 @@
           return;
         }
         var parts = res.data.parts;
+        var extractBtn = partPickerEl.querySelector('.extract-midi-btn');
         partPickerEl.replaceChildren();
         parts.forEach(function (part) {
           var label = document.createElement('label');
@@ -336,7 +337,6 @@
           label.appendChild(span);
           partPickerEl.appendChild(label);
         });
-        var extractBtn = partPickerEl.querySelector('.extract-midi-btn');
         if (extractBtn) partPickerEl.appendChild(extractBtn);
         partPickerEl.hidden = false;
         rasterise(assetId, statusEl, base, bannerEl);

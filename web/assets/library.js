@@ -175,7 +175,7 @@
         rasteriseBtn.type = 'button';
         rasteriseBtn.className = 'rasterise-btn';
         rasteriseBtn.textContent = 'Rasterise pages';
-        rasteriseBtn.disabled = !detail.has_midi;
+        rasteriseBtn.disabled = false;
 
         var synthesiseSection = document.createElement('section');
         synthesiseSection.className = 'synthesise-form';

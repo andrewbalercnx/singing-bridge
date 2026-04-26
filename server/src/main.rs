@@ -16,7 +16,7 @@ use tokio_util::sync::CancellationToken;
 
 use singing_bridge_server::{
     auth::mailer::{AcsMailer, DevMailer, Mailer},
-    blob::{BlobStore, DevBlobStore},
+    blob::{AzureBlobStore, BlobStore, DevBlobStore},
     cleanup::cleanup_loop,
     config::{Config, MailerKind},
     db::{init_pool, run_migrations},
@@ -64,13 +64,27 @@ async fn main() -> anyhow::Result<()> {
     let pool = init_pool(&config.db_url).await?;
     let shutdown = CancellationToken::new();
 
-    // Blob store (dev-only for now; prod Azure is a future addition).
-    tokio::fs::create_dir_all(&config.dev_blob_dir).await.ok();
-    let blob: Arc<dyn BlobStore> = Arc::new(
-        DevBlobStore::new(&config.dev_blob_dir)
-            .await
-            .map_err(|e| anyhow::anyhow!("blob store init: {e}"))?,
-    );
+    let blob: Arc<dyn BlobStore> = match &config.azure_storage_connection_string {
+        Some(conn) => {
+            let container = config.azure_storage_container.as_deref()
+                .expect("azure_storage_container set when connection_string is set");
+            let ttl = std::time::Duration::from_secs(config.media_token_ttl_secs);
+            tracing::info!(container, "using Azure Blob Storage");
+            Arc::new(
+                AzureBlobStore::new(conn.expose(), container, ttl)
+                    .map_err(|e| anyhow::anyhow!("Azure blob store init: {e}"))?,
+            )
+        }
+        None => {
+            tokio::fs::create_dir_all(&config.dev_blob_dir).await.ok();
+            tracing::info!(dir = %config.dev_blob_dir.display(), "using DevBlobStore");
+            Arc::new(
+                DevBlobStore::new(&config.dev_blob_dir)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("blob store init: {e}"))?,
+            )
+        }
+    };
 
     // Spawn cleanup loop.
     let cleanup_blob = Arc::clone(&blob);

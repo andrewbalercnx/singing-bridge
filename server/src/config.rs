@@ -80,6 +80,9 @@ pub struct Config {
     pub login_account_max_failures: u32,
     pub login_ip_window_secs: i64,
     pub login_ip_max_attempts: u32,
+    // Blob storage — when set, AzureBlobStore is used; otherwise DevBlobStore.
+    pub azure_storage_connection_string: Option<SecretString>,
+    pub azure_storage_container: Option<String>,
     // Migrations — optional DDL-capable URL; when set, run sqlx migrations at startup.
     pub migrate_url: Option<String>,
     // Sidecar
@@ -132,6 +135,8 @@ impl Config {
             login_account_max_failures: 10,
             login_ip_window_secs: 300,
             login_ip_max_attempts: 20,
+            azure_storage_connection_string: None,
+            azure_storage_container: None,
             migrate_url: None,
             sidecar_url: Url::parse("http://127.0.0.1:5050").expect("static sidecar url"),
             sidecar_secret: SecretString::new("dev-sidecar-secret"),
@@ -189,6 +194,17 @@ impl Config {
         let session_log_pepper = std::env::var("SB_SESSION_LOG_PEPPER")
             .ok()
             .map(SecretString::new);
+
+        let azure_storage_connection_string = std::env::var("SB_AZURE_STORAGE_CONNECTION_STRING")
+            .ok()
+            .map(|s| SecretString::new(&s));
+        let azure_storage_container = std::env::var("SB_AZURE_STORAGE_CONTAINER").ok();
+        if azure_storage_connection_string.is_some() != azure_storage_container.is_some() {
+            return Err(ConfigError::Invalid(
+                "SB_AZURE_STORAGE_CONNECTION_STRING / SB_AZURE_STORAGE_CONTAINER",
+                "both must be set together or neither set".into(),
+            ));
+        }
 
         let migrate_url = std::env::var("SB_MIGRATE_URL").ok();
 
@@ -258,6 +274,8 @@ impl Config {
             login_account_max_failures: 10,
             login_ip_window_secs: 300,
             login_ip_max_attempts: 20,
+            azure_storage_connection_string,
+            azure_storage_container,
             migrate_url,
             sidecar_url,
             sidecar_secret,

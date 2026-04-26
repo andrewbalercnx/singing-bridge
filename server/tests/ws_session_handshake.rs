@@ -190,7 +190,7 @@ async fn session_event_row_has_ended_at_after_disconnect() {
     let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
     let row = loop {
         let r: Option<(Option<i64>,)> = sqlx::query_as(
-            "SELECT ended_at FROM session_events WHERE teacher_id = ? ORDER BY id DESC LIMIT 1",
+            "SELECT ended_at FROM session_events WHERE teacher_id = $1 ORDER BY id DESC LIMIT 1",
         )
         .bind(teacher_id)
         .fetch_optional(&app.state.db)

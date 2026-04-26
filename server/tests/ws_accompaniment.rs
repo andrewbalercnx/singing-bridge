@@ -612,11 +612,11 @@ async fn test_17_non_monotone_bar_timings_returns_internal() {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64;
     let (asset_id,): (i64,) = sqlx::query_as(
-        "INSERT INTO accompaniments (teacher_id, title, bar_timings_json, created_at) VALUES (?, 'Bad', ?, ?) RETURNING id",
+        "INSERT INTO accompaniments (teacher_id, title, bar_timings_json, created_at) VALUES ($1, 'Bad', $2, $3) RETURNING id",
     ).bind(teacher_id).bind(&bad_timings).bind(now)
     .fetch_one(&app.state.db).await.unwrap();
     let (variant_id,): (i64,) = sqlx::query_as(
-        "INSERT INTO accompaniment_variants (accompaniment_id, label, wav_blob_key, tempo_pct, transpose_semitones, respect_repeats, created_at) VALUES (?, 'V', ?, 100, 0, 0, ?) RETURNING id",
+        "INSERT INTO accompaniment_variants (accompaniment_id, label, wav_blob_key, tempo_pct, transpose_semitones, respect_repeats, created_at) VALUES ($1, 'V', $2, 100, 0, 0, $3) RETURNING id",
     ).bind(asset_id).bind(wav_blob_key).bind(now)
     .fetch_one(&app.state.db).await.unwrap();
     app.state.blob.put(wav_blob_key, Box::pin(std::io::Cursor::new(b"RIFF\x00\x00\x00\x00WAVEfake" as &[u8]))).await.unwrap();
@@ -663,11 +663,11 @@ async fn test_18_out_of_range_page_index_in_bar_coords_skipped() {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64;
     let (asset_id,): (i64,) = sqlx::query_as(
-        "INSERT INTO accompaniments (teacher_id, title, page_blob_keys_json, bar_coords_json, bar_timings_json, created_at) VALUES (?, 'OOR', ?, ?, ?, ?) RETURNING id",
+        "INSERT INTO accompaniments (teacher_id, title, page_blob_keys_json, bar_coords_json, bar_timings_json, created_at) VALUES ($1, 'OOR', $2, $3, $4, $5) RETURNING id",
     ).bind(teacher_id).bind(&page_blob_keys_json).bind(&bar_coords).bind(&bar_timings).bind(now)
     .fetch_one(&app.state.db).await.unwrap();
     let (variant_id,): (i64,) = sqlx::query_as(
-        "INSERT INTO accompaniment_variants (accompaniment_id, label, wav_blob_key, tempo_pct, transpose_semitones, respect_repeats, created_at) VALUES (?, 'V', ?, 100, 0, 0, ?) RETURNING id",
+        "INSERT INTO accompaniment_variants (accompaniment_id, label, wav_blob_key, tempo_pct, transpose_semitones, respect_repeats, created_at) VALUES ($1, 'V', $2, 100, 0, 0, $3) RETURNING id",
     ).bind(asset_id).bind(wav_blob_key).bind(now)
     .fetch_one(&app.state.db).await.unwrap();
     app.state.blob.put(wav_blob_key, Box::pin(std::io::Cursor::new(b"RIFF\x00\x00\x00\x00WAVEfake" as &[u8]))).await.unwrap();

@@ -52,7 +52,7 @@ async fn teacher_cookie_for_slug_a_watching_slug_b_rejected() {
     let app = spawn_app().await;
     let cookie = app.signup_teacher("alice@example.test", "alice").await;
     // Alice's cookie cannot watch bob's room.
-    sqlx::query("INSERT INTO teachers (email, slug, created_at) VALUES (?, ?, ?)")
+    sqlx::query("INSERT INTO teachers (email, slug, created_at) VALUES ($1, $2, $3)")
         .bind("bob@example.test")
         .bind("bob")
         .bind(0_i64)
@@ -107,7 +107,7 @@ async fn teacher_cookie_for_slug_a_joining_slug_b_as_student_succeeds() {
 async fn admit_with_mismatched_slug_rejected() {
     let app = spawn_app().await;
     let cookie = app.signup_teacher("alice@example.test", "alice").await;
-    sqlx::query("INSERT INTO teachers (email, slug, created_at) VALUES (?, ?, ?)")
+    sqlx::query("INSERT INTO teachers (email, slug, created_at) VALUES ($1, $2, $3)")
         .bind("bob@example.test")
         .bind("bob")
         .bind(0_i64)

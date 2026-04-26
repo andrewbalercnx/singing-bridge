@@ -324,9 +324,9 @@ async fn fetch_and_validate_variant(
                     a.page_blob_keys_json, a.bar_coords_json, a.bar_timings_json
              FROM accompaniment_variants av
              JOIN accompaniments a ON a.id = av.accompaniment_id
-             WHERE av.id = ?1
-               AND av.accompaniment_id = ?2
-               AND a.teacher_id = ?3
+             WHERE av.id = $1
+               AND av.accompaniment_id = $2
+               AND a.teacher_id = $3
                AND av.deleted_at IS NULL
                AND a.deleted_at IS NULL",
         )

@@ -25,18 +25,6 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_PASSWORD: postgres
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 5432:5432
     steps:
       - uses: actions/checkout@v4
         with:
@@ -82,7 +70,7 @@ jobs:
 
       - name: Rust tests
         env:
-          DATABASE_TEST_URL: postgres://postgres:postgres@localhost:5432/postgres
+          DATABASE_TEST_URL: ${{ secrets.DATABASE_TEST_URL }}
         run: cargo test -p singing-bridge-server
 
   deploy:

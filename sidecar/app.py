@@ -172,8 +172,13 @@ def omr():
             xml_path = pdf_to_musicxml(pdf_path, tmp_path / "omr_out")
         except AudiverisMissing as e:
             return error_resp("AUDIVERIS_MISSING", str(e), 503)
-        except (subprocess.CalledProcessError, RuntimeError) as e:
-            return error_resp("OMR_FAILED", f"Audiveris failed: {e}", 422)
+        except subprocess.CalledProcessError as e:
+            detail = (e.stderr or e.output or "").strip()[-800:]
+            app.logger.error("Audiveris stderr: %s", detail)
+            return error_resp("OMR_FAILED", f"Audiveris exit {e.returncode}: {detail}", 422)
+        except RuntimeError as e:
+            app.logger.error("OMR runtime error: %s", e)
+            return error_resp("OMR_FAILED", str(e), 422)
 
         try:
             import mido
@@ -290,8 +295,13 @@ def bar_coords():
             pdf_to_musicxml(pdf_path, tmp_path / "omr_out")
         except AudiverisMissing as e:
             return error_resp("AUDIVERIS_MISSING", str(e), 503)
-        except (subprocess.CalledProcessError, RuntimeError) as e:
-            return error_resp("OMR_FAILED", f"Audiveris failed: {e}", 422)
+        except subprocess.CalledProcessError as e:
+            detail = (e.stderr or e.output or "").strip()[-800:]
+            app.logger.error("Audiveris stderr (bar-coords): %s", detail)
+            return error_resp("OMR_FAILED", f"Audiveris exit {e.returncode}: {detail}", 422)
+        except RuntimeError as e:
+            app.logger.error("OMR runtime error (bar-coords): %s", e)
+            return error_resp("OMR_FAILED", str(e), 422)
 
         omr_files = list((tmp_path / "omr_out").rglob("*.omr"))
         if not omr_files:

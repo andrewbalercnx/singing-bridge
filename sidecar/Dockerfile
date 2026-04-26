@@ -1,6 +1,6 @@
 # File: sidecar/Dockerfile
 # Purpose: Production sidecar image — Python 3.12 + FluidSynth + Audiveris + ghostscript.
-# Last updated: Sprint 20 (2026-04-26) -- libxtst6/xdg-utils deps; dpkg --unpack to skip postinst
+# Last updated: Sprint 21 (2026-04-26) -- dpkg-deb --extract + manual symlink; fixes audiveris missing from PATH
 
 FROM python:3.12-slim
 
@@ -21,12 +21,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 ENV PIANO_SF2=/usr/share/sounds/sf2/FluidR3_GM.sf2
 
 # Install Audiveris 5.10.2 via Ubuntu 24.04 deb (compatible with Debian Trixie).
-# Use --unpack (not -i) to extract files without running the post-install script,
-# which calls xdg-desktop-menu and fails in headless containers.
+# Use dpkg-deb --extract to unpack data files only (no postinst).
+# postinst calls xdg-desktop-menu which fails in headless containers.
+# Manually symlink the launcher so `audiveris` is on PATH.
 RUN curl -fsSL \
     "https://github.com/Audiveris/audiveris/releases/download/5.10.2/Audiveris-5.10.2-ubuntu24.04-x86_64.deb" \
     -o /tmp/audiveris.deb \
-    && dpkg --unpack /tmp/audiveris.deb \
+    && dpkg-deb --extract /tmp/audiveris.deb / \
+    && chmod +x /opt/audiveris/bin/Audiveris \
+    && ln -sf /opt/audiveris/bin/Audiveris /usr/local/bin/audiveris \
     && rm /tmp/audiveris.deb
 
 WORKDIR /app

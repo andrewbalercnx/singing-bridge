@@ -26,6 +26,54 @@ const EMPTY_ZIP: &[u8] = &[
 ];
 
 // ---------------------------------------------------------------------------
+// Async OMR poll helpers
+// ---------------------------------------------------------------------------
+
+/// Poll GET <poll_url> until the job is done (200) and return the JSON body.
+/// Panics if the job fails (422) or doesn't complete within 50 attempts.
+async fn poll_parts_until_done(
+    app: &common::TestApp,
+    cookie: &str,
+    poll_url: &str,
+) -> serde_json::Value {
+    for _ in 0..50 {
+        let r = app.client
+            .get(app.url(poll_url))
+            .header("cookie", format!("sb_session={cookie}"))
+            .send()
+            .await
+            .unwrap();
+        if r.status() == 200 {
+            return r.json().await.unwrap();
+        }
+        assert_eq!(r.status(), 202, "unexpected status while polling parts");
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    panic!("parts job did not complete within 50 polls");
+}
+
+/// Poll GET <poll_url> until the job settles (any status other than 202).
+async fn poll_parts_until_settled(
+    app: &common::TestApp,
+    cookie: &str,
+    poll_url: &str,
+) -> reqwest::Response {
+    for _ in 0..50 {
+        let r = app.client
+            .get(app.url(poll_url))
+            .header("cookie", format!("sb_session={cookie}"))
+            .send()
+            .await
+            .unwrap();
+        if r.status() != 202 {
+            return r;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    panic!("parts job did not settle within 50 polls");
+}
+
+// ---------------------------------------------------------------------------
 // Library page
 // ---------------------------------------------------------------------------
 
@@ -733,17 +781,22 @@ async fn post_parts_proxies_to_sidecar() {
     assert_eq!(r.status(), 201);
     let id = r.json::<serde_json::Value>().await.unwrap()["id"].as_i64().unwrap();
 
-    // POST /parts.
-    let parts = app.client
+    // POST /parts → 202 Accepted + poll URL.
+    let r202 = app.client
         .post(app.url(&format!("/teach/room-a/library/assets/{id}/parts")))
         .header("cookie", format!("sb_session={cookie}"))
         .send()
         .await
         .unwrap();
-    assert_eq!(parts.status(), 200);
-    let body: serde_json::Value = parts.json().await.unwrap();
-    assert_eq!(body.as_array().unwrap().len(), 2);
-    assert_eq!(body[0]["name"], "Piano");
+    assert_eq!(r202.status(), 202);
+    let j202: serde_json::Value = r202.json().await.unwrap();
+    let poll_url = j202["poll_url"].as_str().unwrap().to_string();
+
+    // Poll until the job completes (mock sidecar responds immediately).
+    let body = poll_parts_until_done(&app, &cookie, &poll_url).await;
+    let parts = body["parts"].as_array().unwrap();
+    assert_eq!(parts.len(), 2);
+    assert_eq!(parts[0]["name"], "Piano");
 
     app.shutdown().await;
 }
@@ -1161,7 +1214,7 @@ async fn post_rasterise_bar_coords_too_large_rejected() {
 }
 
 // ---------------------------------------------------------------------------
-// Test 31 — /omr 503 → POST /parts → 503 sidecar_unavailable; /healthz → 200
+// Test 31 — /omr 503 → POST /parts → 202 + poll → 422 failed; /healthz → 200
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
@@ -1181,15 +1234,21 @@ async fn post_parts_sidecar_503_returns_503() {
     let cookie = app.signup_teacher("t@test.com", "room-a").await;
     let id = upload_pdf_with_app(&app, &cookie).await;
 
-    let r = app.client
+    let r202 = app.client
         .post(app.url(&format!("/teach/room-a/library/assets/{id}/parts")))
         .header("cookie", format!("sb_session={cookie}"))
         .send()
         .await
         .unwrap();
-    assert_eq!(r.status(), 503);
-    let body: serde_json::Value = r.json().await.unwrap();
-    assert_eq!(body["code"], "sidecar_unavailable");
+    assert_eq!(r202.status(), 202);
+    let poll_url = r202.json::<serde_json::Value>().await.unwrap()["poll_url"]
+        .as_str().unwrap().to_string();
+
+    // Job fails because sidecar returns 503 — poll should settle at 422.
+    let final_resp = poll_parts_until_settled(&app, &cookie, &poll_url).await;
+    assert_eq!(final_resp.status(), 422);
+    let body: serde_json::Value = final_resp.json().await.unwrap();
+    assert_eq!(body["status"], "failed");
 
     let health = app.client.get(app.url("/healthz")).send().await.unwrap();
     assert_eq!(health.status(), 200);
@@ -1224,15 +1283,21 @@ async fn post_parts_list_parts_bad_input_returns_422() {
     let cookie = app.signup_teacher("t@test.com", "room-a").await;
     let id = upload_pdf_with_app(&app, &cookie).await;
 
-    let r = app.client
+    let r202 = app.client
         .post(app.url(&format!("/teach/room-a/library/assets/{id}/parts")))
         .header("cookie", format!("sb_session={cookie}"))
         .send()
         .await
         .unwrap();
-    assert_eq!(r.status(), 422);
-    let body: serde_json::Value = r.json().await.unwrap();
-    assert_eq!(body["code"], "sidecar_bad_input");
+    assert_eq!(r202.status(), 202);
+    let poll_url = r202.json::<serde_json::Value>().await.unwrap()["poll_url"]
+        .as_str().unwrap().to_string();
+
+    // list-parts returned 422 — job should fail and poll should settle at 422.
+    let final_resp = poll_parts_until_settled(&app, &cookie, &poll_url).await;
+    assert_eq!(final_resp.status(), 422);
+    let body: serde_json::Value = final_resp.json().await.unwrap();
+    assert_eq!(body["status"], "failed");
 
     app.shutdown().await;
 }

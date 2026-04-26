@@ -573,6 +573,9 @@ pub(crate) async fn post_parts(
 ) -> Result<Response> {
     let teacher_id = require_auth(&state, &headers).await?;
     require_slug_owner(&state, teacher_id, &slug).await?;
+    // Validate PDF exists synchronously — returns 400 for WAV/MIDI-only assets
+    // rather than accepting a job that will immediately fail in the background.
+    require_pdf_key(&state, asset_id, teacher_id).await?;
 
     let job_id = uuid::Uuid::new_v4();
     state.omr_jobs.insert(job_id, OmrJob {

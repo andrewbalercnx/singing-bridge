@@ -520,22 +520,31 @@ async fn test_15_rapid_sequence_final_state_cleared() {
     send_ws(&mut teacher, &serde_json::json!({"type": "accompaniment_stop"})).await;
 
     // Drain all messages and find the last AccompanimentState.
-    // Use 3s for the first read (WAN DB round-trip may exceed 500ms), then
-    // 500ms for subsequent reads to exit once the burst has settled.
+    // Use ws.next() directly (not recv_json) so a timeout returns Err(Elapsed)
+    // rather than panicking — recv_json's internal 2s panic would fire before
+    // a longer outer timeout could cancel it gracefully.
+    // 3s per read: enough for a WAN DB round-trip; break on first silence.
     let mut last_state: Option<serde_json::Value> = None;
-    for i in 0..8 {
-        let timeout_ms = if i == 0 { 3000 } else { 500 };
+    use futures_util::StreamExt as _;
+    use tokio_tungstenite::tungstenite::Message;
+    loop {
         match tokio::time::timeout(
-            std::time::Duration::from_millis(timeout_ms),
-            recv_json(&mut teacher),
+            std::time::Duration::from_secs(3),
+            teacher.next(),
         )
         .await
         {
-            Ok(msg) if msg["type"] == "accompaniment_state" => {
-                last_state = Some(msg);
+            Ok(Some(Ok(Message::Text(s)))) => {
+                if let Ok(msg) = serde_json::from_str::<serde_json::Value>(&s) {
+                    if msg["type"] == "accompaniment_state" {
+                        let done = msg["asset_id"].is_null();
+                        last_state = Some(msg);
+                        if done { break; }
+                    }
+                }
             }
-            Ok(_) => {}
-            Err(_) => break,
+            Ok(Some(Ok(_))) => {} // ping / pong / binary — skip
+            Ok(_) | Err(_) => break, // WS closed or 3s silence — done
         }
     }
 

@@ -120,16 +120,16 @@ pub mod test_helpers {
                 return;
             }
             let admin_url = self.admin_url.clone();
-            let pool = self.pool.clone();
-            // Spawn a dedicated thread with its own runtime so we can run async
-            // cleanup from a synchronous Drop context.
+            // Do NOT call pool.close().await here: the pool's background tasks run
+            // on the test's tokio runtime, which is blocked waiting for this Drop to
+            // finish — calling close() from a new runtime deadlocks. DROP WITH (FORCE)
+            // terminates any remaining connections server-side.
             std::thread::spawn(move || {
                 tokio::runtime::Builder::new_current_thread()
                     .enable_all()
                     .build()
                     .expect("TestDb cleanup runtime")
                     .block_on(async move {
-                        pool.close().await;
                         if let Ok(admin) = PgPoolOptions::new()
                             .max_connections(1)
                             .connect(&admin_url)

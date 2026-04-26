@@ -67,13 +67,15 @@ impl Drop for TestApp {
             let db_name = self.db_name.clone();
             let admin_url = self.admin_url.clone();
             let pool = self.state.db.clone();
+            // Do NOT call pool.close().await — same cross-runtime deadlock risk as
+            // TestDb::Drop. DROP WITH (FORCE) terminates connections server-side.
+            let _ = pool; // drop the pool reference; actual cleanup via FORCE below
             std::thread::spawn(move || {
                 tokio::runtime::Builder::new_current_thread()
                     .enable_all()
                     .build()
                     .expect("TestApp Drop runtime")
                     .block_on(async move {
-                        pool.close().await;
                         if let Ok(admin) = PgPoolOptions::new()
                             .max_connections(1)
                             .connect(&admin_url)

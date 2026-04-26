@@ -155,31 +155,16 @@ pub async fn close_row(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sqlx::{postgres::PgPoolOptions, PgPool};
-    use std::sync::atomic::{AtomicU64, Ordering};
+    use crate::db::test_helpers::TestDb;
 
-    static DB_COUNTER: AtomicU64 = AtomicU64::new(0);
-
-    async fn make_pool() -> PgPool {
-        let admin_url = std::env::var("DATABASE_TEST_URL")
-            .expect("DATABASE_TEST_URL must be set for session_log inline tests");
-        let n = DB_COUNTER.fetch_add(1, Ordering::Relaxed);
-        let pid = std::process::id();
-        let db_name = format!("singing_bridge_test_{pid}_{n}");
-        let admin = PgPoolOptions::new().max_connections(1).connect(&admin_url).await.unwrap();
-        sqlx::query(&format!("CREATE DATABASE \"{db_name}\"")).execute(&admin).await.unwrap();
-        admin.close().await;
-        let db_url = match admin_url.rfind('/') {
-            Some(idx) => format!("{}/{}", &admin_url[..idx], db_name),
-            None => format!("{}/{}", admin_url, db_name),
-        };
-        crate::db::run_migrations(&db_url).await.unwrap();
-        let pool = crate::db::init_pool(&db_url).await.unwrap();
+    /// Returns a TestDb (RAII guard) with a teacher row pre-inserted.
+    async fn make_db() -> TestDb {
+        let td = crate::db::test_helpers::make_test_db().await;
         sqlx::query("INSERT INTO teachers (email, slug, created_at) VALUES ('teacher@test.com', 'testslug', 0)")
-            .execute(&pool)
+            .execute(&td.pool)
             .await
             .unwrap();
-        pool
+        td
     }
 
     fn sample_hash() -> [u8; 32] {
@@ -188,7 +173,8 @@ mod tests {
 
     #[tokio::test]
     async fn open_row_creates_row_with_null_ended_at() {
-        let pool = make_pool().await;
+        let td = make_db().await;
+        let pool = &td.pool;
         let id = SessionLogId::new();
         let (teacher_id,): (i64,) = sqlx::query_as("SELECT id FROM teachers WHERE slug = 'testslug'")
             .fetch_one(&pool).await.unwrap();
@@ -203,7 +189,8 @@ mod tests {
 
     #[tokio::test]
     async fn close_row_sets_ended_at_and_duration() {
-        let pool = make_pool().await;
+        let td = make_db().await;
+        let pool = &td.pool;
         let id = SessionLogId::new();
         let (teacher_id,): (i64,) = sqlx::query_as("SELECT id FROM teachers WHERE slug = 'testslug'")
             .fetch_one(&pool).await.unwrap();
@@ -222,7 +209,8 @@ mod tests {
 
     #[tokio::test]
     async fn duration_secs_never_negative() {
-        let pool = make_pool().await;
+        let td = make_db().await;
+        let pool = &td.pool;
         let id = SessionLogId::new();
         let (teacher_id,): (i64,) = sqlx::query_as("SELECT id FROM teachers WHERE slug = 'testslug'")
             .fetch_one(&pool).await.unwrap();
@@ -240,7 +228,8 @@ mod tests {
 
     #[tokio::test]
     async fn close_row_is_idempotent() {
-        let pool = make_pool().await;
+        let td = make_db().await;
+        let pool = &td.pool;
         let id = SessionLogId::new();
         let (teacher_id,): (i64,) = sqlx::query_as("SELECT id FROM teachers WHERE slug = 'testslug'")
             .fetch_one(&pool).await.unwrap();
@@ -258,7 +247,8 @@ mod tests {
 
     #[tokio::test]
     async fn record_peak_updates_high_watermark() {
-        let pool = make_pool().await;
+        let td = make_db().await;
+        let pool = &td.pool;
         let id = SessionLogId::new();
         let (teacher_id,): (i64,) = sqlx::query_as("SELECT id FROM teachers WHERE slug = 'testslug'")
             .fetch_one(&pool).await.unwrap();
@@ -277,7 +267,8 @@ mod tests {
 
     #[tokio::test]
     async fn record_peak_noop_on_missing_row() {
-        let pool = make_pool().await;
+        let td = make_db().await;
+        let pool = &td.pool;
         let id = SessionLogId::new(); // no open_row
         // Should not error
         record_peak(&pool, &id, 500, 100).await.unwrap();
@@ -293,7 +284,8 @@ mod tests {
 
     #[tokio::test]
     async fn session_log_no_plaintext_email_or_ip() {
-        let pool = make_pool().await;
+        let td = make_db().await;
+        let pool = &td.pool;
         let id = SessionLogId::new();
         let (teacher_id,): (i64,) = sqlx::query_as("SELECT id FROM teachers WHERE slug = 'testslug'")
             .fetch_one(&pool).await.unwrap();

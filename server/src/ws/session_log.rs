@@ -157,14 +157,17 @@ mod tests {
     use super::*;
     use crate::db::test_helpers::TestDb;
 
-    /// Returns a TestDb (RAII guard) with a teacher row pre-inserted.
-    async fn make_db() -> TestDb {
+    /// Returns a (TestDb guard, PgPool) with a teacher row pre-inserted.
+    /// Caller must keep `_td` alive for the duration of the test so the DB is
+    /// not dropped before the test body completes.
+    async fn make_db() -> (TestDb, sqlx::PgPool) {
         let td = crate::db::test_helpers::make_test_db().await;
         sqlx::query("INSERT INTO teachers (email, slug, created_at) VALUES ('teacher@test.com', 'testslug', 0)")
             .execute(&td.pool)
             .await
             .unwrap();
-        td
+        let pool = td.pool.clone();
+        (td, pool)
     }
 
     fn sample_hash() -> [u8; 32] {
@@ -173,8 +176,7 @@ mod tests {
 
     #[tokio::test]
     async fn open_row_creates_row_with_null_ended_at() {
-        let td = make_db().await;
-        let pool = &td.pool;
+        let (_td, pool) = make_db().await;
         let id = SessionLogId::new();
         let (teacher_id,): (i64,) = sqlx::query_as("SELECT id FROM teachers WHERE slug = 'testslug'")
             .fetch_one(&pool).await.unwrap();
@@ -189,8 +191,7 @@ mod tests {
 
     #[tokio::test]
     async fn close_row_sets_ended_at_and_duration() {
-        let td = make_db().await;
-        let pool = &td.pool;
+        let (_td, pool) = make_db().await;
         let id = SessionLogId::new();
         let (teacher_id,): (i64,) = sqlx::query_as("SELECT id FROM teachers WHERE slug = 'testslug'")
             .fetch_one(&pool).await.unwrap();
@@ -209,8 +210,7 @@ mod tests {
 
     #[tokio::test]
     async fn duration_secs_never_negative() {
-        let td = make_db().await;
-        let pool = &td.pool;
+        let (_td, pool) = make_db().await;
         let id = SessionLogId::new();
         let (teacher_id,): (i64,) = sqlx::query_as("SELECT id FROM teachers WHERE slug = 'testslug'")
             .fetch_one(&pool).await.unwrap();
@@ -228,8 +228,7 @@ mod tests {
 
     #[tokio::test]
     async fn close_row_is_idempotent() {
-        let td = make_db().await;
-        let pool = &td.pool;
+        let (_td, pool) = make_db().await;
         let id = SessionLogId::new();
         let (teacher_id,): (i64,) = sqlx::query_as("SELECT id FROM teachers WHERE slug = 'testslug'")
             .fetch_one(&pool).await.unwrap();
@@ -247,8 +246,7 @@ mod tests {
 
     #[tokio::test]
     async fn record_peak_updates_high_watermark() {
-        let td = make_db().await;
-        let pool = &td.pool;
+        let (_td, pool) = make_db().await;
         let id = SessionLogId::new();
         let (teacher_id,): (i64,) = sqlx::query_as("SELECT id FROM teachers WHERE slug = 'testslug'")
             .fetch_one(&pool).await.unwrap();
@@ -267,8 +265,7 @@ mod tests {
 
     #[tokio::test]
     async fn record_peak_noop_on_missing_row() {
-        let td = make_db().await;
-        let pool = &td.pool;
+        let (_td, pool) = make_db().await;
         let id = SessionLogId::new(); // no open_row
         // Should not error
         record_peak(&pool, &id, 500, 100).await.unwrap();
@@ -284,8 +281,7 @@ mod tests {
 
     #[tokio::test]
     async fn session_log_no_plaintext_email_or_ip() {
-        let td = make_db().await;
-        let pool = &td.pool;
+        let (_td, pool) = make_db().await;
         let id = SessionLogId::new();
         let (teacher_id,): (i64,) = sqlx::query_as("SELECT id FROM teachers WHERE slug = 'testslug'")
             .fetch_one(&pool).await.unwrap();

@@ -309,7 +309,7 @@ async fn login_account_lockout_after_max_failures() {
     // Seed 3 failures via direct SQL (avoids DUMMY_PHC cost in test).
     for i in 0..3_i64 {
         sqlx::query(
-            "INSERT INTO login_attempts (teacher_id, peer_ip, attempted_at, succeeded) VALUES (?, '127.0.0.1', ?, 0)",
+            "INSERT INTO login_attempts (teacher_id, peer_ip, attempted_at, succeeded) VALUES ($1, '127.0.0.1', $2, 0)",
         )
         .bind(tid)
         .bind(now - 100 + i)
@@ -340,7 +340,7 @@ async fn login_ip_throttle_fires_on_unknown_email() {
     // Seed 3 IP attempts via SQL (unknown-email, teacher_id = NULL).
     for i in 0..3_i64 {
         sqlx::query(
-            "INSERT INTO login_attempts (teacher_id, peer_ip, attempted_at, succeeded) VALUES (NULL, '127.0.0.1', ?, 0)",
+            "INSERT INTO login_attempts (teacher_id, peer_ip, attempted_at, succeeded) VALUES (NULL, '127.0.0.1', $1, 0)",
         )
         .bind(now - 100 + i)
         .execute(&app.state.db)
@@ -379,7 +379,7 @@ async fn login_window_boundary_excluded() {
     let window = app.state.config.login_account_window_secs;
     // Insert a failure at exactly the boundary second — should NOT count.
     sqlx::query(
-        "INSERT INTO login_attempts (teacher_id, peer_ip, attempted_at, succeeded) VALUES (?, '127.0.0.1', ?, 0)",
+        "INSERT INTO login_attempts (teacher_id, peer_ip, attempted_at, succeeded) VALUES ($1, '127.0.0.1', $2, 0)",
     )
     .bind(tid)
     .bind(now - window)

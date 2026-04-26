@@ -1,16 +1,17 @@
 // File: web/assets/library.js
-// Purpose: Teacher accompaniment library page — load, upload, OMR flow, synthesise, delete,
-//          and Web MIDI keyboard recording.
+// Purpose: Teacher accompaniment library page — load, upload, OMR flow, synthesis modal,
+//          variant management, and Web MIDI keyboard recording.
 // Role: Page-level script for /teach/:slug/library.
 // Exports: window.sbLibrary / module.exports (test harness)
 // Depends: fetch API, Web MIDI API (optional — graceful degradation if absent)
 // Invariants: all server-supplied strings rendered via .textContent only (no innerHTML);
 //             upload fires raw file body (not FormData) with X-Title header;
 //             503 responses show sidecar banner except for upload, delete, and expandAsset;
-//             synthesise is validated client-side before fetch;
+//             synthesise() validates client-side before fetch (defense-in-depth; modal also validates);
 //             MIDI port.name set via .textContent only (no innerHTML);
-//             serializeMidi is a pure function — no side effects, no DOM access.
-// Last updated: Sprint 15 (2026-04-23) -- MIDI keyboard recording
+//             serializeMidi is a pure function — no side effects, no DOM access;
+//             openSynthModal submit handler registered once at init — no listener accumulation.
+// Last updated: Sprint 24 (2026-04-26) -- synthesis modal + variant management
 
 (function (root, factory) {
   'use strict';
@@ -25,6 +26,15 @@
   'use strict';
 
   var BASE = '';
+
+  // Module-level synthesis modal state — set by openSynthModal, read by submit handler.
+  var _modalAssetId = null;
+  var _modalHasMidi = false;
+  var _modalParts = null;       // string[] | null
+  var _modalVariantListEl = null;
+  var _modalResynFn = null;     // (variant) => void — passed to renderVariantRow for new rows
+  var _modalBannerEl = null;
+  var _modalBase = '';
 
   // Module-level MIDI recording state.
   var _midiState = {
@@ -162,26 +172,19 @@
         omrStatusEl.className = 'omr-status';
         omrStatusEl.setAttribute('aria-live', 'polite');
 
-        var partPickerEl = document.createElement('div');
-        partPickerEl.className = 'part-picker';
-        partPickerEl.hidden = true;
-
-        var extractMidiBtn = document.createElement('button');
-        extractMidiBtn.type = 'button';
-        extractMidiBtn.className = 'extract-midi-btn';
-        extractMidiBtn.textContent = 'Extract MIDI';
-
-
-        var synthesiseSection = document.createElement('section');
-        synthesiseSection.className = 'synthesise-form';
-        synthesiseSection.hidden = !detail.has_midi;
-
-        var synthStatusEl = document.createElement('p');
-        synthStatusEl.className = 'synthesise-status';
-        synthStatusEl.setAttribute('aria-live', 'polite');
-
         var variantListEl = document.createElement('ul');
         variantListEl.className = 'variant-list';
+
+        // Re-synthesise callback opens the modal pre-filled with existing variant values.
+        function makeResynFn(listEl) {
+          return function (variant) {
+            openSynthModal(id, null, true, listEl, {
+              label: variant.label,
+              tempo_pct: variant.tempo_pct,
+              transpose_semitones: variant.transpose_semitones,
+            }, base, bannerEl);
+          };
+        }
 
         // OMR section (PDF only)
         if (detail.has_pdf) {
@@ -193,20 +196,14 @@
           omrBtn.className = 'omr-btn';
           omrBtn.textContent = 'Run OMR';
 
-          partPickerEl.appendChild(extractMidiBtn);
+          var partPickerEl = document.createElement('div');
+          partPickerEl.className = 'part-picker';
+          partPickerEl.hidden = true;
 
           omrBtn.addEventListener('click', function () {
             omrBtn.disabled = true;
-            omrBtn.textContent = 'Running…';
-            runOmr(id, partPickerEl, omrBtn, omrStatusEl, base, bannerEl);
-          });
-
-          extractMidiBtn.addEventListener('click', function () {
-            var checked = partPickerEl.querySelectorAll('input[type=checkbox]:checked');
-            var indices = [];
-            checked.forEach(function (cb) { indices.push(Number(cb.value)); });
-            extractMidiBtn.disabled = true;
-            extractMidi(id, indices, omrStatusEl, synthesiseSection, base, bannerEl);
+            omrBtn.textContent = 'Running\u2026';
+            runOmr(id, partPickerEl, omrBtn, omrStatusEl, variantListEl, base, bannerEl);
           });
 
           omrSection.appendChild(omrBtn);
@@ -215,62 +212,23 @@
           detailEl.appendChild(omrSection);
         }
 
-        // Synthesise form (PDF or MIDI asset)
-        if (detail.has_pdf || detail.has_midi) {
-          var labelInput = document.createElement('input');
-          labelInput.type = 'text';
-          labelInput.className = 'variant-label';
-          labelInput.maxLength = 255;
-
-          var tempoInput = document.createElement('input');
-          tempoInput.type = 'number';
-          tempoInput.className = 'variant-tempo';
-          tempoInput.min = '25';
-          tempoInput.max = '300';
-          tempoInput.value = '100';
-
-          var transposeInput = document.createElement('input');
-          transposeInput.type = 'number';
-          transposeInput.className = 'variant-transpose';
-          transposeInput.min = '-12';
-          transposeInput.max = '12';
-          transposeInput.value = '0';
-
-          var repeatsInput = document.createElement('input');
-          repeatsInput.type = 'checkbox';
-          repeatsInput.className = 'variant-repeats';
-
-          var synthBtn = document.createElement('button');
-          synthBtn.type = 'button';
-          synthBtn.className = 'synthesise-btn';
-          synthBtn.textContent = 'Synthesise';
-
-          var formEl = { labelInput: labelInput, tempoInput: tempoInput, transposeInput: transposeInput, repeatsInput: repeatsInput };
-
-          synthBtn.addEventListener('click', function () {
-            synthesise(id, {
-              label: labelInput.value,
-              tempo_pct: Number(tempoInput.value),
-              transpose_semitones: Number(transposeInput.value),
-              respect_repeats: repeatsInput.checked,
-            }, synthStatusEl, variantListEl, formEl, base, bannerEl);
+        // "New variant" button (shown only when MIDI exists — parts already extracted).
+        if (detail.has_midi) {
+          var newVariantBtn = document.createElement('button');
+          newVariantBtn.type = 'button';
+          newVariantBtn.className = 'new-variant-btn sb-btn sb-btn--ghost sb-mt-2';
+          newVariantBtn.setAttribute('data-asset-id', String(id));
+          newVariantBtn.textContent = '+ New variant';
+          newVariantBtn.addEventListener('click', function () {
+            openSynthModal(id, null, true, variantListEl, null, base, bannerEl);
           });
-
-          synthesiseSection.appendChild(labelInput);
-          synthesiseSection.appendChild(tempoInput);
-          synthesiseSection.appendChild(transposeInput);
-          synthesiseSection.appendChild(repeatsInput);
-          synthesiseSection.appendChild(synthBtn);
-          synthesiseSection.appendChild(synthStatusEl);
-          detailEl.appendChild(synthesiseSection);
+          detailEl.appendChild(newVariantBtn);
         }
 
         // Variant list
         if (detail.variants) {
           detail.variants.forEach(function (variant) {
-            variantListEl.appendChild(renderVariantRow(id, variant, base, bannerEl, function (req) {
-              synthesise(id, req, synthStatusEl, variantListEl, null, base, bannerEl);
-            }));
+            variantListEl.appendChild(renderVariantRow(id, variant, base, bannerEl, makeResynFn(variantListEl)));
           });
         }
         detailEl.appendChild(variantListEl);
@@ -280,11 +238,45 @@
       });
   }
 
+  // Show the "New variant" button on an already-expanded card after first MIDI creation.
+  function showNewVariantButton(assetId, variantListEl, base, bannerEl) {
+    var btn = document.querySelector('.new-variant-btn[data-asset-id="' + assetId + '"]');
+    if (btn) {
+      btn.hidden = false;
+      return;
+    }
+    // Button doesn't exist yet (asset was has_pdf only at expand time) — create and insert.
+    var detailEls = document.querySelectorAll('.asset-detail');
+    var targetDetail = null;
+    for (var i = 0; i < detailEls.length; i++) {
+      var row = detailEls[i].closest('[data-id]');
+      if (row && row.getAttribute('data-id') === String(assetId)) {
+        targetDetail = detailEls[i];
+        break;
+      }
+    }
+    if (!targetDetail) return;
+    var newBtn = document.createElement('button');
+    newBtn.type = 'button';
+    newBtn.className = 'new-variant-btn sb-btn sb-btn--ghost sb-mt-2';
+    newBtn.setAttribute('data-asset-id', String(assetId));
+    newBtn.textContent = '+ New variant';
+    newBtn.addEventListener('click', function () {
+      openSynthModal(assetId, null, true, variantListEl, null, base, bannerEl);
+    });
+    var list = targetDetail.querySelector('.variant-list');
+    if (list) {
+      targetDetail.insertBefore(newBtn, list);
+    } else {
+      targetDetail.appendChild(newBtn);
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // OMR flow
   // ---------------------------------------------------------------------------
 
-  function runOmr(assetId, partPickerEl, omrBtn, statusEl, base, bannerEl) {
+  function runOmr(assetId, partPickerEl, omrBtn, statusEl, variantListEl, base, bannerEl) {
     fetch(base + '/' + assetId + '/parts', { method: 'POST' })
       .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, status: r.status, data: d }; }); })
       .then(function (res) {
@@ -296,7 +288,7 @@
           return;
         }
         statusEl.textContent = 'OMR running\u2026';
-        pollOmrJob(res.data.poll_url, assetId, partPickerEl, omrBtn, statusEl, base, bannerEl);
+        pollOmrJob(res.data.poll_url, assetId, partPickerEl, omrBtn, statusEl, variantListEl, base, bannerEl);
       })
       .catch(function (err) {
         omrBtn.disabled = false;
@@ -305,13 +297,13 @@
       });
   }
 
-  function pollOmrJob(pollUrl, assetId, partPickerEl, omrBtn, statusEl, base, bannerEl) {
+  function pollOmrJob(pollUrl, assetId, partPickerEl, omrBtn, statusEl, variantListEl, base, bannerEl) {
     fetch(pollUrl)
       .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, status: r.status, data: d }; }); })
       .then(function (res) {
         if (res.status === 202) {
           setTimeout(function () {
-            pollOmrJob(pollUrl, assetId, partPickerEl, omrBtn, statusEl, base, bannerEl);
+            pollOmrJob(pollUrl, assetId, partPickerEl, omrBtn, statusEl, variantListEl, base, bannerEl);
           }, 3000);
           return;
         }
@@ -322,24 +314,11 @@
           statusEl.textContent = (res.data && res.data.message) || 'OMR failed';
           return;
         }
-        var parts = res.data.parts;
-        var extractBtn = partPickerEl.querySelector('.extract-midi-btn');
-        partPickerEl.replaceChildren();
-        parts.forEach(function (part) {
-          var label = document.createElement('label');
-          var cb = document.createElement('input');
-          cb.type = 'checkbox';
-          cb.value = String(part.index);
-          cb.checked = true;
-          var span = document.createElement('span');
-          span.textContent = part.name;
-          label.appendChild(cb);
-          label.appendChild(span);
-          partPickerEl.appendChild(label);
-        });
-        if (extractBtn) partPickerEl.appendChild(extractBtn);
-        partPickerEl.hidden = false;
+        var parts = res.data.parts || [];
+        partPickerEl.hidden = true; // part picker no longer needed; modal handles voice selection
         rasterise(assetId, statusEl, base, bannerEl);
+        var partNames = parts.map(function (p) { return p.name; });
+        openSynthModal(assetId, partNames, false, variantListEl, null, base, bannerEl);
       })
       .catch(function (err) {
         omrBtn.disabled = false;
@@ -348,7 +327,7 @@
       });
   }
 
-  function extractMidi(assetId, partIndices, statusEl, synthesiseFormEl, base, bannerEl) {
+  function extractMidi(assetId, partIndices, statusEl, onSuccess, onFailure, base, bannerEl) {
     fetch(base + '/' + assetId + '/midi', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -359,13 +338,15 @@
         if (!res.ok) {
           if (res.status === 503) show503Banner(bannerEl);
           statusEl.textContent = (res.data && res.data.message) || 'MIDI extraction failed';
+          if (onFailure) onFailure();
           return;
         }
         statusEl.textContent = res.data.bar_count + ' bars extracted';
-        if (synthesiseFormEl) synthesiseFormEl.hidden = false;
+        if (onSuccess) onSuccess();
       })
       .catch(function (err) {
         statusEl.textContent = 'MIDI extraction failed: ' + err.message;
+        if (onFailure) onFailure();
       });
   }
 
@@ -389,7 +370,7 @@
   // Synthesise
   // ---------------------------------------------------------------------------
 
-  function synthesise(assetId, req, statusEl, variantListEl, formEl, base, bannerEl) {
+  function synthesise(assetId, req, statusEl, variantListEl, formEl, base, bannerEl, resynFn) {
     if (!req.label || !req.label.trim()) {
       if (statusEl) statusEl.textContent = 'Label is required';
       return;
@@ -423,15 +404,16 @@
           respect_repeats: req.respect_repeats,
         };
         if (variantListEl) {
-          variantListEl.prepend(renderVariantRow(assetId, displayReq, base, bannerEl, function (rReq) {
+          var rowResynFn = resynFn || function (rReq) {
             synthesise(assetId, rReq, statusEl, variantListEl, formEl, base, bannerEl);
-          }));
+          };
+          variantListEl.prepend(renderVariantRow(assetId, displayReq, base, bannerEl, rowResynFn));
         }
         if (formEl) {
           formEl.labelInput.value = '';
           formEl.tempoInput.value = '100';
           formEl.transposeInput.value = '0';
-          formEl.repeatsInput.checked = false;
+          if (formEl.repeatsInput) formEl.repeatsInput.checked = false;
         }
       })
       .catch(function (err) {
@@ -972,6 +954,204 @@
   }
 
   // ---------------------------------------------------------------------------
+  // Synthesis modal
+  // ---------------------------------------------------------------------------
+
+  function openSynthModal(assetId, parts, hasMidi, variantListEl, prefill, base, bannerEl) {
+    var dialog = document.getElementById('synth-modal');
+    if (!dialog) return;
+
+    // Guard: if no MIDI yet and no parts, cannot synthesise.
+    if (!hasMidi && (!parts || parts.length === 0)) {
+      var statusEl = document.getElementById('synth-modal-status');
+      if (statusEl) {
+        statusEl.textContent = 'No voices detected \u2014 re-run OMR.';
+        statusEl.hidden = false;
+      }
+      return;
+    }
+
+    // Store state for the submit handler.
+    _modalAssetId = assetId;
+    _modalHasMidi = hasMidi;
+    _modalParts = parts;
+    _modalVariantListEl = variantListEl;
+    _modalBase = base;
+    _modalBannerEl = bannerEl;
+    _modalResynFn = function (variant) {
+      openSynthModal(assetId, null, true, variantListEl, {
+        label: variant.label,
+        tempo_pct: variant.tempo_pct,
+        transpose_semitones: variant.transpose_semitones,
+      }, base, bannerEl);
+    };
+
+    // Populate / reset form.
+    var labelInput = document.getElementById('synth-modal-label');
+    var tempoInput = document.getElementById('synth-modal-tempo');
+    var transposeInput = document.getElementById('synth-modal-transpose');
+    var voicesSection = dialog.querySelector('.synth-modal__voices');
+    var voiceList = document.getElementById('synth-modal-voice-list');
+    var voicesError = document.getElementById('synth-modal-voices-error');
+    var statusP = document.getElementById('synth-modal-status');
+    var submitBtn = document.getElementById('synth-modal-submit');
+
+    if (labelInput) labelInput.value = prefill ? prefill.label : '';
+    if (tempoInput) tempoInput.value = prefill ? String(prefill.tempo_pct) : '100';
+    if (transposeInput) transposeInput.value = prefill ? String(prefill.transpose_semitones) : '0';
+    if (statusP) { statusP.textContent = ''; statusP.hidden = true; }
+    if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = 'Create Backing Track'; }
+    if (voicesError) { voicesError.textContent = ''; voicesError.hidden = true; }
+
+    // Voice checkboxes (only when parts need selecting).
+    if (voicesSection) {
+      if (!hasMidi && parts && parts.length > 0) {
+        voiceList.replaceChildren();
+        parts.forEach(function (name, idx) {
+          var li = document.createElement('li');
+          var lbl = document.createElement('label');
+          var cb = document.createElement('input');
+          cb.type = 'checkbox';
+          cb.value = String(idx);
+          cb.checked = true;
+          var span = document.createElement('span');
+          span.textContent = name; // .textContent only — no innerHTML
+          lbl.appendChild(cb);
+          lbl.appendChild(span);
+          li.appendChild(lbl);
+          voiceList.appendChild(li);
+        });
+        voicesSection.hidden = false;
+      } else {
+        voicesSection.hidden = true;
+      }
+    }
+
+    // Open dialog (native or fallback).
+    if (typeof dialog.showModal === 'function') {
+      dialog.showModal();
+    } else {
+      dialog.setAttribute('open', '');
+    }
+  }
+
+  function initSynthModal() {
+    var dialog = document.getElementById('synth-modal');
+    if (!dialog) return;
+
+    // Fallback for browsers without native <dialog> support.
+    if (typeof HTMLDialogElement === 'undefined') {
+      dialog.setAttribute('role', 'dialog');
+      dialog.setAttribute('aria-modal', 'true');
+      dialog.showModal = function () { this.removeAttribute('hidden'); this.setAttribute('open', ''); };
+      dialog.close = function () { this.setAttribute('hidden', ''); this.removeAttribute('open'); };
+      dialog.setAttribute('hidden', '');
+    }
+
+    var submitBtn = document.getElementById('synth-modal-submit');
+    var cancelBtn = document.getElementById('synth-modal-cancel');
+    var statusP = document.getElementById('synth-modal-status');
+
+    function showError(msg) {
+      if (statusP) { statusP.textContent = msg; statusP.hidden = false; }
+    }
+
+    function resetSubmitBtn() {
+      if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = 'Create Backing Track'; }
+    }
+
+    if (cancelBtn) {
+      cancelBtn.addEventListener('click', function () {
+        if (typeof dialog.close === 'function') dialog.close();
+        else dialog.removeAttribute('open');
+      });
+    }
+
+    // Submit registered once — reads module-scoped _modal* vars.
+    if (submitBtn) {
+      submitBtn.addEventListener('click', function () {
+        if (!statusP) return;
+        statusP.hidden = true;
+
+        var labelInput = document.getElementById('synth-modal-label');
+        var tempoInput = document.getElementById('synth-modal-tempo');
+        var transposeInput = document.getElementById('synth-modal-transpose');
+        var voicesSection = dialog.querySelector('.synth-modal__voices');
+        var voicesError = document.getElementById('synth-modal-voices-error');
+
+        var label = labelInput ? labelInput.value : '';
+        var tempo = tempoInput ? Number(tempoInput.value) : NaN;
+        var transpose = transposeInput ? Number(transposeInput.value) : NaN;
+
+        // Client-side validation.
+        if (!label || !label.trim()) { showError('Name is required'); return; }
+        if (!Number.isInteger(tempo) || tempo < 25 || tempo > 300) { showError('Tempo must be between 25 and 300'); return; }
+        if (!Number.isInteger(transpose) || transpose < -12 || transpose > 12) { showError('Transpose must be between \u221212 and +12'); return; }
+
+        var checkedIndices = [];
+        if (!_modalHasMidi && voicesSection && !voicesSection.hidden) {
+          var checked = voicesSection.querySelectorAll('input[type=checkbox]:checked');
+          if (checked.length === 0) {
+            if (voicesError) { voicesError.textContent = 'Select at least one voice'; voicesError.hidden = false; }
+            return;
+          }
+          checked.forEach(function (cb) { checkedIndices.push(Number(cb.value)); });
+        }
+
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Synthesising\u2026';
+
+        var req = {
+          label: label.trim(),
+          tempo_pct: tempo,
+          transpose_semitones: transpose,
+          respect_repeats: false,
+        };
+
+        var assetId = _modalAssetId;
+        var hasMidi = _modalHasMidi;
+        var variantListEl = _modalVariantListEl;
+        var resynFn = _modalResynFn;
+        var base = _modalBase;
+        var bannerEl = _modalBannerEl;
+
+        var wrappedList = {
+          prepend: function (el) {
+            if (variantListEl) variantListEl.prepend(el);
+            if (typeof dialog.close === 'function') dialog.close();
+            else dialog.removeAttribute('open');
+            if (!hasMidi) showNewVariantButton(assetId, variantListEl, base, bannerEl);
+          }
+        };
+
+        function doSynth() {
+          // statusProxy intercepts textContent assignments so that any error message
+          // written by synthesise() also re-enables the submit button.
+          var statusProxy = { _el: statusP };
+          Object.defineProperty(statusProxy, 'textContent', {
+            get: function () { return statusProxy._el ? statusProxy._el.textContent : ''; },
+            set: function (v) {
+              if (statusProxy._el) { statusProxy._el.textContent = v; statusProxy._el.hidden = !v; }
+              if (v) resetSubmitBtn();
+            },
+          });
+          synthesise(assetId, req, statusProxy, wrappedList, null, base, bannerEl, resynFn);
+        }
+
+        if (!hasMidi) {
+          extractMidi(assetId, checkedIndices, statusP,
+            function onSuccess() { doSynth(); },
+            function onFailure() { resetSubmitBtn(); },
+            base, bannerEl
+          );
+        } else {
+          doSynth();
+        }
+      });
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // Page init
   // ---------------------------------------------------------------------------
 
@@ -983,6 +1163,7 @@
     document.getElementById('sidecar-banner-close')
       .addEventListener('click', function () { hide503Banner(bannerEl); });
     initUpload(bannerEl);
+    initSynthModal();
     initMidiRecording(bannerEl);
     initMidiUploadControls(bannerEl);
     loadAssets(
@@ -1008,6 +1189,8 @@
     extractMidi: extractMidi,
     rasterise: rasterise,
     synthesise: synthesise,
+    openSynthModal: openSynthModal,
+    initSynthModal: initSynthModal,
     confirmDelete: confirmDelete,
     confirmDeleteVariant: confirmDeleteVariant,
     show503Banner: show503Banner,
@@ -1020,7 +1203,16 @@
     initMidiRecording: initMidiRecording,
     startMidiCapture: startMidiCapture,
     stopMidiCapture: stopMidiCapture,
-    // Test-only hook: set _pendingAutoExpandId without triggering DOM/upload.
+    // Test-only hooks
     _setPendingAutoExpandId: function (id) { _pendingAutoExpandId = id; },
+    _setModalState: function (s) {
+      if (s.assetId !== undefined) _modalAssetId = s.assetId;
+      if (s.hasMidi !== undefined) _modalHasMidi = s.hasMidi;
+      if (s.parts !== undefined) _modalParts = s.parts;
+      if (s.variantListEl !== undefined) _modalVariantListEl = s.variantListEl;
+      if (s.resynFn !== undefined) _modalResynFn = s.resynFn;
+      if (s.base !== undefined) _modalBase = s.base;
+      if (s.bannerEl !== undefined) _modalBannerEl = s.bannerEl;
+    },
   };
 });

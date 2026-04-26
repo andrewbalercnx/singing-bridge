@@ -724,3 +724,26 @@ _Backwards compatibility_
 - Council code review APPROVED
 
 **Status:** COMPLETE — 2026-04-26
+
+---
+
+## Sprint 24: Synthesis modal + variant management
+
+**Goal:** After OMR succeeds, the teacher can create named synthesis variants via a modal dialog — selecting voices, tempo, transpose, and a name — giving them multiple backing tracks per PDF for use in lessons.
+
+**Deliverables:**
+- "Create Backing Track" modal in `library.js` / `library.html`: opens automatically after OMR polling completes (and via a button on any asset with PDF or MIDI)
+- Modal contains: voice checkboxes (for PDF-sourced assets), label input, tempo % (25–300), transpose semitones (−12–12), respect-repeats toggle, Create / Cancel buttons
+- Frontend orchestrates the two-step call sequence: POST `/midi` (if starting from PDF, silently) → POST `/variants`; modal shows a spinner during synthesis
+- On success: modal closes, new variant row prepended to the asset's variant list
+- On error: modal stays open, error message shown inline; teacher can correct and retry
+- Variant list per asset: label, tempo/transpose badge, Delete button; "Use in lesson" affordance (visual indication that variants are the backing tracks available in-session)
+- Existing inline synthesis form removed (replaced by modal)
+
+**Exit criteria:**
+- Teacher uploads PDF, runs OMR, modal opens automatically with detected voices; fills params; variant appears in list
+- Teacher can create a second variant with different tempo without re-running OMR
+- Empty label or out-of-range tempo blocked client-side with inline error in modal
+- Council code review APPROVED
+
+**Status:** IN PROGRESS

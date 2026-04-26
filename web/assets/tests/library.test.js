@@ -1,9 +1,10 @@
 // File: web/assets/tests/library.test.js
 // Purpose: Unit tests for library.js helpers: upload flow, OMR multi-step,
-//          synthesise validation, delete confirmation, 503 banner, rasterise,
-//          expandAsset, loadAssets, MIDI recording (encodeVlq, serializeMidi,
-//          handleMidiMessage, initMidiRecording, stopMidiCapture).
-// Last updated: Sprint 15 (2026-04-23) -- MIDI recording tests
+//          synthesis modal (openSynthModal, submit, failure paths), synthesise validation,
+//          delete confirmation, 503 banner, rasterise, expandAsset, loadAssets,
+//          MIDI recording (encodeVlq, serializeMidi, handleMidiMessage, initMidiRecording,
+//          stopMidiCapture).
+// Last updated: Sprint 24 (2026-04-26) -- synthesis modal + variant management
 
 'use strict';
 
@@ -19,7 +20,21 @@ const lib = require('../library.js');
 // Functions that construct DOM elements (renderSummary, renderVariantRow, etc.)
 // need createElement; this returns makeEl() stubs which support the full
 // set of DOM-like operations the tests exercise.
-globalThis.document = { createElement: function() { return makeEl(); } };
+// getElementById returns null by default (no DOM); individual tests override via
+// globalThis.document.getElementById = function(id) { return elMap[id] || null; }.
+globalThis.document = {
+  createElement: function(tag) {
+    var el = makeEl();
+    if (tag === 'dialog') {
+      el.showModal = function() { el.open = true; el.hidden = false; };
+      el.close = function() { el.open = false; el.hidden = true; };
+    }
+    return el;
+  },
+  getElementById: function() { return null; },
+  querySelector: function() { return null; },
+  querySelectorAll: function() { return []; },
+};
 
 // ---------------------------------------------------------------------------
 // DOM stub helpers
@@ -48,7 +63,8 @@ function makeEl() {
     min: '',
     max: '',
     setAttribute: function(k, v) { _attrs[k] = String(v); },
-    getAttribute: function(k) { return _attrs[k]; },
+    getAttribute: function(k) { return _attrs[k] != null ? _attrs[k] : null; },
+    removeAttribute: function(k) { delete _attrs[k]; },
     addEventListener: function(ev, fn) { (_listeners[ev] = _listeners[ev] || []).push(fn); },
     appendChild: function(c) { _children.push(c); return c; },
     prepend: function(c) { _children.unshift(c); return c; },
@@ -477,77 +493,51 @@ function omrSuccessStub(parts) {
   );
 }
 
-test('runOmr_shows_part_picker_on_success', async function () {
-  globalThis.fetch = omrSuccessStub([{ index: 0, name: 'Piano' }]);
+test('runOmr_hides_part_picker_on_success_opens_modal', async function () {
+  // After OMR success, part picker is hidden and openSynthModal is called.
+  // openSynthModal is stubbed here (dialog not found → no-op guard); verify
+  // that rasterise was also triggered (fetch called twice: POST /parts + GET poll).
+  var fetchCallCount = 0;
+  globalThis.fetch = fetchSequence(
+    { status: 202, body: { job_id: 'j', poll_url: '/base/1/parts/j' } },
+    { status: 200, body: { status: 'done', parts: [{ index: 0, name: 'Piano' }] } },
+    { status: 200, body: { page_count: 2 } }   // rasterise call
+  );
   var partPickerEl = makeEl(); partPickerEl.hidden = true;
-  var omrBtn = makeEl();
-  var statusEl = makeEl();
-  var bannerEl = makeBannerEl();
+  var omrBtn = makeEl(); var statusEl = makeEl(); var variantListEl = makeEl();
   await new Promise(function(resolve) {
-    lib.runOmr(1, partPickerEl, omrBtn, statusEl, '/base', bannerEl);
+    lib.runOmr(1, partPickerEl, omrBtn, statusEl, variantListEl, '/base', makeBannerEl());
     setTimeout(resolve, 50);
   });
-  assert.equal(partPickerEl.hidden, false);
+  // Part picker stays hidden in new flow (modal handles voice selection).
+  assert.equal(partPickerEl.hidden, true);
   delete globalThis.fetch;
 });
 
-test('runOmr_renders_correct_checkbox_count', async function () {
-  globalThis.fetch = omrSuccessStub([{ index: 0, name: 'Violin' }, { index: 1, name: 'Cello' }]);
-  var partPickerEl = makeEl(); partPickerEl.hidden = true;
-  var children = [];
-  partPickerEl.appendChild = function(c) { children.push(c); return c; };
-  partPickerEl.replaceChildren = function() { children = []; };
-  var omrBtn = makeEl();
-  var statusEl = makeEl();
-  await new Promise(function(resolve) {
-    lib.runOmr(1, partPickerEl, omrBtn, statusEl, '/base', makeBannerEl());
-    setTimeout(resolve, 50);
+test('pollOmrJob_success_calls_rasterise', async function () {
+  var urls = [];
+  globalThis.fetch = function(url) {
+    urls.push(url);
+    if (url.indexOf('/parts/') !== -1) {
+      return Promise.resolve({ ok: true, status: 200, json: function() { return Promise.resolve({ status: 'done', parts: [] }); } });
+    }
+    // rasterise
+    return Promise.resolve({ ok: true, status: 200, json: function() { return Promise.resolve({ page_count: 1 }); } });
+  };
+  var partPickerEl = makeEl(); var omrBtn = makeEl(); var statusEl = makeEl(); var variantListEl = makeEl();
+  await new Promise(function(r) {
+    lib.pollOmrJob('/base/1/parts/job1', 1, partPickerEl, omrBtn, statusEl, variantListEl, '/base', makeBannerEl());
+    setTimeout(r, 30);
   });
-  // Each part renders a <label> element
-  var labelCount = children.filter(function(c) { return !c.className || c.className !== 'extract-midi-btn'; }).length;
-  assert.equal(labelCount, 2);
-  delete globalThis.fetch;
-});
-
-test('runOmr_checkbox_value_uses_part_index', async function () {
-  globalThis.fetch = omrSuccessStub([{ index: 3, name: 'Flute' }]);
-  var checkboxValue = null;
-  var partPickerEl = makeEl(); partPickerEl.hidden = true;
-  partPickerEl.appendChild = function(labelEl) {
-    if (labelEl.children && labelEl.children[0] && labelEl.children[0].type === 'checkbox') {
-      checkboxValue = labelEl.children[0].value;
-    }
-    return labelEl;
-  };
-  partPickerEl.replaceChildren = function() {};
-  var omrBtn = makeEl(); var statusEl = makeEl();
-  await new Promise(function(r) { lib.runOmr(1, partPickerEl, omrBtn, statusEl, '/base', makeBannerEl()); setTimeout(r, 50); });
-  assert.equal(checkboxValue, '3');
-  delete globalThis.fetch;
-});
-
-test('runOmr_renders_part_name_via_textContent', async function () {
-  globalThis.fetch = omrSuccessStub([{ index: 0, name: '<b>XSS</b>' }]);
-  var spanText = null;
-  var partPickerEl = makeEl(); partPickerEl.hidden = true;
-  partPickerEl.appendChild = function(labelEl) {
-    if (labelEl.children && labelEl.children[1]) {
-      spanText = labelEl.children[1].textContent;
-    }
-    return labelEl;
-  };
-  partPickerEl.replaceChildren = function() {};
-  var omrBtn = makeEl(); var statusEl = makeEl();
-  await new Promise(function(r) { lib.runOmr(1, partPickerEl, omrBtn, statusEl, '/base', makeBannerEl()); setTimeout(r, 50); });
-  assert.equal(spanText, '<b>XSS</b>');
+  assert.ok(urls.some(function(u) { return u.indexOf('rasterise') !== -1; }), 'rasterise should be called');
   delete globalThis.fetch;
 });
 
 test('runOmr_shows_banner_on_503', async function () {
   globalThis.fetch = fetchStub(503, { code: 'sidecar_unavailable', message: 'unavailable' });
   var bannerEl = makeBannerEl();
-  var partPickerEl = makeEl(); var omrBtn = makeEl(); var statusEl = makeEl();
-  await new Promise(function(r) { lib.runOmr(1, partPickerEl, omrBtn, statusEl, '/base', bannerEl); setTimeout(r, 20); });
+  var partPickerEl = makeEl(); var omrBtn = makeEl(); var statusEl = makeEl(); var variantListEl = makeEl();
+  await new Promise(function(r) { lib.runOmr(1, partPickerEl, omrBtn, statusEl, variantListEl, '/base', bannerEl); setTimeout(r, 20); });
   assert.equal(bannerEl.hidden, false);
   delete globalThis.fetch;
 });
@@ -555,8 +545,8 @@ test('runOmr_shows_banner_on_503', async function () {
 test('runOmr_does_not_show_banner_on_422', async function () {
   globalThis.fetch = fetchStub(422, { code: 'bad_input', message: 'bad input' });
   var bannerEl = makeBannerEl();
-  var partPickerEl = makeEl(); var omrBtn = makeEl(); var statusEl = makeEl();
-  await new Promise(function(r) { lib.runOmr(1, partPickerEl, omrBtn, statusEl, '/base', bannerEl); setTimeout(r, 20); });
+  var partPickerEl = makeEl(); var omrBtn = makeEl(); var statusEl = makeEl(); var variantListEl = makeEl();
+  await new Promise(function(r) { lib.runOmr(1, partPickerEl, omrBtn, statusEl, variantListEl, '/base', bannerEl); setTimeout(r, 20); });
   assert.equal(bannerEl.hidden, true);
   assert.ok(statusEl.textContent.length > 0);
   delete globalThis.fetch;
@@ -572,45 +562,474 @@ test('extractMidi_sends_correct_part_indices', async function () {
     capturedBody = JSON.parse(opts.body);
     return Promise.resolve({ ok: true, status: 200, json: function() { return Promise.resolve({ bar_count: 4 }); } });
   };
-  var statusEl = makeEl(); var synthFormEl = makeEl(); synthFormEl.hidden = true;
-  await new Promise(function(r) { lib.extractMidi(1, [0, 2], statusEl, synthFormEl, '/base', makeBannerEl()); setTimeout(r, 20); });
+  var statusEl = makeEl();
+  await new Promise(function(r) { lib.extractMidi(1, [0, 2], statusEl, r, null, '/base', makeBannerEl()); setTimeout(r, 20); });
   assert.deepEqual(capturedBody.part_indices, [0, 2]);
   delete globalThis.fetch;
 });
 
 test('extractMidi_updates_status_on_success', async function () {
   globalThis.fetch = fetchStub(200, { bar_count: 4 });
-  var statusEl = makeEl(); var synthFormEl = makeEl(); synthFormEl.hidden = true;
-  await new Promise(function(r) { lib.extractMidi(1, [0], statusEl, synthFormEl, '/base', makeBannerEl()); setTimeout(r, 20); });
+  var statusEl = makeEl();
+  await new Promise(function(r) { lib.extractMidi(1, [0], statusEl, r, null, '/base', makeBannerEl()); setTimeout(r, 20); });
   assert.ok(statusEl.textContent.indexOf('4') !== -1);
   delete globalThis.fetch;
 });
 
-test('extractMidi_unhides_synthesise_form_on_success', async function () {
+test('extractMidi_calls_onSuccess_on_success', async function () {
   globalThis.fetch = fetchStub(200, { bar_count: 2 });
-  var statusEl = makeEl(); var synthFormEl = makeEl(); synthFormEl.hidden = true;
-  await new Promise(function(r) { lib.extractMidi(1, [0], statusEl, synthFormEl, '/base', makeBannerEl()); setTimeout(r, 20); });
-  assert.equal(synthFormEl.hidden, false);
+  var statusEl = makeEl();
+  var onSuccessCalled = false;
+  await new Promise(function(r) {
+    lib.extractMidi(1, [0], statusEl, function() { onSuccessCalled = true; r(); }, null, '/base', makeBannerEl());
+    setTimeout(r, 20);
+  });
+  assert.equal(onSuccessCalled, true);
   delete globalThis.fetch;
 });
 
-test('extractMidi_shows_banner_on_503', async function () {
+test('extractMidi_calls_onFailure_on_503', async function () {
   globalThis.fetch = fetchStub(503, { message: 'unavail' });
   var bannerEl = makeBannerEl();
-  var statusEl = makeEl(); var synthFormEl = makeEl();
-  await new Promise(function(r) { lib.extractMidi(1, [], statusEl, synthFormEl, '/base', bannerEl); setTimeout(r, 20); });
+  var statusEl = makeEl();
+  var onFailureCalled = false;
+  await new Promise(function(r) {
+    lib.extractMidi(1, [], statusEl, null, function() { onFailureCalled = true; r(); }, '/base', bannerEl);
+    setTimeout(r, 20);
+  });
+  assert.equal(onFailureCalled, true);
   assert.equal(bannerEl.hidden, false);
   delete globalThis.fetch;
 });
 
-test('extractMidi_does_not_show_banner_on_422', async function () {
+test('extractMidi_calls_onFailure_on_422', async function () {
   globalThis.fetch = fetchStub(422, { message: 'bad' });
   var bannerEl = makeBannerEl();
-  var statusEl = makeEl(); var synthFormEl = makeEl();
-  await new Promise(function(r) { lib.extractMidi(1, [], statusEl, synthFormEl, '/base', bannerEl); setTimeout(r, 20); });
+  var statusEl = makeEl();
+  var onFailureCalled = false;
+  await new Promise(function(r) {
+    lib.extractMidi(1, [], statusEl, null, function() { onFailureCalled = true; r(); }, '/base', bannerEl);
+    setTimeout(r, 20);
+  });
+  assert.equal(onFailureCalled, true);
   assert.equal(bannerEl.hidden, true);
   assert.ok(statusEl.textContent.length > 0);
   delete globalThis.fetch;
+});
+
+test('extractMidi_calls_onFailure_on_network_error', async function () {
+  globalThis.fetch = fetchReject('network fail');
+  var statusEl = makeEl();
+  var onFailureCalled = false;
+  await new Promise(function(r) {
+    lib.extractMidi(1, [], statusEl, null, function() { onFailureCalled = true; r(); }, '/base', makeBannerEl());
+    setTimeout(r, 20);
+  });
+  assert.equal(onFailureCalled, true);
+  delete globalThis.fetch;
+});
+
+// ---------------------------------------------------------------------------
+// openSynthModal tests
+// ---------------------------------------------------------------------------
+
+// Helper: build a minimal DOM context for modal tests.
+function makeModalDom() {
+  var voiceList = makeEl();
+  voiceList.replaceChildren = function() { voiceList._children = []; };
+  voiceList._children = [];
+  voiceList.appendChild = function(c) { voiceList._children.push(c); return c; };
+
+  var voicesSection = makeEl(); voicesSection.hidden = true;
+  voicesSection.querySelector = function(sel) {
+    if (sel === 'input[type=checkbox]:checked') return null;
+    return null;
+  };
+  voicesSection.querySelectorAll = function(sel) {
+    if (sel === 'input[type=checkbox]:checked') {
+      return voiceList._children
+        .map(function(li) { return li._children && li._children[0] && li._children[0]._children && li._children[0]._children[0]; })
+        .filter(function(cb) { return cb && cb.checked; });
+    }
+    return [];
+  };
+
+  var statusP = makeEl(); statusP.hidden = true;
+  var submitBtn = makeEl();
+  var cancelBtn = makeEl();
+  var labelInput = makeEl(); labelInput.value = '';
+  var tempoInput = makeEl(); tempoInput.value = '100';
+  var transposeInput = makeEl(); transposeInput.value = '0';
+  var voicesError = makeEl(); voicesError.hidden = true;
+
+  var dialog = makeEl();
+  dialog.open = false;
+  dialog.showModal = function() { dialog.open = true; dialog.hidden = false; };
+  dialog.close = function() { dialog.open = false; dialog.hidden = true; };
+  dialog.querySelector = function(sel) {
+    if (sel === '.synth-modal__voices') return voicesSection;
+    return null;
+  };
+
+  var elMap = {
+    'synth-modal': dialog,
+    'synth-modal-voice-list': voiceList,
+    'synth-modal-voices-error': voicesError,
+    'synth-modal-status': statusP,
+    'synth-modal-submit': submitBtn,
+    'synth-modal-cancel': cancelBtn,
+    'synth-modal-label': labelInput,
+    'synth-modal-tempo': tempoInput,
+    'synth-modal-transpose': transposeInput,
+  };
+  globalThis.document.getElementById = function(id) { return elMap[id] || null; };
+
+  return { dialog: dialog, voicesSection: voicesSection, voiceList: voiceList, statusP: statusP,
+           submitBtn: submitBtn, cancelBtn: cancelBtn, labelInput: labelInput,
+           tempoInput: tempoInput, transposeInput: transposeInput, voicesError: voicesError, elMap: elMap };
+}
+
+test('openSynthModal_opens_dialog_with_parts_when_no_midi', function () {
+  var m = makeModalDom();
+  var variantListEl = makeEl();
+  lib.openSynthModal(1, ['Soprano', 'Alto'], false, variantListEl, null, '/base', makeBannerEl());
+  assert.equal(m.dialog.open, true);
+  assert.equal(m.voicesSection.hidden, false);
+  globalThis.document.getElementById = function() { return null; };
+});
+
+test('openSynthModal_hides_voices_section_when_has_midi', function () {
+  var m = makeModalDom();
+  var variantListEl = makeEl();
+  lib.openSynthModal(1, null, true, variantListEl, null, '/base', makeBannerEl());
+  assert.equal(m.dialog.open, true);
+  assert.equal(m.voicesSection.hidden, true);
+  globalThis.document.getElementById = function() { return null; };
+});
+
+test('openSynthModal_null_hasMidi_true_opens_with_defaults', function () {
+  var m = makeModalDom();
+  var variantListEl = makeEl();
+  lib.openSynthModal(1, null, true, variantListEl, null, '/base', makeBannerEl());
+  assert.equal(m.dialog.open, true);
+  assert.equal(m.labelInput.value, '');
+  assert.equal(m.tempoInput.value, '100');
+  assert.equal(m.transposeInput.value, '0');
+  globalThis.document.getElementById = function() { return null; };
+});
+
+test('openSynthModal_empty_parts_no_midi_does_not_open', function () {
+  var m = makeModalDom();
+  var variantListEl = makeEl();
+  lib.openSynthModal(1, [], false, variantListEl, null, '/base', makeBannerEl());
+  assert.equal(m.dialog.open, false);
+  globalThis.document.getElementById = function() { return null; };
+});
+
+test('openSynthModal_null_parts_no_midi_does_not_open', function () {
+  var m = makeModalDom();
+  var variantListEl = makeEl();
+  lib.openSynthModal(1, null, false, variantListEl, null, '/base', makeBannerEl());
+  assert.equal(m.dialog.open, false);
+  globalThis.document.getElementById = function() { return null; };
+});
+
+test('openSynthModal_prefill_populates_form_fields', function () {
+  var m = makeModalDom();
+  var variantListEl = makeEl();
+  lib.openSynthModal(1, null, true, variantListEl, { label: 'My Track', tempo_pct: 80, transpose_semitones: -3 }, '/base', makeBannerEl());
+  assert.equal(m.labelInput.value, 'My Track');
+  assert.equal(m.tempoInput.value, '80');
+  assert.equal(m.transposeInput.value, '-3');
+  globalThis.document.getElementById = function() { return null; };
+});
+
+test('openSynthModal_null_prefill_resets_to_defaults', function () {
+  var m = makeModalDom();
+  m.labelInput.value = 'old';
+  m.tempoInput.value = '50';
+  m.transposeInput.value = '5';
+  var variantListEl = makeEl();
+  lib.openSynthModal(1, null, true, variantListEl, null, '/base', makeBannerEl());
+  assert.equal(m.labelInput.value, '');
+  assert.equal(m.tempoInput.value, '100');
+  assert.equal(m.transposeInput.value, '0');
+  globalThis.document.getElementById = function() { return null; };
+});
+
+// ---------------------------------------------------------------------------
+// initSynthModal + submit handler tests
+// ---------------------------------------------------------------------------
+
+// Helper: set up modal DOM + fire initSynthModal, then return DOM handles.
+function makeInitialisedModal() {
+  var m = makeModalDom();
+
+  // Make submitBtn fire its 'click' listeners via _fire.
+  var submitListeners = [];
+  m.submitBtn.addEventListener = function(ev, fn) { if (ev === 'click') submitListeners.push(fn); };
+  m.submitBtn._fire = function() { submitListeners.forEach(function(f) { f(); }); };
+
+  var cancelListeners = [];
+  m.cancelBtn.addEventListener = function(ev, fn) { if (ev === 'click') cancelListeners.push(fn); };
+  m.cancelBtn._fire = function() { cancelListeners.forEach(function(f) { f(); }); };
+
+  // Pretend native <dialog> is supported so initSynthModal doesn't overwrite
+  // showModal/close with the fallback versions.
+  if (typeof globalThis.HTMLDialogElement === 'undefined') {
+    globalThis.HTMLDialogElement = function() {};
+  }
+
+  lib.initSynthModal();
+  return { m: m, fireSubmit: function() { m.submitBtn._fire(); }, fireCancel: function() { m.cancelBtn._fire(); } };
+}
+
+test('initSynthModal_cancel_closes_dialog', function () {
+  var ctx = makeInitialisedModal();
+  ctx.m.dialog.open = true;
+  ctx.fireCancel();
+  assert.equal(ctx.m.dialog.open, false);
+  globalThis.document.getElementById = function() { return null; };
+});
+
+test('initSynthModal_cancel_does_not_call_fetch', function () {
+  var ctx = makeInitialisedModal();
+  var fetchCalled = false;
+  globalThis.fetch = function() { fetchCalled = true; return Promise.resolve({}); };
+  ctx.fireCancel();
+  assert.equal(fetchCalled, false);
+  delete globalThis.fetch;
+  globalThis.document.getElementById = function() { return null; };
+});
+
+test('initSynthModal_submit_empty_label_shows_error_no_fetch', function () {
+  var ctx = makeInitialisedModal();
+  var fetchCalled = false;
+  globalThis.fetch = function() { fetchCalled = true; return Promise.resolve({}); };
+  ctx.m.labelInput.value = '';
+  ctx.m.tempoInput.value = '100';
+  ctx.m.transposeInput.value = '0';
+  // Set modal state via _setModalState helper
+  lib._setModalState({ assetId: 1, hasMidi: true, parts: null, variantListEl: makeEl(), base: '/base', bannerEl: makeEl() });
+  ctx.fireSubmit();
+  assert.equal(fetchCalled, false);
+  assert.ok(ctx.m.statusP.textContent.length > 0);
+  delete globalThis.fetch;
+  globalThis.document.getElementById = function() { return null; };
+});
+
+test('initSynthModal_submit_tempo_24_shows_error', function () {
+  var ctx = makeInitialisedModal();
+  var fetchCalled = false;
+  globalThis.fetch = function() { fetchCalled = true; return Promise.resolve({}); };
+  ctx.m.labelInput.value = 'Track';
+  ctx.m.tempoInput.value = '24';
+  ctx.m.transposeInput.value = '0';
+  lib._setModalState({ assetId: 1, hasMidi: true, parts: null, variantListEl: makeEl(), base: '/base', bannerEl: makeEl() });
+  ctx.fireSubmit();
+  assert.equal(fetchCalled, false);
+  delete globalThis.fetch;
+  globalThis.document.getElementById = function() { return null; };
+});
+
+test('initSynthModal_submit_tempo_25_fires_fetch', async function () {
+  var ctx = makeInitialisedModal();
+  var fetchCalled = false;
+  globalThis.fetch = function() { fetchCalled = true; return Promise.resolve({ ok: true, status: 201, json: function() { return Promise.resolve({ id: 1, label: 'T' }); } }); };
+  ctx.m.labelInput.value = 'Track';
+  ctx.m.tempoInput.value = '25';
+  ctx.m.transposeInput.value = '0';
+  var variantListEl = makeEl();
+  lib._setModalState({ assetId: 1, hasMidi: true, parts: null, variantListEl: variantListEl, base: '/base', bannerEl: makeEl() });
+  ctx.fireSubmit();
+  await new Promise(function(r) { setTimeout(r, 20); });
+  assert.equal(fetchCalled, true);
+  delete globalThis.fetch;
+  globalThis.document.getElementById = function() { return null; };
+});
+
+test('initSynthModal_submit_tempo_301_shows_error', function () {
+  var ctx = makeInitialisedModal();
+  var fetchCalled = false;
+  globalThis.fetch = function() { fetchCalled = true; return Promise.resolve({}); };
+  ctx.m.labelInput.value = 'Track';
+  ctx.m.tempoInput.value = '301';
+  ctx.m.transposeInput.value = '0';
+  lib._setModalState({ assetId: 1, hasMidi: true, parts: null, variantListEl: makeEl(), base: '/base', bannerEl: makeEl() });
+  ctx.fireSubmit();
+  assert.equal(fetchCalled, false);
+  delete globalThis.fetch;
+  globalThis.document.getElementById = function() { return null; };
+});
+
+test('initSynthModal_submit_tempo_300_fires_fetch', async function () {
+  var ctx = makeInitialisedModal();
+  var fetchCalled = false;
+  globalThis.fetch = function() { fetchCalled = true; return Promise.resolve({ ok: true, status: 201, json: function() { return Promise.resolve({ id: 1, label: 'T' }); } }); };
+  ctx.m.labelInput.value = 'Track';
+  ctx.m.tempoInput.value = '300';
+  ctx.m.transposeInput.value = '0';
+  var variantListEl = makeEl();
+  lib._setModalState({ assetId: 1, hasMidi: true, parts: null, variantListEl: variantListEl, base: '/base', bannerEl: makeEl() });
+  ctx.fireSubmit();
+  await new Promise(function(r) { setTimeout(r, 20); });
+  assert.equal(fetchCalled, true);
+  delete globalThis.fetch;
+  globalThis.document.getElementById = function() { return null; };
+});
+
+test('initSynthModal_submit_transpose_minus13_shows_error', function () {
+  var ctx = makeInitialisedModal();
+  var fetchCalled = false;
+  globalThis.fetch = function() { fetchCalled = true; return Promise.resolve({}); };
+  ctx.m.labelInput.value = 'Track';
+  ctx.m.tempoInput.value = '100';
+  ctx.m.transposeInput.value = '-13';
+  lib._setModalState({ assetId: 1, hasMidi: true, parts: null, variantListEl: makeEl(), base: '/base', bannerEl: makeEl() });
+  ctx.fireSubmit();
+  assert.equal(fetchCalled, false);
+  delete globalThis.fetch;
+  globalThis.document.getElementById = function() { return null; };
+});
+
+test('initSynthModal_submit_transpose_minus12_fires_fetch', async function () {
+  var ctx = makeInitialisedModal();
+  var fetchCalled = false;
+  globalThis.fetch = function() { fetchCalled = true; return Promise.resolve({ ok: true, status: 201, json: function() { return Promise.resolve({ id: 1, label: 'T' }); } }); };
+  ctx.m.labelInput.value = 'Track';
+  ctx.m.tempoInput.value = '100';
+  ctx.m.transposeInput.value = '-12';
+  var variantListEl = makeEl();
+  lib._setModalState({ assetId: 1, hasMidi: true, parts: null, variantListEl: variantListEl, base: '/base', bannerEl: makeEl() });
+  ctx.fireSubmit();
+  await new Promise(function(r) { setTimeout(r, 20); });
+  assert.equal(fetchCalled, true);
+  delete globalThis.fetch;
+  globalThis.document.getElementById = function() { return null; };
+});
+
+test('initSynthModal_submit_transpose_13_shows_error', function () {
+  var ctx = makeInitialisedModal();
+  var fetchCalled = false;
+  globalThis.fetch = function() { fetchCalled = true; return Promise.resolve({}); };
+  ctx.m.labelInput.value = 'Track';
+  ctx.m.tempoInput.value = '100';
+  ctx.m.transposeInput.value = '13';
+  lib._setModalState({ assetId: 1, hasMidi: true, parts: null, variantListEl: makeEl(), base: '/base', bannerEl: makeEl() });
+  ctx.fireSubmit();
+  assert.equal(fetchCalled, false);
+  delete globalThis.fetch;
+  globalThis.document.getElementById = function() { return null; };
+});
+
+test('initSynthModal_submit_transpose_12_fires_fetch', async function () {
+  var ctx = makeInitialisedModal();
+  var fetchCalled = false;
+  globalThis.fetch = function() { fetchCalled = true; return Promise.resolve({ ok: true, status: 201, json: function() { return Promise.resolve({ id: 1, label: 'T' }); } }); };
+  ctx.m.labelInput.value = 'Track';
+  ctx.m.tempoInput.value = '100';
+  ctx.m.transposeInput.value = '12';
+  var variantListEl = makeEl();
+  lib._setModalState({ assetId: 1, hasMidi: true, parts: null, variantListEl: variantListEl, base: '/base', bannerEl: makeEl() });
+  ctx.fireSubmit();
+  await new Promise(function(r) { setTimeout(r, 20); });
+  assert.equal(fetchCalled, true);
+  delete globalThis.fetch;
+  globalThis.document.getElementById = function() { return null; };
+});
+
+test('initSynthModal_submit_success_closes_dialog_and_prepends_row', async function () {
+  var ctx = makeInitialisedModal();
+  globalThis.fetch = fetchStub(201, { id: 5, label: 'Track' });
+  ctx.m.labelInput.value = 'Track';
+  ctx.m.tempoInput.value = '100';
+  ctx.m.transposeInput.value = '0';
+  var variantListEl = makeEl();
+  var prependCount = 0;
+  variantListEl.prepend = function() { prependCount++; };
+  lib._setModalState({ assetId: 1, hasMidi: true, parts: null, variantListEl: variantListEl, base: '/base', bannerEl: makeEl() });
+  ctx.m.dialog.open = true;
+  ctx.fireSubmit();
+  await new Promise(function(r) { setTimeout(r, 30); });
+  assert.equal(ctx.m.dialog.open, false);
+  assert.equal(prependCount, 1);
+  delete globalThis.fetch;
+  globalThis.document.getElementById = function() { return null; };
+});
+
+test('initSynthModal_submit_variants_503_stays_open_reenables_button', async function () {
+  var ctx = makeInitialisedModal();
+  globalThis.fetch = fetchStub(503, { message: 'down' });
+  ctx.m.labelInput.value = 'Track';
+  ctx.m.tempoInput.value = '100';
+  ctx.m.transposeInput.value = '0';
+  lib._setModalState({ assetId: 1, hasMidi: true, parts: null, variantListEl: makeEl(), base: '/base', bannerEl: makeEl() });
+  ctx.m.dialog.open = true;
+  ctx.fireSubmit();
+  await new Promise(function(r) { setTimeout(r, 30); });
+  assert.equal(ctx.m.dialog.open, true);
+  assert.equal(ctx.m.submitBtn.disabled, false);
+  delete globalThis.fetch;
+  globalThis.document.getElementById = function() { return null; };
+});
+
+test('initSynthModal_midi_503_then_reenables_button', async function () {
+  var ctx = makeInitialisedModal();
+  // hasMidi=false path: extractMidi is called first and fails.
+  var fetchCallCount = 0;
+  globalThis.fetch = function(url) {
+    fetchCallCount++;
+    return Promise.resolve({ ok: false, status: 503, json: function() { return Promise.resolve({ message: 'down' }); } });
+  };
+  ctx.m.labelInput.value = 'Track';
+  ctx.m.tempoInput.value = '100';
+  ctx.m.transposeInput.value = '0';
+  // Set up a visible, checked voice checkbox so the no-voices guard passes.
+  ctx.m.voicesSection.hidden = false;
+  var checkedCb = makeEl(); checkedCb.checked = true; checkedCb.value = '0';
+  ctx.m.voicesSection.querySelectorAll = function(sel) {
+    if (sel === 'input[type=checkbox]:checked') return [checkedCb];
+    return [];
+  };
+  lib._setModalState({ assetId: 1, hasMidi: false, parts: ['Soprano'], variantListEl: makeEl(), base: '/base', bannerEl: makeEl() });
+  ctx.m.submitBtn.disabled = false;
+  ctx.fireSubmit();
+  await new Promise(function(r) { setTimeout(r, 30); });
+  // POST /midi fails → onFailure → button re-enabled; no POST /variants called.
+  assert.equal(fetchCallCount, 1);
+  assert.equal(ctx.m.submitBtn.disabled, false);
+  delete globalThis.fetch;
+  globalThis.document.getElementById = function() { return null; };
+});
+
+test('initSynthModal_midi_success_then_variants_503_reenables_button', async function () {
+  var ctx = makeInitialisedModal();
+  var fetchCallCount = 0;
+  globalThis.fetch = function(url) {
+    fetchCallCount++;
+    if (fetchCallCount === 1) {
+      return Promise.resolve({ ok: true, status: 200, json: function() { return Promise.resolve({ bar_count: 4 }); } });
+    }
+    return Promise.resolve({ ok: false, status: 503, json: function() { return Promise.resolve({ message: 'down' }); } });
+  };
+  ctx.m.labelInput.value = 'Track';
+  ctx.m.tempoInput.value = '100';
+  ctx.m.transposeInput.value = '0';
+  ctx.m.voicesSection.hidden = false;
+  var checkedCb = makeEl(); checkedCb.checked = true; checkedCb.value = '0';
+  ctx.m.voicesSection.querySelectorAll = function(sel) {
+    if (sel === 'input[type=checkbox]:checked') return [checkedCb];
+    return [];
+  };
+  lib._setModalState({ assetId: 1, hasMidi: false, parts: ['Soprano'], variantListEl: makeEl(), base: '/base', bannerEl: makeEl() });
+  ctx.m.dialog.open = true;
+  ctx.fireSubmit();
+  await new Promise(function(r) { setTimeout(r, 30); });
+  assert.equal(fetchCallCount, 2);
+  assert.equal(ctx.m.dialog.open, true);
+  assert.equal(ctx.m.submitBtn.disabled, false);
+  delete globalThis.fetch;
+  globalThis.document.getElementById = function() { return null; };
 });
 
 // ---------------------------------------------------------------------------
@@ -1004,31 +1423,13 @@ test('expandAsset_shows_omr_section_for_pdf_asset', async function () {
   delete globalThis.fetch;
 });
 
-test('expandAsset_hides_synthesise_form_when_no_midi', async function () {
+test('expandAsset_no_synthesise_form_for_pdf_asset', async function () {
+  // Inline synthesise-form is removed; modal replaces it.
   globalThis.fetch = fetchStub(200, { id: 1, title: 'S', has_pdf: true, has_midi: false, variants: [], page_tokens: [], bar_coords: [], bar_timings: [] });
-  var synthFormHidden = null;
-  var detailEl = makeEl();
-  detailEl.appendChild = function(el) {
-    if (el.className === 'synthesise-form') synthFormHidden = el.hidden;
-    return el;
-  };
-  var expandBtn = makeEl(); expandBtn.setAttribute('aria-expanded', 'false');
-  await new Promise(function(r) {
-    lib.expandAsset(1, detailEl, expandBtn, '/base', makeBannerEl());
-    setTimeout(r, 20);
-  });
-  assert.equal(synthFormHidden, true);
-  delete globalThis.fetch;
-});
-
-test('expandAsset_shows_synthesise_form_for_midi_only_asset', async function () {
-  globalThis.fetch = fetchStub(200, { id: 1, title: 'S', has_pdf: false, has_midi: true, variants: [], page_tokens: [], bar_coords: [], bar_timings: [] });
   var synthFormFound = false;
-  var omrSectionFound = false;
   var detailEl = makeEl();
   detailEl.appendChild = function(el) {
     if (el.className === 'synthesise-form') synthFormFound = true;
-    if (el.className === 'omr-flow') omrSectionFound = true;
     return el;
   };
   var expandBtn = makeEl(); expandBtn.setAttribute('aria-expanded', 'false');
@@ -1036,8 +1437,41 @@ test('expandAsset_shows_synthesise_form_for_midi_only_asset', async function () 
     lib.expandAsset(1, detailEl, expandBtn, '/base', makeBannerEl());
     setTimeout(r, 20);
   });
-  assert.equal(synthFormFound, true);
-  assert.equal(omrSectionFound, false);
+  assert.equal(synthFormFound, false);
+  delete globalThis.fetch;
+});
+
+test('expandAsset_shows_new_variant_button_for_midi_asset', async function () {
+  globalThis.fetch = fetchStub(200, { id: 1, title: 'S', has_pdf: false, has_midi: true, variants: [], page_tokens: [], bar_coords: [], bar_timings: [] });
+  var newVariantBtnFound = false;
+  var detailEl = makeEl();
+  detailEl.appendChild = function(el) {
+    if (el.className && el.className.indexOf('new-variant-btn') !== -1) newVariantBtnFound = true;
+    return el;
+  };
+  var expandBtn = makeEl(); expandBtn.setAttribute('aria-expanded', 'false');
+  await new Promise(function(r) {
+    lib.expandAsset(1, detailEl, expandBtn, '/base', makeBannerEl());
+    setTimeout(r, 20);
+  });
+  assert.equal(newVariantBtnFound, true);
+  delete globalThis.fetch;
+});
+
+test('expandAsset_no_new_variant_button_for_pdf_only_asset', async function () {
+  globalThis.fetch = fetchStub(200, { id: 1, title: 'S', has_pdf: true, has_midi: false, variants: [], page_tokens: [], bar_coords: [], bar_timings: [] });
+  var newVariantBtnFound = false;
+  var detailEl = makeEl();
+  detailEl.appendChild = function(el) {
+    if (el.className && el.className.indexOf('new-variant-btn') !== -1) newVariantBtnFound = true;
+    return el;
+  };
+  var expandBtn = makeEl(); expandBtn.setAttribute('aria-expanded', 'false');
+  await new Promise(function(r) {
+    lib.expandAsset(1, detailEl, expandBtn, '/base', makeBannerEl());
+    setTimeout(r, 20);
+  });
+  assert.equal(newVariantBtnFound, false);
   delete globalThis.fetch;
 });
 

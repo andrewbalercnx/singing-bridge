@@ -1063,3 +1063,61 @@
   font-size: var(--sb-text-sm);
 }
 .sb-mt-3 { margin-top: var(--sb-space-3) !important; }
+
+
+/* ============================================================
+  Synthesis modal (Sprint 24)
+   ============================================================ */
+
+.synth-modal {
+  width: min(420px, 95vw);
+}
+
+.synth-modal__title {
+  font-family: var(--sb-font-display);
+  font-size: var(--sb-text-lg);
+  font-weight: 500;
+  margin: 0 0 var(--sb-space-4);
+}
+
+.synth-modal__voices {
+  margin-bottom: var(--sb-space-4);
+}
+
+.synth-modal__voices-label {
+  font-size: var(--sb-text-sm);
+  color: var(--sb-fg-subtle);
+  margin: 0 0 var(--sb-space-2);
+}
+
+.synth-modal__voice-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sb-space-2);
+}
+
+.synth-modal__voice-list li label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sb-space-1);
+  cursor: pointer;
+}
+
+.synth-modal__status {
+  margin-top: var(--sb-space-3);
+  font-size: var(--sb-text-sm);
+  color: var(--sb-fg-subtle);
+}
+
+.synth-modal__actions {
+  display: flex;
+  gap: var(--sb-space-3);
+  justify-content: flex-end;
+}
+
+.new-variant-btn {
+  display: block;
+}

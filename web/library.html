@@ -2,7 +2,7 @@
 <!--
   File: web/library.html
   Purpose: Teacher accompaniment library — upload, OMR flow, synthesise, manage variants.
-  Last updated: Sprint 15 (2026-04-23) -- MIDI keyboard recording UI
+  Last updated: Sprint 24 (2026-04-26) -- synthesis modal + variant management
 -->
 <html lang="en">
 <head>
@@ -72,6 +72,37 @@
     <ul id="asset-list" aria-live="polite"></ul>
     <p id="assets-empty" hidden>No assets yet. Upload a PDF, MIDI, or WAV above.</p>
     <p id="assets-error" class="error" hidden></p>
+
+    <!-- Synthesis modal — static skeleton; JS fills dynamic content -->
+    <dialog id="synth-modal" class="sb-dialog synth-modal" aria-labelledby="synth-modal-title">
+      <h2 id="synth-modal-title" class="synth-modal__title">Create Backing Track</h2>
+
+      <div class="synth-modal__voices" hidden>
+        <p class="synth-modal__voices-label">Voices</p>
+        <ul id="synth-modal-voice-list" class="synth-modal__voice-list"></ul>
+        <p id="synth-modal-voices-error" class="error" hidden></p>
+      </div>
+
+      <div class="sb-field sb-mt-4">
+        <label class="sb-label" for="synth-modal-label">Name</label>
+        <input class="sb-input" type="text" id="synth-modal-label" maxlength="255" placeholder="e.g. Full tempo" autocomplete="off">
+      </div>
+      <div class="sb-field sb-mt-2">
+        <label class="sb-label" for="synth-modal-tempo">Tempo %</label>
+        <input class="sb-input" type="number" id="synth-modal-tempo" min="25" max="300" value="100">
+      </div>
+      <div class="sb-field sb-mt-2">
+        <label class="sb-label" for="synth-modal-transpose">Transpose (semitones)</label>
+        <input class="sb-input" type="number" id="synth-modal-transpose" min="-12" max="12" value="0">
+      </div>
+
+      <p id="synth-modal-status" class="synth-modal__status" aria-live="polite" hidden></p>
+
+      <div class="synth-modal__actions sb-mt-4">
+        <button type="button" id="synth-modal-cancel" class="sb-btn sb-btn--ghost">Cancel</button>
+        <button type="button" id="synth-modal-submit" class="sb-btn">Create Backing Track</button>
+      </div>
+    </dialog>
 
     <script src="/assets/library.js"></script>
   </main>

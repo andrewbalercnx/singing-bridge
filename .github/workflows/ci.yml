@@ -169,8 +169,14 @@ jobs:
           FQDN=$(az containerapp show \
             --name sb-server --resource-group sb-prod-rg \
             --query "properties.configuration.ingress.fqdn" --output tsv)
-          ACTUAL_SHA=$(curl --fail --silent "https://$FQDN/healthz" | \
-            python3 -c "import sys,json; print(json.load(sys.stdin)['sha'])")
-          echo "healthz sha: $ACTUAL_SHA (expected: $SHA)"
-          [ "$ACTUAL_SHA" = "$SHA" ] || \
-            { echo "SHA mismatch — old revision is still serving"; exit 1; }
+          # Only check SHA when the server image was rebuilt; sidecar-only
+          # deploys retain the previous server SHA by design.
+          if [ "$BUILD_SERVER" = "true" ]; then
+            ACTUAL_SHA=$(curl --fail --silent "https://$FQDN/healthz" | \
+              python3 -c "import sys,json; print(json.load(sys.stdin)['sha'])")
+            echo "healthz sha: $ACTUAL_SHA (expected: $SHA)"
+            [ "$ACTUAL_SHA" = "$SHA" ] || \
+              { echo "SHA mismatch — old revision is still serving"; exit 1; }
+          else
+            echo "Skipping SHA check — server image unchanged (sidecar-only deploy)"
+          fi

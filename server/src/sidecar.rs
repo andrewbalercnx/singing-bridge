@@ -118,6 +118,11 @@ impl SidecarClient {
         }
     }
 
+    fn send_err(e: reqwest::Error, endpoint: &str) -> AppError {
+        tracing::error!(endpoint, error = %e, "sidecar connection failed");
+        AppError::ServiceUnavailable
+    }
+
     fn map_code(code: &str, message: &str) -> AppError {
         match code {
             "AUDIVERIS_MISSING" | "FLUIDSYNTH_MISSING" => AppError::SidecarUnavailable,
@@ -135,7 +140,7 @@ impl SidecarClient {
             .get(self.url("/healthz"))
             .send()
             .await
-            .map_err(|_| AppError::ServiceUnavailable)?;
+            .map_err(|e| Self::send_err(e, "healthz"))?;
         if resp.status().is_success() {
             Ok(())
         } else {
@@ -154,7 +159,7 @@ impl SidecarClient {
             .multipart(form)
             .send()
             .await
-            .map_err(|_| AppError::ServiceUnavailable)?;
+            .map_err(|e| Self::send_err(e, "omr"))?;
 
         let resp = Self::check(resp).await?;
 
@@ -179,7 +184,7 @@ impl SidecarClient {
             .multipart(form)
             .send()
             .await
-            .map_err(|_| AppError::ServiceUnavailable)?;
+            .map_err(|e| Self::send_err(e, "list-parts"))?;
 
         let resp = Self::check(resp).await?;
         let parts: Vec<PartInfo> = resp.json().await.map_err(|_| AppError::Internal("sidecar list-parts parse".into()))?;
@@ -201,7 +206,7 @@ impl SidecarClient {
             .multipart(form)
             .send()
             .await
-            .map_err(|_| AppError::ServiceUnavailable)?;
+            .map_err(|e| Self::send_err(e, "extract-midi"))?;
 
         let resp = Self::check(resp).await?;
         Ok(resp.bytes().await.map_err(|_| AppError::Internal("sidecar midi bytes".into()))?)
@@ -218,7 +223,7 @@ impl SidecarClient {
             .multipart(form)
             .send()
             .await
-            .map_err(|_| AppError::ServiceUnavailable)?;
+            .map_err(|e| Self::send_err(e, "bar-timings"))?;
 
         let resp = Self::check(resp).await?;
 
@@ -241,7 +246,7 @@ impl SidecarClient {
             .multipart(form)
             .send()
             .await
-            .map_err(|_| AppError::ServiceUnavailable)?;
+            .map_err(|e| Self::send_err(e, "bar-coords"))?;
 
         let resp = Self::check(resp).await?;
 
@@ -265,7 +270,7 @@ impl SidecarClient {
             .multipart(form)
             .send()
             .await
-            .map_err(|_| AppError::ServiceUnavailable)?;
+            .map_err(|e| Self::send_err(e, "rasterise"))?;
 
         let resp = Self::check(resp).await?;
         let zip_bytes = resp.bytes().await.map_err(|_| AppError::Internal("sidecar rasterise bytes".into()))?;
@@ -286,7 +291,7 @@ impl SidecarClient {
             .multipart(form)
             .send()
             .await
-            .map_err(|_| AppError::ServiceUnavailable)?;
+            .map_err(|e| Self::send_err(e, "synthesise"))?;
 
         let resp = Self::check(resp).await?;
         Ok(resp.bytes().await.map_err(|_| AppError::Internal("sidecar synthesise bytes".into()))?)

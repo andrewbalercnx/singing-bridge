@@ -92,16 +92,37 @@ async fn probe_sidecar(state: &AppState) -> Value {
     };
 
     let base = state.sidecar.base_url().trim_end_matches('/');
-    let url = format!("{base}/healthz");
 
-    match client.get(&url).send().await {
+    // Component check (unauthenticated).
+    let components = match client.get(&format!("{base}/healthz")).send().await {
+        Err(e) => return json!({"status": "unreachable", "detail": e.to_string()}),
+        Ok(resp) => resp.json::<Value>().await.unwrap_or(json!({"status": "error"})),
+    };
+
+    // Auth check — POST /ping with the actual SIDECAR_SECRET.
+    // Detects secret mismatches that would cause every tool call to fail.
+    let auth = format!("Bearer {}", state.config.sidecar_secret.expose());
+    let auth_status = match client
+        .post(&format!("{base}/ping"))
+        .header("Authorization", auth)
+        .send()
+        .await
+    {
         Err(e) => json!({"status": "unreachable", "detail": e.to_string()}),
-        Ok(resp) => {
-            if let Ok(body) = resp.json::<Value>().await {
-                body
-            } else {
-                json!({"status": "error", "detail": "invalid json from sidecar"})
-            }
-        }
-    }
+        Ok(r) if r.status().is_success() => json!({"status": "ok"}),
+        Ok(r) => json!({"status": "auth_failed", "http_status": r.status().as_u16()}),
+    };
+
+    let overall = if components.get("status").and_then(|v| v.as_str()) == Some("ok")
+        && auth_status.get("status").and_then(|v| v.as_str()) == Some("ok")
+    {
+        "ok"
+    } else {
+        "degraded"
+    };
+
+    let mut result = components;
+    result["status"] = json!(overall);
+    result["auth"] = auth_status;
+    result
 }

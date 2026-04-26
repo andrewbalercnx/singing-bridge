@@ -114,6 +114,13 @@ def _int_field(field: str, default: int | None = None) -> tuple[int | None, tupl
 # Routes
 # ---------------------------------------------------------------------------
 
+@app.route("/ping", methods=["POST"])
+@require_auth
+def ping():
+    """Authenticated liveness check — verifies SIDECAR_SECRET is correct."""
+    return jsonify({"status": "ok"})
+
+
 @app.route("/healthz")
 def healthz():
     import shutil

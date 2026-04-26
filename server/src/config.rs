@@ -8,7 +8,7 @@
 //             SB_DATABASE_URL must include sslmode=verify-full and must not be localhost.
 //             SB_DATABASE_URL is always required (no fallback) — server refuses to start without it.
 //             Secure cookie flag only omitted when dev=true.
-// Last updated: Sprint 21 (2026-04-26) -- add migrate_url (SB_MIGRATE_URL) for auto-migration at startup
+// Last updated: Sprint 22 (2026-04-26) -- add azure_storage_connection_string / azure_storage_container
 
 use std::net::SocketAddr;
 

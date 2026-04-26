@@ -7,7 +7,7 @@
 //             Selects mailer based on MailerKind. Spawns WS join rate sweeper
 //             and aborts it on shutdown. AppState.ws_join_rate_sweeper is
 //             always a valid JoinHandle for the life of the process.
-// Last updated: Sprint 21 (2026-04-26) -- run_migrations at startup when SB_MIGRATE_URL is set
+// Last updated: Sprint 22 (2026-04-26) -- select AzureBlobStore vs DevBlobStore at startup
 
 use std::{net::SocketAddr, sync::Arc};
 

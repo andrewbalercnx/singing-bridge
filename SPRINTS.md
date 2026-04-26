@@ -705,4 +705,4 @@ _Backwards compatibility_
 - `DevBlobStore` tests continue to pass with no env vars set
 - Council code review APPROVED
 
-**Status:** PENDING
+**Status:** COMPLETE — 2026-04-26, infra provisioned + AzureBlobStore implemented

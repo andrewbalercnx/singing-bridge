@@ -383,7 +383,7 @@
   // Synthesise
   // ---------------------------------------------------------------------------
 
-  function synthesise(assetId, req, statusEl, variantListEl, formEl, base, bannerEl, resynFn) {
+  function synthesise(assetId, req, statusEl, variantListEl, base, bannerEl, resynFn) {
     if (!req.label || !req.label.trim()) {
       if (statusEl) statusEl.textContent = 'Label is required';
       return;
@@ -418,15 +418,9 @@
         };
         if (variantListEl) {
           var rowResynFn = resynFn || function (rReq) {
-            synthesise(assetId, rReq, statusEl, variantListEl, formEl, base, bannerEl);
+            synthesise(assetId, rReq, statusEl, variantListEl, base, bannerEl);
           };
           variantListEl.prepend(renderVariantRow(assetId, displayReq, base, bannerEl, rowResynFn));
-        }
-        if (formEl) {
-          formEl.labelInput.value = '';
-          formEl.tempoInput.value = '100';
-          formEl.transposeInput.value = '0';
-          if (formEl.repeatsInput) formEl.repeatsInput.checked = false;
         }
       })
       .catch(function (err) {
@@ -1034,12 +1028,7 @@
       }
     }
 
-    // Open dialog (native or fallback).
-    if (typeof dialog.showModal === 'function') {
-      dialog.showModal();
-    } else {
-      dialog.setAttribute('open', '');
-    }
+    dialog.showModal();
   }
 
   // Submit handler body — extracted to keep initSynthModal under the logic-length threshold.
@@ -1101,7 +1090,7 @@
           if (v) resetSubmitBtn();
         },
       });
-      synthesise(assetId, req, statusProxy, wrappedList, null, base, bannerEl, resynFn);
+      synthesise(assetId, req, statusProxy, wrappedList, base, bannerEl, resynFn);
     }
 
     if (!hasMidi) {

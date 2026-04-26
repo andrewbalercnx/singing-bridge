@@ -11,6 +11,17 @@
 > **Commit:** `<sha>`
 > ```
 
+## Sprint 24: Synthesis modal + variant management — 2026-04-26
+
+**Files changed:**
+- `web/library.html` — added `<dialog id="synth-modal">` static skeleton
+- `web/assets/library.js` — synthesis modal (`openSynthModal`, `handleSynthSubmit`, `buildOmrSection`, `initSynthModal`); re-synthesise gated on `has_midi`; PartInfo.index round-trip; removed dead `formEl` from `synthesise()`; `showNewVariantButton`
+- `web/assets/tests/library.test.js` — 143 tests; new modal tests, part-index round-trip, WAV-only re-synth gating, hasMidi=true failure path
+- `web/assets/theme.css` — synth-modal CSS
+- `server/src/http/library.rs` — server-side bounds on `tempo_pct` [25,300], `transpose_semitones` [-12,12], `part_indices` max 32
+
+**Commit:** `5748b38`
+
 ## Sprint 20: Lesson support for students without headphones (and iOS) — 2026-04-25
 
 **Files changed:**

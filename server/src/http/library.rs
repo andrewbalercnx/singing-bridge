@@ -15,7 +15,9 @@
 //             page_blob_keys_json ≤ 10 KB.
 //             GET /api/media/:token returns 404 for both unknown and expired tokens (no oracle).
 //             Blob keys are never returned directly — callers receive short-lived media tokens.
-// Last updated: Sprint 23 (2026-04-26) -- single-pass OMR: cache MusicXML blob + bar_coords; post_midi uses cache
+//             post_variant: tempo_pct [25,300], transpose_semitones [-12,12] enforced server-side.
+//             post_midi: part_indices length capped at 32.
+// Last updated: Sprint 24 (2026-04-26) -- server-side bounds on tempo_pct, transpose_semitones, part_indices
 
 use std::pin::Pin;
 use std::sync::Arc;

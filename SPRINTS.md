@@ -746,4 +746,4 @@ _Backwards compatibility_
 - Empty label or out-of-range tempo blocked client-side with inline error in modal
 - Council code review APPROVED
 
-**Status:** IN PROGRESS
+**Status:** COMPLETE

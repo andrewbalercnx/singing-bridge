@@ -985,6 +985,24 @@ test('initSynthModal_submit_variants_503_stays_open_reenables_button', async fun
   globalThis.document.getElementById = function() { return null; };
 });
 
+test('initSynthModal_submit_hasMidi_true_variants_422_reenables_button', async function () {
+  // Explicit hasMidi=true failure path: POST /variants returns 422.
+  var ctx = makeInitialisedModal();
+  globalThis.fetch = fetchStub(422, { message: 'bad request' });
+  ctx.m.labelInput.value = 'Track';
+  ctx.m.tempoInput.value = '100';
+  ctx.m.transposeInput.value = '0';
+  lib._setModalState({ assetId: 1, hasMidi: true, parts: null, variantListEl: makeEl(), base: '/base', bannerEl: makeEl() });
+  ctx.m.dialog.open = true;
+  ctx.fireSubmit();
+  await new Promise(function(r) { setTimeout(r, 30); });
+  assert.equal(ctx.m.dialog.open, true, 'modal must stay open on failure');
+  assert.equal(ctx.m.submitBtn.disabled, false, 'submit button must be re-enabled on failure');
+  assert.ok(ctx.m.statusP.textContent.length > 0, 'error message must be shown');
+  delete globalThis.fetch;
+  globalThis.document.getElementById = function() { return null; };
+});
+
 test('initSynthModal_midi_503_then_reenables_button', async function () {
   var ctx = makeInitialisedModal();
   // hasMidi=false path: extractMidi is called first and fails.
@@ -1077,19 +1095,12 @@ test('rasterise_does_not_show_banner_on_422', async function () {
 // synthesise tests
 // ---------------------------------------------------------------------------
 
-function makeSynthForm() {
-  var labelInput = makeEl(); labelInput.value = 'My Label';
-  var tempoInput = makeEl(); tempoInput.value = '120';
-  var transposeInput = makeEl(); transposeInput.value = '2';
-  var repeatsInput = makeEl(); repeatsInput.checked = true;
-  return { labelInput: labelInput, tempoInput: tempoInput, transposeInput: transposeInput, repeatsInput: repeatsInput };
-}
 
 test('synthesise_rejects_empty_label', async function () {
   var fetchCalled = false;
   globalThis.fetch = function() { fetchCalled = true; return Promise.resolve({}); };
-  var statusEl = makeEl(); var variantListEl = makeEl(); var formEl = makeSynthForm();
-  lib.synthesise(1, { label: '', tempo_pct: 100, transpose_semitones: 0, respect_repeats: false }, statusEl, variantListEl, formEl, '/base', makeBannerEl());
+  var statusEl = makeEl(); var variantListEl = makeEl();
+  lib.synthesise(1, { label: '', tempo_pct: 100, transpose_semitones: 0, respect_repeats: false }, statusEl, variantListEl, '/base', makeBannerEl());
   assert.equal(fetchCalled, false);
   assert.ok(statusEl.textContent.length > 0);
   delete globalThis.fetch;
@@ -1099,7 +1110,7 @@ test('synthesise_rejects_tempo_below_25', async function () {
   var fetchCalled = false;
   globalThis.fetch = function() { fetchCalled = true; return Promise.resolve({}); };
   var statusEl = makeEl(); var variantListEl = makeEl();
-  lib.synthesise(1, { label: 'L', tempo_pct: 24, transpose_semitones: 0, respect_repeats: false }, statusEl, variantListEl, makeSynthForm(), '/base', makeBannerEl());
+  lib.synthesise(1, { label: 'L', tempo_pct: 24, transpose_semitones: 0, respect_repeats: false }, statusEl, variantListEl, '/base', makeBannerEl());
   assert.equal(fetchCalled, false);
   delete globalThis.fetch;
 });
@@ -1109,7 +1120,7 @@ test('synthesise_accepts_tempo_25', async function () {
   globalThis.fetch = function() { fetchCalled = true; return Promise.resolve({ ok: true, status: 201, json: function() { return Promise.resolve({ id: 1, label: 'L' }); } }); };
   var statusEl = makeEl(); var variantListEl = makeEl();
   variantListEl.prepend = function() {};
-  lib.synthesise(1, { label: 'L', tempo_pct: 25, transpose_semitones: 0, respect_repeats: false }, statusEl, variantListEl, makeSynthForm(), '/base', makeBannerEl());
+  lib.synthesise(1, { label: 'L', tempo_pct: 25, transpose_semitones: 0, respect_repeats: false }, statusEl, variantListEl, '/base', makeBannerEl());
   await new Promise(function(r) { setTimeout(r, 20); });
   assert.equal(fetchCalled, true);
   delete globalThis.fetch;
@@ -1119,7 +1130,7 @@ test('synthesise_rejects_tempo_above_300', async function () {
   var fetchCalled = false;
   globalThis.fetch = function() { fetchCalled = true; return Promise.resolve({}); };
   var statusEl = makeEl(); var variantListEl = makeEl();
-  lib.synthesise(1, { label: 'L', tempo_pct: 301, transpose_semitones: 0, respect_repeats: false }, statusEl, variantListEl, makeSynthForm(), '/base', makeBannerEl());
+  lib.synthesise(1, { label: 'L', tempo_pct: 301, transpose_semitones: 0, respect_repeats: false }, statusEl, variantListEl, '/base', makeBannerEl());
   assert.equal(fetchCalled, false);
   delete globalThis.fetch;
 });
@@ -1128,7 +1139,7 @@ test('synthesise_accepts_tempo_300', async function () {
   var fetchCalled = false;
   globalThis.fetch = function() { fetchCalled = true; return Promise.resolve({ ok: true, status: 201, json: function() { return Promise.resolve({ id: 1, label: 'L' }); } }); };
   var statusEl = makeEl(); var variantListEl = makeEl(); variantListEl.prepend = function() {};
-  lib.synthesise(1, { label: 'L', tempo_pct: 300, transpose_semitones: 0, respect_repeats: false }, statusEl, variantListEl, makeSynthForm(), '/base', makeBannerEl());
+  lib.synthesise(1, { label: 'L', tempo_pct: 300, transpose_semitones: 0, respect_repeats: false }, statusEl, variantListEl, '/base', makeBannerEl());
   await new Promise(function(r) { setTimeout(r, 20); });
   assert.equal(fetchCalled, true);
   delete globalThis.fetch;
@@ -1138,7 +1149,7 @@ test('synthesise_rejects_transpose_below_minus12', async function () {
   var fetchCalled = false;
   globalThis.fetch = function() { fetchCalled = true; return Promise.resolve({}); };
   var statusEl = makeEl(); var variantListEl = makeEl();
-  lib.synthesise(1, { label: 'L', tempo_pct: 100, transpose_semitones: -13, respect_repeats: false }, statusEl, variantListEl, makeSynthForm(), '/base', makeBannerEl());
+  lib.synthesise(1, { label: 'L', tempo_pct: 100, transpose_semitones: -13, respect_repeats: false }, statusEl, variantListEl, '/base', makeBannerEl());
   assert.equal(fetchCalled, false);
   delete globalThis.fetch;
 });
@@ -1147,7 +1158,7 @@ test('synthesise_accepts_transpose_minus12', async function () {
   var fetchCalled = false;
   globalThis.fetch = function() { fetchCalled = true; return Promise.resolve({ ok: true, status: 201, json: function() { return Promise.resolve({ id: 1, label: 'L' }); } }); };
   var statusEl = makeEl(); var variantListEl = makeEl(); variantListEl.prepend = function() {};
-  lib.synthesise(1, { label: 'L', tempo_pct: 100, transpose_semitones: -12, respect_repeats: false }, statusEl, variantListEl, makeSynthForm(), '/base', makeBannerEl());
+  lib.synthesise(1, { label: 'L', tempo_pct: 100, transpose_semitones: -12, respect_repeats: false }, statusEl, variantListEl, '/base', makeBannerEl());
   await new Promise(function(r) { setTimeout(r, 20); });
   assert.equal(fetchCalled, true);
   delete globalThis.fetch;
@@ -1157,7 +1168,7 @@ test('synthesise_rejects_transpose_above_12', async function () {
   var fetchCalled = false;
   globalThis.fetch = function() { fetchCalled = true; return Promise.resolve({}); };
   var statusEl = makeEl(); var variantListEl = makeEl();
-  lib.synthesise(1, { label: 'L', tempo_pct: 100, transpose_semitones: 13, respect_repeats: false }, statusEl, variantListEl, makeSynthForm(), '/base', makeBannerEl());
+  lib.synthesise(1, { label: 'L', tempo_pct: 100, transpose_semitones: 13, respect_repeats: false }, statusEl, variantListEl, '/base', makeBannerEl());
   assert.equal(fetchCalled, false);
   delete globalThis.fetch;
 });
@@ -1166,7 +1177,7 @@ test('synthesise_accepts_transpose_12', async function () {
   var fetchCalled = false;
   globalThis.fetch = function() { fetchCalled = true; return Promise.resolve({ ok: true, status: 201, json: function() { return Promise.resolve({ id: 1, label: 'L' }); } }); };
   var statusEl = makeEl(); var variantListEl = makeEl(); variantListEl.prepend = function() {};
-  lib.synthesise(1, { label: 'L', tempo_pct: 100, transpose_semitones: 12, respect_repeats: false }, statusEl, variantListEl, makeSynthForm(), '/base', makeBannerEl());
+  lib.synthesise(1, { label: 'L', tempo_pct: 100, transpose_semitones: 12, respect_repeats: false }, statusEl, variantListEl, '/base', makeBannerEl());
   await new Promise(function(r) { setTimeout(r, 20); });
   assert.equal(fetchCalled, true);
   delete globalThis.fetch;
@@ -1179,7 +1190,7 @@ test('synthesise_prepends_variant_on_success', async function () {
   var variantListEl = makeEl();
   variantListEl.prepend = function() { prependCount++; };
   await new Promise(function(r) {
-    lib.synthesise(1, { label: 'Fast', tempo_pct: 150, transpose_semitones: 0, respect_repeats: false }, statusEl, variantListEl, makeSynthForm(), '/base', makeBannerEl());
+    lib.synthesise(1, { label: 'Fast', tempo_pct: 150, transpose_semitones: 0, respect_repeats: false }, statusEl, variantListEl, '/base', makeBannerEl());
     setTimeout(r, 20);
   });
   assert.equal(prependCount, 1);
@@ -1194,40 +1205,20 @@ test('synthesise_uses_data_label_on_success', async function () {
   variantListEl.prepend = function(li) {
     if (li.children && li.children[0]) renderedLabel = li.children[0].textContent;
   };
-  var form = makeSynthForm();
   await new Promise(function(r) {
-    lib.synthesise(1, { label: 'Client Label', tempo_pct: 100, transpose_semitones: 0, respect_repeats: false }, statusEl, variantListEl, form, '/base', makeBannerEl());
+    lib.synthesise(1, { label: 'Client Label', tempo_pct: 100, transpose_semitones: 0, respect_repeats: false }, statusEl, variantListEl, '/base', makeBannerEl());
     setTimeout(r, 20);
   });
   assert.equal(renderedLabel, 'Server Label');
   delete globalThis.fetch;
 });
 
-test('synthesise_clears_form_fields_on_success', async function () {
-  globalThis.fetch = fetchStub(201, { id: 1, label: 'L' });
-  var statusEl = makeEl();
-  var variantListEl = makeEl(); variantListEl.prepend = function() {};
-  var form = makeSynthForm();
-  form.labelInput.value = 'Old Label';
-  form.tempoInput.value = '150';
-  form.transposeInput.value = '5';
-  form.repeatsInput.checked = true;
-  await new Promise(function(r) {
-    lib.synthesise(1, { label: 'Old Label', tempo_pct: 150, transpose_semitones: 5, respect_repeats: true }, statusEl, variantListEl, form, '/base', makeBannerEl());
-    setTimeout(r, 20);
-  });
-  assert.equal(form.labelInput.value, '');
-  assert.equal(form.tempoInput.value, '100');
-  assert.equal(form.transposeInput.value, '0');
-  assert.equal(form.repeatsInput.checked, false);
-  delete globalThis.fetch;
-});
 
 test('synthesise_shows_banner_on_503', async function () {
   globalThis.fetch = fetchStub(503, { message: 'unavail' });
   var bannerEl = makeBannerEl(); var statusEl = makeEl(); var variantListEl = makeEl();
   await new Promise(function(r) {
-    lib.synthesise(1, { label: 'L', tempo_pct: 100, transpose_semitones: 0, respect_repeats: false }, statusEl, variantListEl, null, '/base', bannerEl);
+    lib.synthesise(1, { label: 'L', tempo_pct: 100, transpose_semitones: 0, respect_repeats: false }, statusEl, variantListEl, '/base', bannerEl);
     setTimeout(r, 20);
   });
   assert.equal(bannerEl.hidden, false);
@@ -1238,7 +1229,7 @@ test('synthesise_does_not_show_banner_on_422', async function () {
   globalThis.fetch = fetchStub(422, { message: 'bad' });
   var bannerEl = makeBannerEl(); var statusEl = makeEl(); var variantListEl = makeEl();
   await new Promise(function(r) {
-    lib.synthesise(1, { label: 'L', tempo_pct: 100, transpose_semitones: 0, respect_repeats: false }, statusEl, variantListEl, null, '/base', bannerEl);
+    lib.synthesise(1, { label: 'L', tempo_pct: 100, transpose_semitones: 0, respect_repeats: false }, statusEl, variantListEl, '/base', bannerEl);
     setTimeout(r, 20);
   });
   assert.equal(bannerEl.hidden, true);

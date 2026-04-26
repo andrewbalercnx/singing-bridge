@@ -1,6 +1,6 @@
 # File: sidecar/Dockerfile
 # Purpose: Production sidecar image — Python 3.12 + FluidSynth + Audiveris + ghostscript.
-# Last updated: Sprint 20 (2026-04-26) -- libxtst6/xdg-utils deps; pre-create XDG menu dir
+# Last updated: Sprint 20 (2026-04-26) -- libxtst6/xdg-utils deps; dpkg --unpack to skip postinst
 
 FROM python:3.12-slim
 
@@ -21,13 +21,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 ENV PIANO_SF2=/usr/share/sounds/sf2/FluidR3_GM.sf2
 
 # Install Audiveris 5.10.2 via Ubuntu 24.04 deb (compatible with Debian Trixie).
-# Pre-create the XDG menu directory so the post-install script doesn't fail in a
-# headless container ("No writable system menu directory found").
-RUN mkdir -p /usr/share/desktop-directories && \
-    curl -fsSL \
+# Use --unpack (not -i) to extract files without running the post-install script,
+# which calls xdg-desktop-menu and fails in headless containers.
+RUN curl -fsSL \
     "https://github.com/Audiveris/audiveris/releases/download/5.10.2/Audiveris-5.10.2-ubuntu24.04-x86_64.deb" \
     -o /tmp/audiveris.deb \
-    && dpkg -i /tmp/audiveris.deb \
+    && dpkg --unpack /tmp/audiveris.deb \
     && rm /tmp/audiveris.deb
 
 WORKDIR /app

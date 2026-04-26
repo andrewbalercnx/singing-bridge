@@ -192,6 +192,9 @@
 .sb-page *::before,
 .sb-page *::after { box-sizing: border-box; }
 
+/* Restore hidden attribute semantics overridden by display:flex/grid on components. */
+[hidden] { display: none !important; }
+
 .sb-h1, .sb-page h1 {
   font-family: var(--sb-font-display);
   font-size: var(--sb-text-3xl);

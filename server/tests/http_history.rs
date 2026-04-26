@@ -87,10 +87,36 @@ async fn history_respects_100_row_limit() {
         .await
         .unwrap();
     let now = time::OffsetDateTime::now_utc().unix_timestamp();
-    for i in 0..150i64 {
-        app.make_session_event(teacher_id, "s@example.test", now - i * 10, Some(now - i * 10 + 5))
-            .await;
-    }
+
+    // Upsert student once, then bulk-insert 150 events via generate_series —
+    // avoids 450 WAN round-trips that made this test fragile under CI latency.
+    sqlx::query(
+        "INSERT INTO students (teacher_id, email, first_seen_at) \
+         VALUES ($1, 's@example.test', $2) ON CONFLICT DO NOTHING",
+    )
+    .bind(teacher_id)
+    .bind(now)
+    .execute(&app.state.db)
+    .await
+    .unwrap();
+    let student_id: i64 =
+        sqlx::query_scalar("SELECT id FROM students WHERE teacher_id = $1 AND email = 's@example.test'")
+            .bind(teacher_id)
+            .fetch_one(&app.state.db)
+            .await
+            .unwrap();
+    sqlx::query(
+        "INSERT INTO session_events \
+         (teacher_id, student_id, started_at, ended_at, duration_secs, ended_reason) \
+         SELECT $1, $2, $3 - i * 10, $3 - i * 10 + 5, 5, 'hangup' \
+         FROM generate_series(0, 149) AS g(i)",
+    )
+    .bind(teacher_id)
+    .bind(student_id)
+    .bind(now)
+    .execute(&app.state.db)
+    .await
+    .unwrap();
 
     let resp = app
         .client

@@ -437,8 +437,10 @@ mod tests {
         let now = time::OffsetDateTime::now_utc().unix_timestamp();
         let cutoff_secs = SESSION_ARCHIVE_DAYS * 86_400;
 
+        // ended_at is 100s AFTER the cutoff so it stays above the archive
+        // threshold even though archive_old_events recomputes 'now' independently.
         let e_boundary = open_event(&td.pool, t1, student_id, now - cutoff_secs - 100).await.unwrap();
-        close_event(&td.pool, e_boundary, t1, now - cutoff_secs, EndedReason::Hangup)
+        close_event(&td.pool, e_boundary, t1, now - cutoff_secs + 100, EndedReason::Hangup)
             .await
             .unwrap();
 

@@ -7,7 +7,7 @@
 //             init_pool does NOT run migrations — caller is responsible.
 //             run_migrations requires a DDL-capable credential (sbmigrate role).
 //             Production connection strings must include sslmode=verify-full.
-// Last updated: Sprint 19 (2026-04-25) -- migrate SQLite → PostgreSQL; separate migrations; test_helpers
+// Last updated: Sprint 19 (2026-04-26) -- template DB per process; skip per-test migrations
 
 use sqlx::{postgres::PgPoolOptions, PgPool};
 
@@ -40,9 +40,12 @@ pub async fn run_migrations(db_url: &str) -> Result<()> {
 #[cfg(test)]
 pub mod test_helpers {
     use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::Mutex;
     use sqlx::{PgPool, postgres::PgPoolOptions};
 
     static DB_COUNTER: AtomicU64 = AtomicU64::new(0);
+    // Per-process template DB (created once, reused by all make_test_db calls).
+    static TEMPLATE_DB: Mutex<Option<String>> = Mutex::new(None);
 
     /// Replace the database-name segment of a PostgreSQL URL while preserving
     /// all other components (scheme, credentials, host, port, query string).
@@ -56,6 +59,50 @@ pub mod test_helpers {
             Some(idx) => format!("{}/{}", &url[..idx], new_db),
             None => format!("{}/{}", url, new_db),
         }
+    }
+
+    /// Return (or lazily create) the per-process template database.
+    /// Migrations are applied once; each test DB is created with TEMPLATE.
+    pub async fn ensure_template_db(admin_url: &str) -> String {
+        if let Some(name) = TEMPLATE_DB.lock().unwrap().as_ref() {
+            return name.clone();
+        }
+        let admin_url = admin_url.to_string();
+        tokio::task::spawn_blocking(move || {
+            let mut guard = TEMPLATE_DB.lock().unwrap();
+            if let Some(name) = guard.as_ref() {
+                return name.clone();
+            }
+            let pid = std::process::id();
+            let name = format!("singing_bridge_test_template_{pid}");
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("template DB init runtime");
+            rt.block_on(async {
+                let admin = PgPoolOptions::new()
+                    .max_connections(1)
+                    .connect(&admin_url)
+                    .await
+                    .expect("template: connect admin");
+                let _ = sqlx::query(&format!("DROP DATABASE IF EXISTS \"{name}\""))
+                    .execute(&admin)
+                    .await;
+                sqlx::query(&format!("CREATE DATABASE \"{name}\""))
+                    .execute(&admin)
+                    .await
+                    .expect("template: create");
+                admin.close().await;
+                let db_url = replace_db_name(&admin_url, &name);
+                crate::db::run_migrations(&db_url)
+                    .await
+                    .expect("template: run_migrations");
+            });
+            *guard = Some(name.clone());
+            name
+        })
+        .await
+        .expect("ensure_template_db")
     }
 
     /// Per-test database handle. The database is created in `make_test_db()` and
@@ -102,15 +149,14 @@ pub mod test_helpers {
         }
     }
 
-    /// Create a fresh per-test PostgreSQL database, run migrations, and return a
-    /// RAII guard that drops the database on cleanup — including on test panic.
-    ///
-    /// Reads `DATABASE_TEST_URL` for admin-level access. The per-test database
-    /// name includes the process ID and a monotonic counter so parallel test
-    /// processes (each with a unique PID) never collide.
+    /// Create a fresh per-test PostgreSQL database using the per-process template
+    /// (migrations already applied), and return a RAII guard that drops it on
+    /// cleanup — including on test panic.
     pub async fn make_test_db() -> TestDb {
         let admin_url = std::env::var("DATABASE_TEST_URL")
             .expect("DATABASE_TEST_URL must be set for inline tests");
+        let template = ensure_template_db(&admin_url).await;
+
         let n = DB_COUNTER.fetch_add(1, Ordering::Relaxed);
         let pid = std::process::id();
         let db_name = format!("singing_bridge_test_{pid}_{n}");
@@ -120,14 +166,15 @@ pub mod test_helpers {
             .connect(&admin_url)
             .await
             .expect("connect admin for test DB creation");
-        sqlx::query(&format!("CREATE DATABASE \"{db_name}\""))
-            .execute(&admin)
-            .await
-            .expect("create test database");
+        sqlx::query(&format!(
+            "CREATE DATABASE \"{db_name}\" TEMPLATE \"{template}\""
+        ))
+        .execute(&admin)
+        .await
+        .expect("create test database from template");
         admin.close().await;
 
         let db_url = replace_db_name(&admin_url, &db_name);
-        crate::db::run_migrations(&db_url).await.expect("run_migrations");
         let pool = crate::db::init_pool(&db_url).await.expect("init_pool");
 
         TestDb { pool, db_name, admin_url }

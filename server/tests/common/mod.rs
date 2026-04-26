@@ -1,7 +1,7 @@
 // File: server/tests/common/mod.rs
 // Purpose: Shared test harness — spawn_app, dev-mail reader, WS client.
 // Role: Keep integration-test bodies short and behaviour-focused.
-// Last updated: Sprint 19 (2026-04-25) -- panic-safe TestApp Drop; unified shutdown; URL query-param fix
+// Last updated: Sprint 19 (2026-04-26) -- template DB per process; skip per-test migrations
 
 #![allow(dead_code)]
 
@@ -11,6 +11,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
 static DB_COUNTER: AtomicU64 = AtomicU64::new(0);
+static TEMPLATE_DB: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
 
 use dashmap::DashMap;
 use futures_util::{SinkExt, StreamExt};
@@ -130,6 +131,53 @@ impl Default for TestOpts {
     }
 }
 
+/// Return (or lazily create) a per-process template database with migrations applied.
+async fn ensure_template_db(admin_url: &str) -> String {
+    if let Some(name) = TEMPLATE_DB.lock().unwrap().as_ref() {
+        return name.clone();
+    }
+    let admin_url = admin_url.to_string();
+    tokio::task::spawn_blocking(move || {
+        let mut guard = TEMPLATE_DB.lock().unwrap();
+        if let Some(name) = guard.as_ref() {
+            return name.clone();
+        }
+        let pid = std::process::id();
+        let name = format!("singing_bridge_test_template_{pid}");
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("template DB init runtime");
+        rt.block_on(async {
+            let admin = PgPoolOptions::new()
+                .max_connections(1)
+                .connect(&admin_url)
+                .await
+                .expect("template: connect admin");
+            let _ = sqlx::query(&format!("DROP DATABASE IF EXISTS \"{name}\""))
+                .execute(&admin)
+                .await;
+            sqlx::query(&format!("CREATE DATABASE \"{name}\""))
+                .execute(&admin)
+                .await
+                .expect("template: create");
+            admin.close().await;
+            let db_url = match Url::parse(&admin_url) {
+                Ok(mut u) => { u.set_path(&format!("/{name}")); u.to_string() }
+                Err(_) => match admin_url.rfind('/') {
+                    Some(idx) => format!("{}/{}", &admin_url[..idx], name),
+                    None => format!("{}/{}", admin_url, name),
+                },
+            };
+            run_migrations(&db_url).await.expect("template: run_migrations");
+        });
+        *guard = Some(name.clone());
+        name
+    })
+    .await
+    .expect("ensure_template_db")
+}
+
 pub async fn spawn_app() -> TestApp {
     spawn_app_with(TestOpts::default()).await
 }
@@ -156,9 +204,11 @@ pub async fn spawn_app_with(opts: TestOpts) -> TestApp {
     let base_url = Url::parse(&format!("http://{addr}")).unwrap();
     let mail_dir = tempfile::tempdir().unwrap();
 
-    // Create a unique per-test PostgreSQL database.
+    // Create a unique per-test PostgreSQL database from the per-process template
+    // (migrations already applied — no per-test migration overhead).
     let admin_url = std::env::var("DATABASE_TEST_URL")
         .expect("DATABASE_TEST_URL must be set for integration tests");
+    let template = ensure_template_db(&admin_url).await;
     let n = DB_COUNTER.fetch_add(1, Ordering::Relaxed);
     let pid = std::process::id();
     let db_name = format!("singing_bridge_test_{pid}_{n}");
@@ -168,14 +218,14 @@ pub async fn spawn_app_with(opts: TestOpts) -> TestApp {
         .connect(&admin_url)
         .await
         .expect("connect admin pool");
-    sqlx::query(&format!("CREATE DATABASE \"{db_name}\""))
-        .execute(&admin)
-        .await
-        .expect("create test database");
+    sqlx::query(&format!(
+        "CREATE DATABASE \"{db_name}\" TEMPLATE \"{template}\""
+    ))
+    .execute(&admin)
+    .await
+    .expect("create test database from template");
     admin.close().await;
 
-    // Replace only the database-name segment, preserving query parameters
-    // (e.g. sslmode=require) from DATABASE_TEST_URL.
     let db_url = match Url::parse(&admin_url) {
         Ok(mut u) => {
             u.set_path(&format!("/{db_name}"));
@@ -186,8 +236,6 @@ pub async fn spawn_app_with(opts: TestOpts) -> TestApp {
             None => format!("{}/{}", admin_url, db_name),
         },
     };
-
-    run_migrations(&db_url).await.expect("run_migrations");
 
     let mut config = Config::dev_default();
     config.bind = addr;

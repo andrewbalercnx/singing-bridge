@@ -14,12 +14,14 @@ async fn db_pool_allows_concurrent_connections() {
     let app = spawn_app().await;
     let pool = &app.state.db;
 
-    let conn1 = tokio::time::timeout(Duration::from_millis(500), pool.acquire())
+    // 5s: generous for WAN TLS to Azure PostgreSQL. Still fails immediately
+    // if max_connections=1 (second acquire blocks indefinitely, not slowly).
+    let conn1 = tokio::time::timeout(Duration::from_secs(5), pool.acquire())
         .await
         .expect("first acquire timed out")
         .expect("first acquire error");
 
-    let conn2 = tokio::time::timeout(Duration::from_millis(500), pool.acquire())
+    let conn2 = tokio::time::timeout(Duration::from_secs(5), pool.acquire())
         .await
         .expect("second acquire blocked — max_connections is likely set to 1")
         .expect("second acquire error");

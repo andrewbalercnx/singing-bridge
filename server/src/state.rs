@@ -29,7 +29,7 @@ use crate::blob::BlobStore;
 use crate::auth::secret::SecretString;
 use crate::config::Config;
 use crate::http::media_token::MediaTokenStore;
-use crate::sidecar::{BarCoord, BarTiming, SidecarClient};
+use crate::sidecar::{BarCoord, BarTiming, PartInfo, SidecarClient};
 use crate::error::{AppError, Result};
 use crate::ws::protocol::{AcousticProfile, EntryId, LobbyEntryView, PumpDirective, Tier};
 use crate::ws::rate_limit::WsJoinBucket;
@@ -154,6 +154,23 @@ pub struct ActiveSession {
     pub accompaniment: Option<AccompanimentSnapshot>,
 }
 
+// ---------------------------------------------------------------------------
+// OMR background job store
+// ---------------------------------------------------------------------------
+
+pub enum OmrJobState {
+    Running,
+    Done(Vec<PartInfo>),
+    Failed(String),
+}
+
+pub struct OmrJob {
+    pub teacher_id: i64,
+    pub asset_id: i64,
+    pub state: OmrJobState,
+    pub created_at: Instant,
+}
+
 pub const BLOCK_LIST_CAP: usize = 256;
 
 pub struct BlockEntry {
@@ -229,6 +246,7 @@ pub struct AppState {
     pub blob: Arc<dyn BlobStore>,
     pub sidecar: Arc<SidecarClient>,
     pub media_tokens: Arc<MediaTokenStore>,
+    pub omr_jobs: DashMap<uuid::Uuid, OmrJob>,
     pub rooms: DashMap<SlugKey, Arc<RwLock<RoomState>>>,
     /// Authoritative counter for the room cap. Incremented inside the
     /// single-winner `Entry::Vacant` branch of `room_or_insert`; we compare-

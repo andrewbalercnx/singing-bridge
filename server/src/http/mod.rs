@@ -59,6 +59,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/teach/:slug/library/assets/:id",
             get(library::get_asset).delete(library::delete_asset))
         .route("/teach/:slug/library/assets/:id/parts", post(library::post_parts))
+        .route("/teach/:slug/library/assets/:id/parts/:job_id", get(library::get_parts_status))
         .route("/teach/:slug/library/assets/:id/midi", post(library::post_midi))
         .route("/teach/:slug/library/assets/:id/rasterise", post(library::post_rasterise))
         .route("/teach/:slug/library/assets/:id/variants", post(library::post_variant))

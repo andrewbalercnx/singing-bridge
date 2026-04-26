@@ -236,6 +236,7 @@ pub async fn spawn_app_with(opts: TestOpts) -> TestApp {
         blob,
         sidecar,
         media_tokens,
+        omr_jobs: DashMap::new(),
         rooms: DashMap::new(),
         active_rooms: std::sync::atomic::AtomicUsize::new(0),
         shutdown: shutdown.clone(),

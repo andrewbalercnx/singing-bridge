@@ -4,8 +4,8 @@
 // Role: Teacher-authenticated endpoints for library lifecycle management;
 //       public GET /api/media/:token for WAV + page-image delivery.
 // Exports: get_library_page, list_assets, post_asset, get_asset, delete_asset,
-//          post_parts, post_midi, post_rasterise, post_variant, delete_variant,
-//          get_media
+//          post_parts, get_parts_status, post_midi, post_rasterise, post_variant,
+//          delete_variant, get_media
 // Depends: axum, sqlx, blob, sidecar, media_token, uuid, bytes, serde_json
 // Invariants: All /teach/:slug/library/* routes require valid teacher session cookie.
 //             All asset/variant DB queries join through teacher_id — no cross-teacher access.
@@ -19,7 +19,7 @@
 
 use std::pin::Pin;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use axum::{
     body::Body,
@@ -35,7 +35,7 @@ use crate::auth::{resolve_teacher_from_cookie, slug::validate};
 use crate::blob::BlobStore;
 use crate::error::{AppError, Result};
 use crate::sidecar::SynthesiseRequest;
-use crate::state::AppState;
+use crate::state::{AppState, OmrJob, OmrJobState};
 
 const PDF_MAGIC: [u8; 4] = [0x25, 0x50, 0x44, 0x46]; // %PDF
 const MIDI_MAGIC: [u8; 4] = [0x4D, 0x54, 0x68, 0x64]; // MThd
@@ -563,26 +563,110 @@ pub(crate) async fn delete_asset(
 // List parts (OMR + sidecar /list-parts)
 // ---------------------------------------------------------------------------
 
+/// POST /teach/:slug/library/assets/:id/parts
+/// Submits an async OMR job. Returns 202 immediately with a poll URL.
+/// The browser polls GET .../parts/:job_id until done (200) or failed (422).
 pub(crate) async fn post_parts(
     State(state): State<Arc<AppState>>,
     Path((slug, asset_id)): Path<(String, i64)>,
     headers: HeaderMap,
 ) -> Result<Response> {
-    tracing::info!(asset_id, "post_parts: start");
     let teacher_id = require_auth(&state, &headers).await?;
     require_slug_owner(&state, teacher_id, &slug).await?;
 
-    let pdf_key = require_pdf_key(&state, asset_id, teacher_id).await?;
-    tracing::info!(asset_id, pdf_key, "post_parts: fetching pdf from blob");
+    let job_id = uuid::Uuid::new_v4();
+    state.omr_jobs.insert(job_id, OmrJob {
+        teacher_id,
+        asset_id,
+        state: OmrJobState::Running,
+        created_at: Instant::now(),
+    });
+
+    let state2 = Arc::clone(&state);
+    tokio::spawn(async move {
+        let result = run_omr_job(&state2, asset_id, teacher_id).await;
+        if let Some(mut entry) = state2.omr_jobs.get_mut(&job_id) {
+            entry.state = match result {
+                Ok(parts) => OmrJobState::Done(parts),
+                Err(e) => {
+                    tracing::error!(asset_id, error = %e, "omr_job failed");
+                    OmrJobState::Failed(e.to_string())
+                }
+            };
+        }
+    });
+
+    let poll_url = format!("/teach/{slug}/library/assets/{asset_id}/parts/{job_id}");
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(serde_json::json!({"job_id": job_id.to_string(), "poll_url": poll_url})),
+    ).into_response())
+}
+
+/// GET /teach/:slug/library/assets/:id/parts/:job_id
+/// Returns 202 (pending), 200 (done + parts array), or 422 (failed).
+pub(crate) async fn get_parts_status(
+    State(state): State<Arc<AppState>>,
+    Path((slug, asset_id, job_id_str)): Path<(String, i64, String)>,
+    headers: HeaderMap,
+) -> Result<Response> {
+    let teacher_id = require_auth(&state, &headers).await?;
+    require_slug_owner(&state, teacher_id, &slug).await?;
+
+    let job_id = uuid::Uuid::parse_str(&job_id_str).map_err(|_| AppError::NotFound)?;
+
+    enum Outcome {
+        Running,
+        Done(Vec<crate::sidecar::PartInfo>),
+        Failed(String),
+    }
+    let outcome = {
+        let entry = state.omr_jobs.get(&job_id).ok_or(AppError::NotFound)?;
+        if entry.teacher_id != teacher_id || entry.asset_id != asset_id {
+            return Err(AppError::NotFound);
+        }
+        match &entry.state {
+            OmrJobState::Running => Outcome::Running,
+            OmrJobState::Done(parts) => Outcome::Done(parts.clone()),
+            OmrJobState::Failed(msg) => Outcome::Failed(msg.clone()),
+        }
+    };
+
+    match outcome {
+        Outcome::Running => Ok((
+            StatusCode::ACCEPTED,
+            Json(serde_json::json!({"status": "pending"})),
+        ).into_response()),
+        Outcome::Done(parts) => {
+            state.omr_jobs.remove(&job_id);
+            Ok(Json(serde_json::json!({"status": "done", "parts": parts})).into_response())
+        }
+        Outcome::Failed(msg) => {
+            state.omr_jobs.remove(&job_id);
+            Ok((
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(serde_json::json!({"status": "failed", "message": msg})),
+            ).into_response())
+        }
+    }
+}
+
+async fn run_omr_job(
+    state: &AppState,
+    asset_id: i64,
+    teacher_id: i64,
+) -> crate::error::Result<Vec<crate::sidecar::PartInfo>> {
+    let pdf_key = require_pdf_key(state, asset_id, teacher_id).await?;
+    tracing::info!(asset_id, pdf_key, "omr_job: fetching pdf from blob");
     let pdf = state
         .blob
         .get_bytes(&pdf_key)
         .await
         .map_err(|_| AppError::Internal("pdf blob read".into()))?;
 
-    tracing::info!(asset_id, pdf_bytes = pdf.len(), "post_parts: calling sidecar omr");
+    tracing::info!(asset_id, pdf_bytes = pdf.len(), "omr_job: calling sidecar omr");
     let omr = state.sidecar.omr(pdf).await?;
-    tracing::info!(asset_id, parts = omr.parts.len(), "post_parts: omr complete");
+    tracing::info!(asset_id, parts = omr.parts.len(), "omr_job: omr complete");
 
     // Store MusicXML to blob so post_midi can skip re-running Audiveris.
     let xml_key = format!("{}.musicxml", uuid::Uuid::new_v4());
@@ -641,7 +725,7 @@ pub(crate) async fn post_parts(
         return Err(AppError::Sqlx(e));
     }
 
-    Ok(Json(omr.parts).into_response())
+    Ok(omr.parts)
 }
 
 // ---------------------------------------------------------------------------

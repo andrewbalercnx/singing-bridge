@@ -288,6 +288,33 @@
     fetch(base + '/' + assetId + '/parts', { method: 'POST' })
       .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, status: r.status, data: d }; }); })
       .then(function (res) {
+        if (!res.ok || res.status !== 202) {
+          omrBtn.disabled = false;
+          omrBtn.textContent = 'Run OMR';
+          if (res.status === 503) show503Banner(bannerEl);
+          statusEl.textContent = (res.data && res.data.message) || 'OMR failed';
+          return;
+        }
+        statusEl.textContent = 'OMR running\u2026';
+        pollOmrJob(res.data.poll_url, assetId, partPickerEl, omrBtn, statusEl, base, bannerEl);
+      })
+      .catch(function (err) {
+        omrBtn.disabled = false;
+        omrBtn.textContent = 'Run OMR';
+        statusEl.textContent = 'OMR failed: ' + err.message;
+      });
+  }
+
+  function pollOmrJob(pollUrl, assetId, partPickerEl, omrBtn, statusEl, base, bannerEl) {
+    fetch(pollUrl)
+      .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, status: r.status, data: d }; }); })
+      .then(function (res) {
+        if (res.status === 202) {
+          setTimeout(function () {
+            pollOmrJob(pollUrl, assetId, partPickerEl, omrBtn, statusEl, base, bannerEl);
+          }, 3000);
+          return;
+        }
         omrBtn.disabled = false;
         omrBtn.textContent = 'Run OMR';
         if (!res.ok) {
@@ -295,8 +322,9 @@
           statusEl.textContent = (res.data && res.data.message) || 'OMR failed';
           return;
         }
+        var parts = res.data.parts;
         partPickerEl.replaceChildren();
-        res.data.forEach(function (part) {
+        parts.forEach(function (part) {
           var label = document.createElement('label');
           var cb = document.createElement('input');
           cb.type = 'checkbox';
@@ -311,7 +339,6 @@
         var extractBtn = partPickerEl.querySelector('.extract-midi-btn');
         if (extractBtn) partPickerEl.appendChild(extractBtn);
         partPickerEl.hidden = false;
-        // Rasterise automatically — no user action needed.
         rasterise(assetId, statusEl, base, bannerEl);
       })
       .catch(function (err) {
@@ -977,6 +1004,7 @@
     renderVariantRow: renderVariantRow,
     expandAsset: expandAsset,
     runOmr: runOmr,
+    pollOmrJob: pollOmrJob,
     extractMidi: extractMidi,
     rasterise: rasterise,
     synthesise: synthesise,

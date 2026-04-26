@@ -127,6 +127,7 @@ async fn main() -> anyhow::Result<()> {
         blob,
         sidecar,
         media_tokens,
+        omr_jobs: DashMap::new(),
         rooms: DashMap::new(),
         active_rooms: std::sync::atomic::AtomicUsize::new(0),
         shutdown: shutdown.clone(),
@@ -134,6 +135,23 @@ async fn main() -> anyhow::Result<()> {
         ws_join_rate_sweeper,
         turn_cred_rate_limits: Arc::new(DashMap::new()),
         session_log_pepper,
+    });
+
+    // Sweep OMR jobs that have been sitting for > 10 minutes (Done/Failed and
+    // never polled, or Running tasks that hung).
+    let jobs_state = Arc::clone(&state);
+    let jobs_shutdown = shutdown.clone();
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = jobs_shutdown.cancelled() => break,
+                _ = tokio::time::sleep(std::time::Duration::from_secs(600)) => {
+                    let cutoff = std::time::Instant::now()
+                        - std::time::Duration::from_secs(600);
+                    jobs_state.omr_jobs.retain(|_, job| job.created_at > cutoff);
+                }
+            }
+        }
     });
 
     let app = router(state.clone()).into_make_service_with_connect_info::<SocketAddr>();

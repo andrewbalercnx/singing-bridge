@@ -684,3 +684,25 @@ _Backwards compatibility_
 - Council code review APPROVED
 
 **Status:** COMPLETE
+
+## Sprint 22: Azure Blob Storage
+
+**Goal:** Replace the ephemeral `DevBlobStore` with persistent Azure Blob Storage so uploaded PDFs, MIDIs, WAVs, page images, and recordings survive container restarts.
+
+**Deliverables:**
+- `AzureBlobStore` implementing the `BlobStore` trait using the `object_store` crate (azure feature)
+- `get_url` returns a short-lived SAS URL (TTL = `media_token_ttl_secs`) for Azure; dev behaviour unchanged
+- Config: `SB_AZURE_STORAGE_CONNECTION_STRING` + `SB_AZURE_STORAGE_CONTAINER` env vars; when absent, `DevBlobStore` is used (local dev unchanged)
+- `main.rs` selects backend at startup: Azure when connection string is set, dev otherwise
+- Azure Storage Account + container created in `sb-prod-rg`; connection string stored as `sb-blob-connection-string` KV secret; Container App env wired
+- Existing `DevBlobStore` and `/api/dev-blob/:key` route retained for local dev
+- Integration test: put → get_bytes → get_url round-trip against a real `DevBlobStore` (existing test extended); Azure path covered by a feature-gated test using `AZURE_STORAGE_CONNECTION_STRING` env var
+
+**Exit criteria:**
+- PDF upload persists across a forced container revision restart (verified via `az containerapp revision restart`)
+- `/healthz` blob probe passes against Azure store
+- Recordings stored before the restart are still playable after
+- `DevBlobStore` tests continue to pass with no env vars set
+- Council code review APPROVED
+
+**Status:** PENDING

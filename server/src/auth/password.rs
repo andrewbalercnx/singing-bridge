@@ -10,7 +10,7 @@
 //             (never Err) — all failures are false. record_and_check_limits
 //             always INSERTs before checking limits so DB cost is symmetric across
 //             known and unknown email paths.
-// Last updated: Sprint 10 (2026-04-21) -- initial implementation
+// Last updated: Sprint 21 (2026-04-26) -- fix MAX() null decode: fetch_one + Option<i64>
 
 use argon2::{
     password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
@@ -122,13 +122,13 @@ pub async fn record_and_check_limits(
 
     if let Some(tid) = teacher_id {
         let account_cutoff = now - cfg.account_window_secs;
-        let last_success: Option<(i64,)> = sqlx::query_as(
+        let (last_success_ts_opt,): (Option<i64>,) = sqlx::query_as(
             "SELECT MAX(attempted_at) FROM login_attempts WHERE teacher_id = $1 AND succeeded = 1",
         )
         .bind(tid)
-        .fetch_optional(&mut *tx)
+        .fetch_one(&mut *tx)
         .await?;
-        let last_success_ts = last_success.map(|(t,)| t).unwrap_or(0);
+        let last_success_ts = last_success_ts_opt.unwrap_or(0);
         let failure_since = last_success_ts.max(account_cutoff);
 
         let (failure_count,): (i64,) = sqlx::query_as(

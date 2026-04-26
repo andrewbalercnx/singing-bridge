@@ -186,8 +186,9 @@ async fn session_event_row_has_ended_at_after_disconnect() {
     drop(student);
     let _ = recv_json(&mut teacher).await; // peer_disconnected
 
-    // Poll until ended_at is set or 500 ms elapses. Avoids a fixed sleep.
-    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
+    // Poll until ended_at is set or 3 s elapses. Session-log writes are now
+    // spawned as a background task; on Azure WAN they may take ~1 s to complete.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(3000);
     let row = loop {
         let r: Option<(Option<i64>,)> = sqlx::query_as(
             "SELECT ended_at FROM session_events WHERE teacher_id = $1 ORDER BY id DESC LIMIT 1",

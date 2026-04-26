@@ -2,7 +2,7 @@
 # Purpose: CI + deploy pipeline. On push to main: run tests, then deploy if green.
 #   Skips rebuilding server or sidecar image if their source hasn't changed.
 #   On pull requests: run tests only. workflow_dispatch triggers full pipeline.
-# Last updated: Sprint 20 (2026-04-25) -- WEB_CACHE_BUST; revision health poll + SHA check in verify step
+# Last updated: Sprint 23 (2026-04-26) -- add Rust test step + Postgres service; fix pre-existing failures
 
 name: CI
 
@@ -24,7 +24,19 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
     steps:
       - uses: actions/checkout@v4
         with:
@@ -46,6 +58,14 @@ jobs:
       - name: Install test deps
         run: python -m pip install --upgrade pip pytest
 
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+
       - name: Check file headers
         run: python3 scripts/check-headers.py --strict
 
@@ -59,6 +79,11 @@ jobs:
       - name: JS tests (SDP munger + audio predicate)
         if: hashFiles('web/assets/tests/*.test.js') != ''
         run: node --test web/assets/tests/*.test.js
+
+      - name: Rust tests
+        env:
+          DATABASE_TEST_URL: postgres://postgres:postgres@localhost:5432/postgres
+        run: cargo test -p singing-bridge-server
 
   deploy:
     needs: test

@@ -8,7 +8,7 @@
 //             SB_DATABASE_URL must include sslmode=verify-full and must not be localhost.
 //             SB_DATABASE_URL is always required (no fallback) — server refuses to start without it.
 //             Secure cookie flag only omitted when dev=true.
-// Last updated: Sprint 22 (2026-04-26) -- add azure_storage_connection_string / azure_storage_container
+// Last updated: Sprint 23 (2026-04-26) -- fix prod_missing_turn_secret_errors test to use prod_base
 
 use std::net::SocketAddr;
 
@@ -425,9 +425,7 @@ mod tests {
 
     #[test]
     fn prod_missing_turn_secret_errors() {
-        let mut c = Config::dev_default();
-        c.dev = false;
-        c.base_url = Url::parse("https://singing.rcnx.io").unwrap();
+        let mut c = prod_base(true);
         c.turn_shared_secret = None;
         let err = validate_prod_config(&c).unwrap_err();
         assert!(matches!(err, ConfigError::Missing("SB_TURN_SHARED_SECRET")));

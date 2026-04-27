@@ -186,6 +186,66 @@ async fn test_peer_bad_script_returns_503() {
     assert_eq!(resp.status(), reqwest::StatusCode::SERVICE_UNAVAILABLE);
     let body: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(body["error"], "bot_unavailable");
+    assert!(
+        !app.state.active_bots.contains_key("myroom"),
+        "active_bots must be cleared after spawn failure"
+    );
+    app.shutdown().await;
+}
+
+// ---------------------------------------------------------------------------
+// Teacher mode: 202 success (teacher has a wav variant)
+// ---------------------------------------------------------------------------
+
+#[cfg(debug_assertions)]
+#[tokio::test]
+async fn test_peer_teacher_mode_with_variant_returns_202() {
+    let app = spawn_app().await;
+    app.register_teacher("t@example.com", "myroom", "pass123").await;
+    let (tid,): (i64,) = sqlx::query_as("SELECT id FROM teachers WHERE slug = 'myroom'")
+        .fetch_one(&app.state.db)
+        .await
+        .unwrap();
+    common::seed_accompaniment_asset(&app, tid).await;
+
+    let resp = app
+        .client
+        .get(app.url("/test-peer?slug=myroom&mode=teacher"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), reqwest::StatusCode::ACCEPTED);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["mode"], "teacher");
+    assert_eq!(body["slug"], "myroom");
+    app.shutdown().await;
+}
+
+// ---------------------------------------------------------------------------
+// Token store at capacity → 503
+// ---------------------------------------------------------------------------
+
+#[cfg(debug_assertions)]
+#[tokio::test]
+async fn test_peer_token_cap_returns_503() {
+    let app = spawn_app().await;
+    // Fill the token store to capacity using direct insert, bypassing HTTP.
+    for i in 0..100usize {
+        let _ = app.state.token_store.insert(format!("slug{i}"));
+    }
+    let resp = app
+        .client
+        .get(app.url("/test-peer?slug=newslug&mode=student"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), reqwest::StatusCode::SERVICE_UNAVAILABLE);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "bot_capacity");
+    assert!(
+        !app.state.active_bots.contains_key("newslug"),
+        "active_bots must be cleared when token store is at capacity"
+    );
     app.shutdown().await;
 }
 

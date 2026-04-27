@@ -309,6 +309,7 @@ pub async fn spawn_app_with(opts: TestOpts) -> TestApp {
         ws_join_rate_sweeper,
         turn_cred_rate_limits: std::sync::Arc::new(DashMap::new()),
         session_log_pepper: None,
+        #[cfg(debug_assertions)]
         active_bots: std::sync::Arc::new(DashMap::new()),
         #[cfg(debug_assertions)]
         token_store: std::sync::Arc::new(singing_bridge_server::http::test_peer::TokenStore::new()),

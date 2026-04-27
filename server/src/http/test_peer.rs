@@ -108,41 +108,55 @@ pub async fn get_test_peer(
     }
 }
 
+fn is_valid_mode(mode: &str) -> bool {
+    mode == "teacher" || mode == "student"
+}
+
 async fn validate_and_reserve(
     slug: &str,
     mode: &str,
     state: &Arc<AppState>,
 ) -> Result<(String, Option<i64>, Option<i64>), axum::response::Response> {
-    if mode != "teacher" && mode != "student" {
+    if !is_valid_mode(mode) {
         return Err((
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({"error": "invalid_mode"})),
         ).into_response());
     }
 
-    if state.active_bots.contains_key(slug) {
-        return Err((
-            StatusCode::CONFLICT,
-            Json(serde_json::json!({"error": "bot_already_running"})),
-        ).into_response());
+    // Atomic check-and-reserve: the DashMap shard lock is held for the duration
+    // of the match, so two concurrent requests for the same slug cannot both
+    // pass the duplicate check before either inserts.
+    match state.active_bots.entry(slug.to_string()) {
+        dashmap::mapref::entry::Entry::Occupied(_) => {
+            return Err((
+                StatusCode::CONFLICT,
+                Json(serde_json::json!({"error": "bot_already_running"})),
+            ).into_response());
+        }
+        dashmap::mapref::entry::Entry::Vacant(v) => { v.insert(()); }
     }
 
+    // Slug is now in active_bots. Remove it on any failure path below.
     let (asset_id, variant_id) = if mode == "teacher" {
         match find_teacher_asset(&state.db, slug).await {
             Ok(Some((aid, vid))) => (Some(aid), Some(vid)),
             Ok(None) => {
+                state.active_bots.remove(slug);
                 return Err((
                     StatusCode::NOT_FOUND,
                     Json(serde_json::json!({"error": "no_wav_variant"})),
                 ).into_response());
             }
             Err(DbError::NoTeacher) => {
+                state.active_bots.remove(slug);
                 return Err((
                     StatusCode::NOT_FOUND,
                     Json(serde_json::json!({"error": "no_teacher"})),
                 ).into_response());
             }
             Err(DbError::Query) => {
+                state.active_bots.remove(slug);
                 return Err(StatusCode::INTERNAL_SERVER_ERROR.into_response());
             }
         }
@@ -153,12 +167,16 @@ async fn validate_and_reserve(
     let token = match state.token_store.insert(slug.to_string()) {
         Ok(t) => t,
         Err(TokenError::CapExceeded) => {
+            state.active_bots.remove(slug);
             return Err((
                 StatusCode::SERVICE_UNAVAILABLE,
                 Json(serde_json::json!({"error": "bot_capacity"})),
             ).into_response());
         }
-        Err(_) => return Err(StatusCode::INTERNAL_SERVER_ERROR.into_response()),
+        Err(_) => {
+            state.active_bots.remove(slug);
+            return Err(StatusCode::INTERNAL_SERVER_ERROR.into_response());
+        }
     };
 
     Ok((token, asset_id, variant_id))
@@ -197,6 +215,7 @@ async fn spawn_bot(
     {
         Ok(c) => c,
         Err(_) => {
+            state.active_bots.remove(&slug);
             return (
                 StatusCode::SERVICE_UNAVAILABLE,
                 Json(serde_json::json!({"error": "bot_unavailable"})),
@@ -209,10 +228,7 @@ async fn spawn_bot(
         // Drop closes the pipe, signalling EOF to the subprocess.
     }
 
-    // Insert BEFORE spawning cleanup — guarantees cleanup can observe the entry
-    // even on immediate subprocess exit.
-    state.active_bots.insert(slug.clone(), ());
-
+    // Slug was already inserted into active_bots atomically in validate_and_reserve.
     let active_bots = Arc::clone(&state.active_bots);
     let slug_owned = slug.clone();
     tokio::spawn(async move {
@@ -267,10 +283,12 @@ pub async fn post_test_peer_session(
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
 
+    let secure = if state.config.base_url.scheme() == "https" { "; Secure" } else { "" };
     let cookie = format!(
-        "{}={}; HttpOnly; SameSite=Strict; Path=/; Max-Age=180",
+        "{}={}; HttpOnly; SameSite=Strict; Path=/; Max-Age=180{}",
         crate::auth::SESSION_COOKIE_NAME,
-        raw
+        raw,
+        secure
     );
 
     (
@@ -308,7 +326,9 @@ async fn find_teacher_asset(
         r#"SELECT a.id, v.id
            FROM accompaniments a
            JOIN accompaniment_variants v ON v.accompaniment_id = a.id
-           WHERE a.teacher_id = $1 AND v.deleted_at IS NULL
+           WHERE a.teacher_id = $1
+             AND a.deleted_at IS NULL
+             AND v.deleted_at IS NULL
            ORDER BY (a.title ILIKE '%rainbow%') DESC, v.created_at ASC
            LIMIT 1"#,
     )
@@ -385,20 +405,29 @@ mod tests {
     #[test]
     fn mode_validation_table() {
         for bad in &["", "wizard", "TEACHER", "student ", "Teacher"] {
-            assert!(bad != &"teacher" && bad != &"student",
-                "mode '{bad}' should be rejected");
+            assert!(!is_valid_mode(bad), "mode '{bad}' should be invalid");
         }
         for good in &["teacher", "student"] {
-            assert!(*good == "teacher" || *good == "student");
+            assert!(is_valid_mode(good), "mode '{good}' should be valid");
         }
     }
 
     #[test]
-    fn active_bots_guard_prevents_duplicate() {
+    fn active_bots_entry_api_is_atomic() {
         let bots: DashMap<String, ()> = DashMap::new();
-        bots.insert("myroom".to_string(), ());
-        assert!(bots.contains_key("myroom"));
-        // After removal (simulating subprocess exit), guard clears.
+        // Vacant entry inserts atomically.
+        let inserted = match bots.entry("myroom".to_string()) {
+            dashmap::mapref::entry::Entry::Vacant(v) => { v.insert(()); true }
+            dashmap::mapref::entry::Entry::Occupied(_) => false,
+        };
+        assert!(inserted);
+        // Second entry call sees the occupied entry.
+        let conflict = match bots.entry("myroom".to_string()) {
+            dashmap::mapref::entry::Entry::Occupied(_) => true,
+            dashmap::mapref::entry::Entry::Vacant(_) => false,
+        };
+        assert!(conflict);
+        // Removal clears for the next request.
         bots.remove("myroom");
         assert!(!bots.contains_key("myroom"));
     }

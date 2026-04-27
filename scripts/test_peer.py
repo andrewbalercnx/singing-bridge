@@ -11,7 +11,6 @@
 
 import argparse
 import asyncio
-import json
 import os
 import struct
 import sys
@@ -19,6 +18,7 @@ import tempfile
 import wave
 
 import httpx
+from urllib.parse import urlparse
 
 # ---------------------------------------------------------------------------
 # Argument parsing
@@ -132,11 +132,13 @@ async def teacher_bot(page, server: str, slug: str, token: str,
     if not raw_cookie:
         raise RuntimeError('no sb_session cookie from /test-peer/session')
 
-    # Set the cookie in the browser context before navigation.
+    # Set the cookie using the server hostname so this works even when the
+    # page is still at about:blank (before any navigation).
+    cookie_domain = urlparse(server).hostname or 'localhost'
     await page.context.add_cookies([{
         'name': 'sb_session',
         'value': raw_cookie,
-        'domain': page.url.split('/')[2] if page.url else 'localhost',
+        'domain': cookie_domain,
         'path': '/',
     }])
 

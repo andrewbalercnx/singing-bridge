@@ -265,6 +265,8 @@ pub struct AppState {
     pub session_log_pepper: Option<SecretString>,
     /// Active bot subprocesses — keyed by slug. Checked before spawning to
     /// prevent duplicate bots. Cleared when the subprocess exits.
+    /// Only compiled in debug builds where test-peer routes are available.
+    #[cfg(debug_assertions)]
     pub active_bots: Arc<DashMap<String, ()>>,
     #[cfg(debug_assertions)]
     pub token_store: Arc<TokenStore>,

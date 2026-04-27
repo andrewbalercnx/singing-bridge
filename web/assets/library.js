@@ -461,7 +461,7 @@
     audio.className = 'variant-audio';
     audio.controls = true;
     audio.preload = 'none';
-    audio.src = base + '/api/media/' + variant.token;
+    audio.src = '/api/media/' + variant.token;
 
     var deleteBtn = document.createElement('button');
     deleteBtn.type = 'button';
@@ -669,7 +669,7 @@
     if (hasVariants) {
       detail.variants.forEach(function (v) {
         var opt = document.createElement('option');
-        opt.value = base + '/api/media/' + v.token;
+        opt.value = '/api/media/' + v.token;
         opt.setAttribute('data-tempo', String(v.tempo_pct));
         opt.textContent = v.label + ' \u2014 ' + v.tempo_pct + '%';
         variantSel.appendChild(opt);
@@ -708,7 +708,7 @@
       wrapper.className = 'score-page';
       wrapper.setAttribute('data-page', String(pageIdx));
       var img = document.createElement('img');
-      img.src = base + '/api/media/' + token;
+      img.src = '/api/media/' + token;
       img.className = 'score-page__img';
       img.alt = 'Page ' + (pageIdx + 1);
       var canvas = document.createElement('canvas');

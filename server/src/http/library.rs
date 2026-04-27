@@ -1065,44 +1065,87 @@ pub(crate) async fn delete_variant(
 pub(crate) async fn get_media(
     State(state): State<Arc<AppState>>,
     Path(token): Path<String>,
+    headers: HeaderMap,
 ) -> Result<Response> {
     let (blob_key, no_cache) = state
         .media_tokens
         .get_entry(&token)
         .ok_or(AppError::NotFound)?;
 
-    let data = state
+    let data: Bytes = state
         .blob
         .get_bytes(&blob_key)
         .await
         .map_err(|_| AppError::NotFound)?;
 
     let content_type = mime_for_key(&blob_key);
-    let cache_control: &'static str = if no_cache {
-        "no-store"
-    } else {
-        "private, max-age=300"
-    };
+    let cache_control: &'static str = if no_cache { "no-store" } else { "private, max-age=300" };
+    let total = data.len();
 
-    Ok((
-        StatusCode::OK,
-        [
-            (
-                header::CONTENT_TYPE,
-                HeaderValue::from_static(content_type),
-            ),
-            (
-                header::CACHE_CONTROL,
-                HeaderValue::from_static(cache_control),
-            ),
-            (
-                header::REFERRER_POLICY,
-                HeaderValue::from_static("no-referrer"),
-            ),
-        ],
-        Body::from(data),
-    )
-        .into_response())
+    // Parse an optional Range header. Mobile Safari (and other clients) require
+    // Range support to seek audio before playback starts.
+    let range = headers
+        .get(header::RANGE)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.strip_prefix("bytes="))
+        .and_then(|s| {
+            let mut parts = s.splitn(2, '-');
+            let start: usize = parts.next()?.parse().ok()?;
+            let end: usize = parts
+                .next()
+                .and_then(|e| if e.is_empty() { None } else { e.parse().ok() })
+                .unwrap_or(total.saturating_sub(1));
+            if start <= end && end < total { Some((start, end)) } else { None }
+        });
+
+    match range {
+        Some((start, end)) => {
+            let content_range =
+                format!("bytes {start}-{end}/{total}");
+            let slice = data.slice(start..=end);
+            Ok((
+                StatusCode::PARTIAL_CONTENT,
+                [
+                    (header::CONTENT_TYPE, HeaderValue::from_static(content_type)),
+                    (header::CACHE_CONTROL, HeaderValue::from_static(cache_control)),
+                    (header::REFERRER_POLICY, HeaderValue::from_static("no-referrer")),
+                    (header::ACCEPT_RANGES, HeaderValue::from_static("bytes")),
+                    (
+                        header::CONTENT_RANGE,
+                        HeaderValue::from_str(&content_range).unwrap(),
+                    ),
+                ],
+                Body::from(slice),
+            )
+                .into_response())
+        }
+        None => {
+            // Return 416 if there was a Range header but we couldn't parse it
+            // (malformed or out-of-bounds). No Range header → full 200 response.
+            if headers.contains_key(header::RANGE) {
+                return Ok((
+                    StatusCode::RANGE_NOT_SATISFIABLE,
+                    [(
+                        header::CONTENT_RANGE,
+                        HeaderValue::from_str(&format!("bytes */{total}")).unwrap(),
+                    )],
+                    Body::empty(),
+                )
+                    .into_response());
+            }
+            Ok((
+                StatusCode::OK,
+                [
+                    (header::CONTENT_TYPE, HeaderValue::from_static(content_type)),
+                    (header::CACHE_CONTROL, HeaderValue::from_static(cache_control)),
+                    (header::REFERRER_POLICY, HeaderValue::from_static("no-referrer")),
+                    (header::ACCEPT_RANGES, HeaderValue::from_static("bytes")),
+                ],
+                Body::from(data),
+            )
+                .into_response())
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

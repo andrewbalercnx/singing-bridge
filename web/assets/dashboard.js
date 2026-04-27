@@ -107,7 +107,7 @@
       li.className = 'sb-list__item';
       var title = document.createElement('span');
       title.className = 'sb-list__title';
-      title.textContent = asset.name || 'Untitled';
+      title.textContent = asset.title || 'Untitled';
       var meta = document.createElement('span');
       meta.className = 'sb-list__meta';
       var varCount = Array.isArray(asset.variants) ? asset.variants.length : 0;

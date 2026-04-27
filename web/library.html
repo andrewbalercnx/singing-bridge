@@ -24,10 +24,10 @@
 
     <section id="upload-section">
       <div id="drop-zone" class="drop-zone sb-dropzone" tabindex="0"
-           aria-label="Drop PDF, MIDI, or WAV file here">
-        <p>Drop a PDF, MIDI, or WAV file here, or
+           aria-label="Drop PDF, MIDI, WAV, or MP3 file here">
+        <p>Drop a PDF, MIDI, WAV, or MP3 file here, or
            <label for="file-input">browse</label></p>
-        <input type="file" id="file-input" accept=".pdf,.mid,.midi,.wav"
+        <input type="file" id="file-input" accept=".pdf,.mid,.midi,.wav,.mp3"
                aria-label="Choose file">
       </div>
       <div id="title-row" class="sb-row sb-row--end-align sb-mt-4">
@@ -70,7 +70,7 @@
     </p>
 
     <ul id="asset-list" aria-live="polite"></ul>
-    <p id="assets-empty" hidden>No assets yet. Upload a PDF, MIDI, or WAV above.</p>
+    <p id="assets-empty" hidden>No assets yet. Upload a PDF, MIDI, WAV, or MP3 above.</p>
     <p id="assets-error" class="error" hidden></p>
 
     <!-- Synthesis modal — static skeleton; JS fills dynamic content -->

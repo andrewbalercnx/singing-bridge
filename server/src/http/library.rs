@@ -43,6 +43,7 @@ const PDF_MAGIC: [u8; 4] = [0x25, 0x50, 0x44, 0x46]; // %PDF
 const MIDI_MAGIC: [u8; 4] = [0x4D, 0x54, 0x68, 0x64]; // MThd
 const RIFF_MAGIC: [u8; 4] = *b"RIFF";
 const WAVE_MARKER: [u8; 4] = *b"WAVE";
+const ID3_MAGIC: [u8; 3] = *b"ID3"; // ID3v2 tag — present on virtually all MP3 files
 
 const BAR_COORDS_LIMIT: usize = 512 * 1024;
 const BAR_TIMINGS_LIMIT: usize = 100 * 1024;
@@ -173,24 +174,24 @@ pub(crate) async fn list_assets(
 }
 
 // ---------------------------------------------------------------------------
-// Upload asset (PDF, MIDI, or WAV)
+// Upload asset (PDF, MIDI, WAV, or MP3)
 // ---------------------------------------------------------------------------
 
-enum FileKind { Pdf, Midi, Wav }
+enum FileKind { Pdf, Midi, Wav, Mp3 }
 
 impl FileKind {
     fn ext(&self) -> &'static str {
-        match self { FileKind::Pdf => "pdf", FileKind::Midi => "mid", FileKind::Wav => "wav" }
+        match self { FileKind::Pdf => "pdf", FileKind::Midi => "mid", FileKind::Wav => "wav", FileKind::Mp3 => "mp3" }
     }
     fn kind_str(&self) -> &'static str {
-        match self { FileKind::Pdf => "pdf", FileKind::Midi => "midi", FileKind::Wav => "wav" }
+        match self { FileKind::Pdf => "pdf", FileKind::Midi => "midi", FileKind::Wav => "wav", FileKind::Mp3 => "mp3" }
     }
 }
 
 /// Identify file type from the first 12 magic bytes and optional declared Content-Type.
 /// `declared_ct`: the raw Content-Type header value (parameters are stripped internally).
 /// Returns Err(ContentTypeMismatch) when declared type is a known MIME but disagrees with magic.
-/// Returns Err(UnsupportedFileType) when magic bytes are not PDF, MIDI, or WAV.
+/// Returns Err(UnsupportedFileType) when magic bytes are not PDF, MIDI, WAV, or MP3.
 fn detect_file_type(magic: &[u8; 12], declared_ct: Option<&str>) -> Result<FileKind> {
     let kind = if magic[0..4] == PDF_MAGIC {
         FileKind::Pdf
@@ -198,6 +199,10 @@ fn detect_file_type(magic: &[u8; 12], declared_ct: Option<&str>) -> Result<FileK
         FileKind::Midi
     } else if magic[0..4] == RIFF_MAGIC && magic[8..12] == WAVE_MARKER {
         FileKind::Wav
+    } else if magic[0..3] == ID3_MAGIC
+        || (magic[0] == 0xFF && matches!(magic[1], 0xFB | 0xF3 | 0xF2))
+    {
+        FileKind::Mp3
     } else {
         return Err(AppError::UnsupportedFileType);
     };
@@ -209,9 +214,10 @@ fn detect_file_type(magic: &[u8; 12], declared_ct: Option<&str>) -> Result<FileK
             FileKind::Pdf => "application/pdf",
             FileKind::Midi => "audio/midi",
             FileKind::Wav => "audio/wav",
+            FileKind::Mp3 => "audio/mpeg",
         };
         // Only fire ContentTypeMismatch when the declared type is itself a known type.
-        let known = ["application/pdf", "audio/midi", "audio/wav"];
+        let known = ["application/pdf", "audio/midi", "audio/wav", "audio/mpeg"];
         if known.contains(&base) && base != expected {
             return Err(AppError::ContentTypeMismatch);
         }
@@ -246,9 +252,9 @@ async fn store_asset_blob(
     Ok(key)
 }
 
-/// Insert the accompaniment (and for WAV, the variant) row(s).
+/// Insert the accompaniment (and for WAV/MP3, the variant) row(s).
 /// On any DB error the blob is deleted before returning.
-/// Returns (accompaniment_id, variant_id). variant_id is Some only for WAV.
+/// Returns (accompaniment_id, variant_id). variant_id is Some only for WAV/MP3.
 async fn db_insert_accompaniment(
     db: &sqlx::PgPool,
     blob: &dyn BlobStore,
@@ -263,7 +269,7 @@ async fn db_insert_accompaniment(
             let sql = match kind {
                 FileKind::Pdf => "INSERT INTO accompaniments (teacher_id, title, pdf_blob_key, created_at) VALUES ($1, $2, $3, $4) RETURNING id",
                 FileKind::Midi => "INSERT INTO accompaniments (teacher_id, title, midi_blob_key, created_at) VALUES ($1, $2, $3, $4) RETURNING id",
-                FileKind::Wav => unreachable!(),
+                FileKind::Wav | FileKind::Mp3 => unreachable!(),
             };
             let r: std::result::Result<(i64,), sqlx::Error> = sqlx::query_as(sql)
                 .bind(teacher_id).bind(title).bind(blob_key).bind(now)
@@ -273,7 +279,7 @@ async fn db_insert_accompaniment(
                 Err(e) => { let _ = blob.delete(blob_key).await; Err(AppError::Sqlx(e)) }
             }
         }
-        FileKind::Wav => {
+        FileKind::Wav | FileKind::Mp3 => {
             // Two inserts wrapped in a transaction to avoid orphan accompaniment rows.
             let mut tx = match db.begin().await {
                 Ok(tx) => tx,
@@ -1230,6 +1236,8 @@ async fn rerun_omr_from_pdf(
 fn mime_for_key(key: &str) -> &'static str {
     if key.ends_with(".wav") {
         "audio/wav"
+    } else if key.ends_with(".mp3") {
+        "audio/mpeg"
     } else if key.ends_with(".png") {
         "image/png"
     } else if key.ends_with(".mid") {

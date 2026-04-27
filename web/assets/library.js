@@ -440,6 +440,25 @@
     metaEl.className = 'variant-meta';
     metaEl.textContent = variant.tempo_pct + '% · ' + (variant.transpose_semitones >= 0 ? '+' : '') + variant.transpose_semitones + ' semitones';
 
+    var audio = document.createElement('audio');
+    audio.src = base + '/api/media/' + variant.token;
+    audio.preload = 'none';
+
+    var playBtn = document.createElement('button');
+    playBtn.type = 'button';
+    playBtn.className = 'variant-play-btn';
+    playBtn.textContent = 'Play';
+    playBtn.addEventListener('click', function () {
+      if (audio.paused) {
+        audio.play();
+        playBtn.textContent = 'Pause';
+      } else {
+        audio.pause();
+        playBtn.textContent = 'Play';
+      }
+    });
+    audio.addEventListener('ended', function () { playBtn.textContent = 'Play'; });
+
     var deleteBtn = document.createElement('button');
     deleteBtn.type = 'button';
     deleteBtn.className = 'variant-delete-btn';
@@ -450,6 +469,7 @@
 
     li.appendChild(labelEl);
     li.appendChild(metaEl);
+    li.appendChild(playBtn);
     if (synthesiseFn) {
       var resynBtn = document.createElement('button');
       resynBtn.type = 'button';

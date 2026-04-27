@@ -1508,8 +1508,8 @@ test('renderVariantRow_resynthesize_button_calls_synthesise', function () {
   var calledWith = null;
   var variant = { id: 7, label: 'Slow', tempo_pct: 75, transpose_semitones: -2, respect_repeats: true };
   var li = lib.renderVariantRow(1, variant, '/base', makeBannerEl(), function(req) { calledWith = req; });
-  // resynth button is the 3rd child (after label, meta)
-  var resynBtn = li.children[2];
+  // resynth button is the 4th child (after label, meta, play)
+  var resynBtn = li.children[3];
   resynBtn._fire('click');
   assert.ok(calledWith !== null);
   assert.equal(calledWith.label, 'Slow');

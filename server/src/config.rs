@@ -94,6 +94,9 @@ pub struct Config {
     // Accompaniment
     pub accomp_upload_max_bytes: u64,
     pub media_token_ttl_secs: u64,
+    // Test-peer bot (debug builds only; rejected by validate_prod_config)
+    pub test_peer: bool,
+    pub test_peer_script: Option<String>,
 }
 
 impl Config {
@@ -143,6 +146,8 @@ impl Config {
             sidecar_host_allowlist: vec![],
             accomp_upload_max_bytes: 50 * 1024 * 1024,
             media_token_ttl_secs: 300,
+            test_peer: true,
+            test_peer_script: None,
         }
     }
 
@@ -282,6 +287,8 @@ impl Config {
             sidecar_host_allowlist,
             accomp_upload_max_bytes: 50 * 1024 * 1024,
             media_token_ttl_secs: 300,
+            test_peer: std::env::var("SB_TEST_PEER").map(|v| v == "true").unwrap_or(false),
+            test_peer_script: std::env::var("SB_TEST_PEER_SCRIPT").ok(),
         })
     }
 
@@ -346,6 +353,13 @@ fn validate_prod_config(c: &Config) -> Result<(), ConfigError> {
     }
     // Sidecar URL must point at loopback or an explicitly allowlisted host.
     validate_sidecar_url(&c.sidecar_url, &c.sidecar_host_allowlist)?;
+    // Test-peer bot must never be enabled in production.
+    if c.test_peer {
+        return Err(ConfigError::Invalid(
+            "SB_TEST_PEER",
+            "test_peer must not be enabled in production".into(),
+        ));
+    }
     Ok(())
 }
 
@@ -424,6 +438,19 @@ mod tests {
     }
 
     #[test]
+    fn dev_default_test_peer_is_true() {
+        assert!(Config::dev_default().test_peer);
+    }
+
+    #[test]
+    fn prod_test_peer_enabled_errors() {
+        let mut c = prod_base(true);
+        c.test_peer = true;
+        let err = validate_prod_config(&c).unwrap_err();
+        assert!(matches!(err, ConfigError::Invalid("SB_TEST_PEER", _)));
+    }
+
+    #[test]
     fn prod_missing_turn_secret_errors() {
         let mut c = prod_base(true);
         c.turn_shared_secret = None;
@@ -434,6 +461,7 @@ mod tests {
     fn prod_base(acs: bool) -> Config {
         let mut c = Config::dev_default();
         c.dev = false;
+        c.test_peer = false;
         c.base_url = Url::parse("https://singing.rcnx.io").unwrap();
         c.db_url = "postgres://sbapp:pass@vvp-postgres.postgres.database.azure.com/singing_bridge?sslmode=verify-full".to_string();
         c.turn_shared_secret = Some(SecretString::new("a".repeat(32)));

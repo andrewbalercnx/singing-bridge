@@ -197,6 +197,7 @@
     }
     const admit = document.createElement('button');
     admit.type = 'button';
+    admit.setAttribute('data-testid', 'admit-btn');
     admit.textContent = 'Admit';
     admit.addEventListener('click', () => {
       lastStudentEmail = entry.email;
@@ -418,5 +419,9 @@
     },
   }).then((h) => {
     sessionHandle = h;
+    // Bot API: exposes WebSocket send for Playwright test-peer script (localhost only).
+    if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
+      window._sbSend = function(obj) { h.sendRaw(obj); };
+    }
   });
 })();

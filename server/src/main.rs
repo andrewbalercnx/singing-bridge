@@ -135,6 +135,9 @@ async fn main() -> anyhow::Result<()> {
         ws_join_rate_sweeper,
         turn_cred_rate_limits: Arc::new(DashMap::new()),
         session_log_pepper,
+        active_bots: Arc::new(DashMap::new()),
+        #[cfg(debug_assertions)]
+        token_store: Arc::new(singing_bridge_server::http::test_peer::TokenStore::new()),
     });
 
     // Sweep OMR jobs that have been sitting for > 10 minutes (Done/Failed and

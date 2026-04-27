@@ -113,6 +113,10 @@ pub struct TestOpts {
     pub login_account_max_failures: u32,
     /// Override sidecar base URL (defaults to config dev_default: 127.0.0.1:5050).
     pub sidecar_url: Option<url::Url>,
+    /// Override test-peer subprocess command (default: real python3; use "echo" in tests).
+    pub test_peer_script: Option<String>,
+    /// Disable test-peer routes (default: enabled in dev_default).
+    pub test_peer: Option<bool>,
 }
 
 impl Default for TestOpts {
@@ -129,6 +133,8 @@ impl Default for TestOpts {
             login_ip_max_attempts: 999_999,
             login_account_max_failures: 999_999,
             sidecar_url: None,
+            test_peer_script: Some("echo".to_string()),
+            test_peer: None,
         }
     }
 }
@@ -259,6 +265,12 @@ pub async fn spawn_app_with(opts: TestOpts) -> TestApp {
     if let Some(url) = opts.sidecar_url {
         config.sidecar_url = url;
     }
+    if let Some(script) = opts.test_peer_script {
+        config.test_peer_script = Some(script);
+    }
+    if let Some(tp) = opts.test_peer {
+        config.test_peer = tp;
+    }
 
     let pool = init_pool(&db_url).await.unwrap();
     let mailer: Arc<dyn Mailer> = Arc::new(DevMailer::new(&config.dev_mail_dir).await.unwrap());
@@ -297,6 +309,9 @@ pub async fn spawn_app_with(opts: TestOpts) -> TestApp {
         ws_join_rate_sweeper,
         turn_cred_rate_limits: std::sync::Arc::new(DashMap::new()),
         session_log_pepper: None,
+        active_bots: std::sync::Arc::new(DashMap::new()),
+        #[cfg(debug_assertions)]
+        token_store: std::sync::Arc::new(singing_bridge_server::http::test_peer::TokenStore::new()),
     });
 
     let app = router(state.clone()).into_make_service_with_connect_info::<SocketAddr>();

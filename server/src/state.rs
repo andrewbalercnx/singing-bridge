@@ -29,6 +29,8 @@ use crate::blob::BlobStore;
 use crate::auth::secret::SecretString;
 use crate::config::Config;
 use crate::http::media_token::MediaTokenStore;
+#[cfg(debug_assertions)]
+use crate::http::test_peer::TokenStore;
 use crate::sidecar::{BarCoord, BarTiming, PartInfo, SidecarClient};
 use crate::error::{AppError, Result};
 use crate::ws::protocol::{AcousticProfile, EntryId, LobbyEntryView, PumpDirective, Tier};
@@ -261,6 +263,11 @@ pub struct AppState {
     pub turn_cred_rate_limits: Arc<DashMap<IpAddr, WsJoinBucket>>,
     /// Pepper for session log email hashing. None in dev (DEV_PEPPER used).
     pub session_log_pepper: Option<SecretString>,
+    /// Active bot subprocesses — keyed by slug. Checked before spawning to
+    /// prevent duplicate bots. Cleared when the subprocess exits.
+    pub active_bots: Arc<DashMap<String, ()>>,
+    #[cfg(debug_assertions)]
+    pub token_store: Arc<TokenStore>,
 }
 
 impl AppState {

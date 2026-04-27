@@ -747,3 +747,27 @@ _Backwards compatibility_
 - Council code review APPROVED
 
 **Status:** COMPLETE
+
+---
+
+## Sprint 25: Bot Peer for Manual UX Testing
+
+**Goal:** A single developer can invoke one HTTP endpoint to spawn a scripted bot that joins a live session as teacher or student, plays a real accompaniment, and speaks TTS phrases — letting them validate the full session experience from either role without a second human.
+
+**Deliverables:**
+- `SB_TEST_PEER` env flag gates two new dev-only routes: `GET /test-peer` and `GET /test-peer/session`
+- One-time token store (30 s TTL, consumed on use) for teacher-bot auth bypass
+- Per-slug concurrency guard (409 if bot already running for that slug)
+- `scripts/test_peer.py`: Playwright headless Chromium bot; generates TTS WAVs with `gtts`; injects audio via `--use-file-for-fake-audio-capture`; teacher bot auto-admits human student and sends `AccompanimentPlay`; student bot joins and speaks scripted phrases; 3-minute hard timeout
+- `window._sbSend` exposed on localhost in `teacher.js` for bot to send WS messages via `page.evaluate()`
+- `data-testid="admit-btn"` and `data-testid="session-active"` added to lobby and session UI
+
+**Exit criteria:**
+- `GET /test-peer?slug=X&mode=student` → bot joins, human teacher admits, hears TTS within 10 s
+- `GET /test-peer?slug=X&mode=teacher` → bot admits human student, plays accompaniment + TTS
+- Bot exits cleanly after 3 min; no zombie Playwright processes
+- Route absent (404) when `SB_TEST_PEER` unset
+- 409 on duplicate bot for same slug
+- All existing tests pass
+
+**Status:** IN PROGRESS

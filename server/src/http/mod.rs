@@ -23,6 +23,8 @@ pub mod signup;
 pub mod static_assets;
 pub mod teach;
 pub mod turn;
+#[cfg(debug_assertions)]
+pub mod test_peer;
 
 use std::sync::Arc;
 
@@ -87,6 +89,14 @@ pub fn router(state: Arc<AppState>) -> Router {
     #[cfg(debug_assertions)]
     if dev {
         r = r.route("/api/dev-blob/:key", get(recordings::get_dev_blob));
+    }
+
+    // Test-peer bot endpoint (compile-time gated; also requires SB_TEST_PEER=true).
+    #[cfg(debug_assertions)]
+    if state.config.test_peer {
+        r = r
+            .route("/test-peer", get(test_peer::get_test_peer))
+            .route("/test-peer/session", post(test_peer::post_test_peer_session));
     }
 
     r.fallback(not_found)

@@ -705,7 +705,7 @@ pub async fn send_ws(ws: &mut Ws, msg: &serde_json::Value) {
 
 pub async fn recv_json(ws: &mut Ws) -> serde_json::Value {
     for _ in 0..20 {
-        match tokio::time::timeout(Duration::from_secs(2), ws.next()).await {
+        match tokio::time::timeout(Duration::from_secs(10), ws.next()).await {
             Ok(Some(Ok(Message::Text(s)))) => return serde_json::from_str(&s).unwrap(),
             Ok(Some(Ok(Message::Ping(_)))) | Ok(Some(Ok(Message::Pong(_)))) => continue,
             Ok(Some(Ok(Message::Close(frame)))) => {

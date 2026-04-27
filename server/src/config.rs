@@ -145,7 +145,7 @@ impl Config {
             sidecar_secret: SecretString::new("dev-sidecar-secret"),
             sidecar_host_allowlist: vec![],
             accomp_upload_max_bytes: 50 * 1024 * 1024,
-            media_token_ttl_secs: 300,
+            media_token_ttl_secs: 3600,
             test_peer: true,
             test_peer_script: None,
         }
@@ -286,7 +286,10 @@ impl Config {
             sidecar_secret,
             sidecar_host_allowlist,
             accomp_upload_max_bytes: 50 * 1024 * 1024,
-            media_token_ttl_secs: 300,
+            media_token_ttl_secs: std::env::var("SB_MEDIA_TOKEN_TTL_SECS")
+                .unwrap_or_else(|_| "3600".into())
+                .parse()
+                .map_err(|e| ConfigError::Invalid("SB_MEDIA_TOKEN_TTL_SECS", format!("{e}")))?,
             test_peer: std::env::var("SB_TEST_PEER").map(|v| v == "true").unwrap_or(false),
             test_peer_script: std::env::var("SB_TEST_PEER_SCRIPT").ok(),
         })

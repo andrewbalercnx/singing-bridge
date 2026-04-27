@@ -110,7 +110,7 @@
       title.textContent = asset.title || 'Untitled';
       var meta = document.createElement('span');
       meta.className = 'sb-list__meta';
-      var varCount = Array.isArray(asset.variants) ? asset.variants.length : 0;
+      var varCount = typeof asset.variant_count === 'number' ? asset.variant_count : 0;
       meta.textContent = varCount === 1 ? '1 variant' : varCount + ' variants';
       var spacer = document.createElement('span');
       spacer.className = 'sb-list__spacer';

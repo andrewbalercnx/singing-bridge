@@ -25,9 +25,9 @@
     <section id="upload-section">
       <div id="drop-zone" class="drop-zone sb-dropzone" tabindex="0"
            aria-label="Drop PDF, MIDI, WAV, or MP3 file here">
-        <p>Drop a PDF, MIDI, WAV, or MP3 file here, or
+        <p>Drop a PDF, MIDI, WAV, MP3, or MP4 file here, or
            <label for="file-input">browse</label></p>
-        <input type="file" id="file-input" accept=".pdf,.mid,.midi,.wav,.mp3"
+        <input type="file" id="file-input" accept=".pdf,.mid,.midi,.wav,.mp3,.mp4"
                aria-label="Choose file">
       </div>
       <div id="title-row" class="sb-row sb-row--end-align sb-mt-4">
@@ -70,7 +70,7 @@
     </p>
 
     <ul id="asset-list" aria-live="polite"></ul>
-    <p id="assets-empty" hidden>No assets yet. Upload a PDF, MIDI, WAV, or MP3 above.</p>
+    <p id="assets-empty" hidden>No assets yet. Upload a PDF, MIDI, WAV, MP3, or MP4 above.</p>
     <p id="assets-error" class="error" hidden></p>
 
     <!-- Synthesis modal — static skeleton; JS fills dynamic content -->
@@ -102,6 +102,19 @@
         <button type="button" id="synth-modal-cancel" class="sb-btn sb-btn--ghost">Cancel</button>
         <button type="button" id="synth-modal-submit" class="sb-btn">Create Backing Track</button>
       </div>
+    </dialog>
+
+    <!-- Score modal — static skeleton; JS fills pages and wires audio -->
+    <dialog id="score-modal" class="sb-dialog score-modal" aria-labelledby="score-modal-title">
+      <div class="score-modal__header">
+        <h2 id="score-modal-title" class="score-modal__title"></h2>
+        <button id="score-modal-close" type="button" class="sb-btn sb-btn--ghost score-modal__close" aria-label="Close">&#x2715;</button>
+      </div>
+      <div id="score-modal-audio-section" class="score-modal__audio-bar" hidden>
+        <select id="score-modal-variant-select" class="sb-select score-modal__variant-select" aria-label="Variant"></select>
+        <div id="score-modal-audio-container" class="score-modal__audio-container"></div>
+      </div>
+      <div id="score-modal-pages" class="score-modal__pages"></div>
     </dialog>
 
     <script src="/assets/library.js"></script>

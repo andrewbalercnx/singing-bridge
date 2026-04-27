@@ -35,6 +35,12 @@
   var _modalBannerEl = null;
   var _modalBase = '';
 
+  // Module-level score modal state — set by openScoreModal.
+  var _scoreAudio = null;
+  var _scoreTimings = [];    // [{bar, time_s}] at accompaniment's natural tempo
+  var _scoreBarCoords = [];  // [{bar, page, x_frac, y_frac, w_frac, h_frac}]
+  var _scoreTempoPct = 100;
+
   // Module-level MIDI recording state.
   var _midiState = {
     recording: false,
@@ -208,6 +214,17 @@
               transpose_semitones: variant.transpose_semitones,
             }, base, bannerEl);
           };
+        }
+
+        if (detail.page_tokens && detail.page_tokens.length > 0) {
+          var viewScoreBtn = document.createElement('button');
+          viewScoreBtn.type = 'button';
+          viewScoreBtn.className = 'sb-btn sb-btn--ghost view-score-btn sb-mt-2';
+          viewScoreBtn.textContent = 'View Score';
+          viewScoreBtn.addEventListener('click', function () {
+            openScoreModal(detail, base);
+          });
+          detailEl.appendChild(viewScoreBtn);
         }
 
         if (detail.has_pdf) {
@@ -441,23 +458,10 @@
     metaEl.textContent = variant.tempo_pct + '% · ' + (variant.transpose_semitones >= 0 ? '+' : '') + variant.transpose_semitones + ' semitones';
 
     var audio = document.createElement('audio');
-    audio.src = base + '/api/media/' + variant.token;
+    audio.className = 'variant-audio';
+    audio.controls = true;
     audio.preload = 'none';
-
-    var playBtn = document.createElement('button');
-    playBtn.type = 'button';
-    playBtn.className = 'variant-play-btn';
-    playBtn.textContent = 'Play';
-    playBtn.addEventListener('click', function () {
-      if (audio.paused) {
-        audio.play();
-        playBtn.textContent = 'Pause';
-      } else {
-        audio.pause();
-        playBtn.textContent = 'Play';
-      }
-    });
-    audio.addEventListener('ended', function () { playBtn.textContent = 'Play'; });
+    audio.src = base + '/api/media/' + variant.token;
 
     var deleteBtn = document.createElement('button');
     deleteBtn.type = 'button';
@@ -469,7 +473,7 @@
 
     li.appendChild(labelEl);
     li.appendChild(metaEl);
-    li.appendChild(playBtn);
+    li.appendChild(audio);
     if (synthesiseFn) {
       var resynBtn = document.createElement('button');
       resynBtn.type = 'button';
@@ -630,6 +634,139 @@
         clearFile: function () { pendingFile = null; fileInput.value = ''; },
       });
     });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Score modal (sheet music + audio playthrough)
+  // ---------------------------------------------------------------------------
+
+  function initScoreModal() {
+    var dialog = document.getElementById('score-modal');
+    if (!dialog) return;
+    document.getElementById('score-modal-close').addEventListener('click', function () {
+      dialog.close();
+    });
+    dialog.addEventListener('close', function () {
+      if (_scoreAudio) { _scoreAudio.pause(); }
+    });
+  }
+
+  function openScoreModal(detail, base) {
+    var dialog = document.getElementById('score-modal');
+    if (!dialog) return;
+
+    _scoreTimings = Array.isArray(detail.bar_timings) ? detail.bar_timings : [];
+    _scoreBarCoords = Array.isArray(detail.bar_coords) ? detail.bar_coords : [];
+    _scoreTempoPct = 100;
+
+    document.getElementById('score-modal-title').textContent = detail.title;
+
+    // Variant selector
+    var variantSel = document.getElementById('score-modal-variant-select');
+    variantSel.textContent = '';
+    var hasVariants = detail.variants && detail.variants.length > 0;
+    document.getElementById('score-modal-audio-section').hidden = !hasVariants;
+    if (hasVariants) {
+      detail.variants.forEach(function (v) {
+        var opt = document.createElement('option');
+        opt.value = base + '/api/media/' + v.token;
+        opt.setAttribute('data-tempo', String(v.tempo_pct));
+        opt.textContent = v.label + ' \u2014 ' + v.tempo_pct + '%';
+        variantSel.appendChild(opt);
+      });
+      _scoreTempoPct = detail.variants[0].tempo_pct;
+    }
+
+    // Audio element — rebuild fresh each open
+    var audioContainer = document.getElementById('score-modal-audio-container');
+    audioContainer.textContent = '';
+    var audioEl = document.createElement('audio');
+    audioEl.className = 'score-modal__audio';
+    audioEl.controls = true;
+    audioEl.preload = 'none';
+    audioEl.src = hasVariants ? variantSel.value : '';
+    audioContainer.appendChild(audioEl);
+    _scoreAudio = audioEl;
+
+    variantSel.onchange = function () {
+      var selOpt = variantSel.options[variantSel.selectedIndex];
+      _scoreTempoPct = parseInt(selOpt.getAttribute('data-tempo'), 10) || 100;
+      audioEl.pause();
+      audioEl.src = variantSel.value;
+      audioEl.load();
+    };
+
+    audioEl.addEventListener('timeupdate', scoreHighlightBar);
+    audioEl.addEventListener('ended', scoreClearHighlights);
+    audioEl.addEventListener('seeked', scoreHighlightBar);
+
+    // Pages
+    var pagesEl = document.getElementById('score-modal-pages');
+    pagesEl.textContent = '';
+    detail.page_tokens.forEach(function (token, pageIdx) {
+      var wrapper = document.createElement('div');
+      wrapper.className = 'score-page';
+      wrapper.setAttribute('data-page', String(pageIdx));
+      var img = document.createElement('img');
+      img.src = base + '/api/media/' + token;
+      img.className = 'score-page__img';
+      img.alt = 'Page ' + (pageIdx + 1);
+      var canvas = document.createElement('canvas');
+      canvas.className = 'score-page__overlay';
+      img.addEventListener('load', function () {
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+      });
+      wrapper.appendChild(img);
+      wrapper.appendChild(canvas);
+      pagesEl.appendChild(wrapper);
+    });
+
+    dialog.showModal();
+  }
+
+  function scoreHighlightBar() {
+    if (!_scoreAudio || !_scoreTimings.length || !_scoreBarCoords.length) return;
+    var scaledTime = _scoreAudio.currentTime * (_scoreTempoPct / 100);
+
+    var currentBar = _scoreTimings[0].bar;
+    for (var i = 0; i < _scoreTimings.length; i++) {
+      if (_scoreTimings[i].time_s <= scaledTime) {
+        currentBar = _scoreTimings[i].bar;
+      } else { break; }
+    }
+
+    var coord = null;
+    for (var j = 0; j < _scoreBarCoords.length; j++) {
+      if (_scoreBarCoords[j].bar === currentBar) { coord = _scoreBarCoords[j]; break; }
+    }
+    if (!coord) return;
+
+    var pages = document.querySelectorAll('.score-page');
+    for (var k = 0; k < pages.length; k++) {
+      var canvas = pages[k].querySelector('.score-page__overlay');
+      if (!canvas || !canvas.width) continue;
+      var ctx = canvas.getContext('2d');
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      if (parseInt(pages[k].getAttribute('data-page'), 10) === coord.page) {
+        ctx.fillStyle = 'rgba(255, 200, 0, 0.42)';
+        ctx.fillRect(
+          coord.x_frac * canvas.width,
+          coord.y_frac * canvas.height,
+          coord.w_frac * canvas.width,
+          coord.h_frac * canvas.height
+        );
+        pages[k].scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+    }
+  }
+
+  function scoreClearHighlights() {
+    var canvases = document.querySelectorAll('.score-page__overlay');
+    for (var i = 0; i < canvases.length; i++) {
+      var c = canvases[i];
+      if (c.width) c.getContext('2d').clearRect(0, 0, c.width, c.height);
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -1173,6 +1310,7 @@
       .addEventListener('click', function () { hide503Banner(bannerEl); });
     initUpload(bannerEl);
     initSynthModal();
+    initScoreModal();
     initMidiRecording(bannerEl);
     initMidiUploadControls(bannerEl);
     loadAssets(

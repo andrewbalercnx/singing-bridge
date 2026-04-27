@@ -7,7 +7,7 @@
 //             Selects mailer based on MailerKind. Spawns WS join rate sweeper
 //             and aborts it on shutdown. AppState.ws_join_rate_sweeper is
 //             always a valid JoinHandle for the life of the process.
-// Last updated: Sprint 22 (2026-04-26) -- select AzureBlobStore vs DevBlobStore at startup
+// Last updated: Sprint 25 (2026-04-27) -- select AzureBlobStore vs DevBlobStore at startup
 
 use std::{net::SocketAddr, sync::Arc};
 

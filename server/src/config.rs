@@ -8,7 +8,7 @@
 //             SB_DATABASE_URL must include sslmode=verify-full and must not be localhost.
 //             SB_DATABASE_URL is always required (no fallback) — server refuses to start without it.
 //             Secure cookie flag only omitted when dev=true.
-// Last updated: Sprint 23 (2026-04-26) -- fix prod_missing_turn_secret_errors test to use prod_base
+// Last updated: Sprint 25 (2026-04-27) -- fix prod_missing_turn_secret_errors test to use prod_base
 
 use std::net::SocketAddr;
 

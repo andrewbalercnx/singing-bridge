@@ -11,6 +11,25 @@
 > **Commit:** `<sha>`
 > ```
 
+## Sprint 25: Bot Peer for Manual UX Testing — 2026-04-27
+
+**Files changed:**
+- `server/src/http/test_peer.rs` — new: `GET /test-peer` + `POST /test-peer/session` handlers; `TokenStore` (one-time use, 30s TTL, cap=100); atomic `DashMap::entry()` duplicate guard; `Secure` cookie flag for HTTPS
+- `server/src/config.rs` — `test_peer: bool`, `test_peer_script: Option<String>` config fields; `validate_prod_config()` rejects `test_peer=true`
+- `server/src/http/mod.rs` — register `/test-peer` routes under `#[cfg(debug_assertions)]` + runtime `test_peer` flag
+- `server/src/state.rs` — `active_bots` and `token_store` fields (both `#[cfg(debug_assertions)]`)
+- `server/src/main.rs` — wire `active_bots` and `token_store` into `AppState`
+- `server/tests/http_test_peer.rs` — new: 14 integration tests (mode validation, 409 guard, teacher no-slug/no-variant, bot exit cleanup, 503 spawn failure, token auth, cookie TTL, capacity exhaustion, teacher 202 happy path)
+- `server/tests/common/mod.rs` — `TestOpts.test_peer_script`, `TestOpts.test_peer`, `active_bots`, `token_store` in harness
+- `web/assets/teacher.js` — `data-testid="admit-btn"` on admit button; `window._sbSend` localhost bridge
+- `web/student.html` — `data-testid="session-active"` on `#session`
+- `web/assets/tests/teacher.test.js` — new: JS regression tests for `Signalling.send` serialization and teacher.js bot-API contracts
+- `web/assets/tests/student.test.js` — new: `data-testid="session-active"` regression guard
+- `scripts/test_peer.py` — new: Playwright bot (teacher + student modes); TTS WAV; cookie set from `urlparse(server).hostname`
+- `scripts/requirements-test-peer.txt` — new: playwright, gtts, pydub, httpx
+
+**Commit:** `7bebf93`
+
 ## Sprint 24: Synthesis modal + variant management — 2026-04-26
 
 **Files changed:**

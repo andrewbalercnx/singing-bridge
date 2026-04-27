@@ -10,7 +10,7 @@
 //             AppState::room / ::room_or_insert (no direct DashMap access
 //             from async fns). BLOCK_LIST_CAP enforced on every block insert;
 //             oldest entry evicted when cap is reached (FIFO).
-// Last updated: Sprint 20 (2026-04-25) -- AcousticProfile replaces headphones_confirmed in LobbyEntry
+// Last updated: Sprint 25 (2026-04-27) -- AcousticProfile replaces headphones_confirmed in LobbyEntry
 
 use std::net::IpAddr;
 use std::sync::atomic::{AtomicU16, AtomicUsize, Ordering};

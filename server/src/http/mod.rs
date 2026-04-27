@@ -7,7 +7,7 @@
 //             Cache-Control: no-store. /healthz body is fixed JSON.
 //             /api/dev-blob/* is only compiled and mounted in debug builds + dev mode.
 //             /api/media/:token is public — the token itself is the auth.
-// Last updated: Sprint 17 (2026-04-23) -- add /teach/:slug/dashboard and /teach/:slug/session routes
+// Last updated: Sprint 25 (2026-04-27) -- add /teach/:slug/dashboard and /teach/:slug/session routes
 
 pub mod dashboard;
 pub mod health;

@@ -2,7 +2,7 @@
 // Purpose: Teacher UI wiring. Student-supplied strings rendered via
 //          textContent only (no innerHTML — XSS prevention). Sprint 8:
 //          replaced wireControls with sbSessionUI.mount into #session-root.
-// Last updated: Sprint 20 (2026-04-25) -- VAD wiring; chat chip; acoustic profile chip; setAcousticProfile
+// Last updated: Sprint 25 (2026-04-27) -- VAD wiring; chat chip; acoustic profile chip; setAcousticProfile
 
 'use strict';
 

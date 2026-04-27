@@ -1,7 +1,7 @@
 // File: server/tests/common/mod.rs
 // Purpose: Shared test harness — spawn_app, dev-mail reader, WS client.
 // Role: Keep integration-test bodies short and behaviour-focused.
-// Last updated: Sprint 19 (2026-04-26) -- template DB per process; skip per-test migrations
+// Last updated: Sprint 25 (2026-04-27) -- template DB per process; skip per-test migrations
 
 #![allow(dead_code)]
 

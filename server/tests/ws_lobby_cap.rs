@@ -1,6 +1,6 @@
 // File: server/tests/ws_lobby_cap.rs
 // Purpose: LOBBY_CAP_PER_ROOM + MAX_ACTIVE_ROOMS enforcement. R1 finding #5.
-// Last updated: 2026-04-28 — synchronise lobby fills via teacher watch to remove race.
+// Last updated: Sprint 25 (2026-04-28) -- synchronise lobby fills via teacher watch to remove race
 
 mod common;
 

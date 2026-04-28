@@ -9,7 +9,7 @@
  * Invariants: no colour, font, radius, or shadow literal in other CSS files —
  *             always a var(--sb-...). Dark surfaces (session UI) use the
  *             same tokens with a `.sb-theme-dark` scope flip.
- * Last updated: 2026-04-28 — library page restructure + score modal width fix.
+ * Last updated: Sprint 25 (2026-04-28) -- score modal: continuous pages, no per-page chrome.
  */
 
 /* ============================================================
@@ -1433,20 +1433,20 @@
   overflow-y: auto;
   flex: 1 1 auto;
   min-height: 0;
-  padding: var(--sb-space-4) var(--sb-space-6);
-  display: flex;
-  flex-direction: column;
-  gap: var(--sb-space-4);
-  background: var(--sb-bg-sunken);
+  padding: 0;
+  display: block;             /* one continuous score, not per-page flex children */
+  background: #fff;
 }
 
 .score-page {
   position: relative;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.14);
-  border-radius: var(--sb-r-md);
-  overflow: hidden;
+  display: block;
   background: #fff;
+  /* Subtle separator between pages so a measure split across pages is still
+     legible, but no shadow/radius so the score reads as one tall image. */
+  border-bottom: 1px dashed var(--sb-border);
 }
+.score-page:last-child { border-bottom: none; }
 
 .score-page__img {
   display: block;

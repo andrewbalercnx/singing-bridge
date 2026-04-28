@@ -11,7 +11,7 @@
 //             MIDI port.name set via .textContent only (no innerHTML);
 //             serializeMidi is a pure function — no side effects, no DOM access;
 //             openSynthModal submit handler registered once at init — no listener accumulation.
-// Last updated: Sprint 24 (2026-04-26) -- synthesis modal + variant management
+// Last updated: Sprint 25 (2026-04-28) -- score modal scrolls highlighted bar into upper third
 
 (function (root, factory) {
   'use strict';
@@ -743,6 +743,7 @@
     if (!coord) return;
 
     var pages = document.querySelectorAll('.score-page');
+    var pagesEl = document.getElementById('score-modal-pages');
     for (var k = 0; k < pages.length; k++) {
       var canvas = pages[k].querySelector('.score-page__overlay');
       if (!canvas || !canvas.width) continue;
@@ -756,7 +757,18 @@
           coord.w_frac * canvas.width,
           coord.h_frac * canvas.height
         );
-        pages[k].scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        // Smooth-scroll the pages container so the highlighted measure sits
+        // in the upper third of the viewport, leaving room for upcoming bars.
+        if (pagesEl) {
+          var pageRect = pages[k].getBoundingClientRect();
+          var containerRect = pagesEl.getBoundingClientRect();
+          var highlightTopRel = (pageRect.top - containerRect.top) + coord.y_frac * pageRect.height;
+          var desiredOffset = pagesEl.clientHeight * 0.3;
+          pagesEl.scrollBy({
+            top: highlightTopRel - desiredOffset,
+            behavior: 'smooth',
+          });
+        }
       }
     }
   }

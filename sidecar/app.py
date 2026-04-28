@@ -9,7 +9,7 @@ Invariants: Every non-/healthz endpoint requires Authorization: Bearer <SIDECAR_
             SIDECAR_SECRET must be set at startup; missing → process exits.
             Upload size is capped at MAX_UPLOAD_BYTES before processing.
             All temp files are cleaned up even on error.
-Last updated: Sprint 21 (2026-04-26) -- detailed /healthz probing audiveris/fluidsynth/ghostscript/sf2
+Last updated: Sprint 25 (2026-04-28) -- /omr returns 0-based bar_coords pages to match /bar_coords + server contract
 """
 from __future__ import annotations
 
@@ -198,7 +198,7 @@ def omr():
                 bar_coords = [
                     {
                         "bar": c["bar_seq"],
-                        "page": c["page"],
+                        "page": c["page"] - 1,  # 0-based to match /bar_coords + the browser DOM
                         "x_frac": c["x_frac"],
                         "y_frac": c["y_frac"],
                         "w_frac": c["w_frac"],

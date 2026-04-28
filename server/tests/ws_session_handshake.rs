@@ -2,7 +2,7 @@
 // Purpose: Full signalling handshake — lobby_join → admit → signal relay
 //          → disconnect cleanup. Covers the SPRINTS.md exit criterion at
 //          the signalling layer.
-// Last updated: Sprint 111 (2026-04-21) -- email validation + session_event persistence
+// Last updated: Sprint 25 (2026-04-28) -- session_event poll deadline 3s→10s for slow CI runners
 
 mod common;
 
@@ -186,9 +186,11 @@ async fn session_event_row_has_ended_at_after_disconnect() {
     drop(student);
     let _ = recv_json(&mut teacher).await; // peer_disconnected
 
-    // Poll until ended_at is set or 3 s elapses. Session-log writes are now
-    // spawned as a background task; on Azure WAN they may take ~1 s to complete.
-    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(3000);
+    // Poll until ended_at is set or 10 s elapses. Session-log writes are now
+    // spawned as a background task (cf9a347); on Azure WAN we wait for both
+    // the open insert and the close update to land. 3 s was previously
+    // tight enough to flake on slow GitHub-hosted runners.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(10_000);
     let row = loop {
         let r: Option<(Option<i64>,)> = sqlx::query_as(
             "SELECT ended_at FROM session_events WHERE teacher_id = $1 ORDER BY id DESC LIMIT 1",

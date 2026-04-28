@@ -9,7 +9,7 @@
  * Invariants: no colour, font, radius, or shadow literal in other CSS files —
  *             always a var(--sb-...). Dark surfaces (session UI) use the
  *             same tokens with a `.sb-theme-dark` scope flip.
- * Last updated: Sprint 25 (2026-04-28) -- score modal: continuous pages, no per-page chrome.
+ * Last updated: Sprint 25 (2026-04-28) -- scope score-modal display:flex to [open] so closed dialog hides.
  */
 
 /* ============================================================
@@ -1378,6 +1378,12 @@
   height: 92vh;
   max-height: 92vh;
   padding: 0;
+}
+
+/* Scope the flex layout to the open state so the user-agent rule
+   `dialog:not([open]) { display: none }` still hides the dialog when
+   it's closed (author rules beat UA regardless of specificity). */
+.score-modal[open] {
   display: flex;
   flex-direction: column;
 }

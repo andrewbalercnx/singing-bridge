@@ -9,7 +9,7 @@
  * Invariants: no colour, font, radius, or shadow literal in other CSS files —
  *             always a var(--sb-...). Dark surfaces (session UI) use the
  *             same tokens with a `.sb-theme-dark` scope flip.
- * Last updated: Sprint 15 (2026-04-23) — unified design system.
+ * Last updated: 2026-04-28 — score modal width/height override sb-dialog cap.
  */
 
 /* ============================================================
@@ -1128,6 +1128,8 @@
 
 .score-modal {
   width: min(860px, 96vw);
+  max-width: 96vw;
+  height: 92vh;
   max-height: 92vh;
   padding: 0;
   display: flex;

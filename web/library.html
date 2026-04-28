@@ -2,7 +2,7 @@
 <!--
   File: web/library.html
   Purpose: Teacher accompaniment library — upload, OMR flow, synthesise, manage variants.
-  Last updated: Sprint 24 (2026-04-26) -- synthesis modal + variant management
+  Last updated: 2026-04-28 — restructure as topbar + container with sb-card sections.
 -->
 <html lang="en">
 <head>
@@ -14,15 +14,25 @@
 </head>
 <body class="sb-page">
   <div id="sidecar-banner" class="sb-notice sb-notice--danger banner-error" hidden>
-    Sheet music tools unavailable. Upload and delete still work.
-    <button id="sidecar-banner-close" type="button">✕</button>
+    <span>Sheet music tools unavailable. Upload and delete still work.</span>
+    <button id="sidecar-banner-close" type="button" aria-label="Dismiss">&#x2715;</button>
   </div>
 
-  <main class="library-page">
-    <h1>Accompaniment Library</h1>
-    <nav><a id="back-link" href="#">← Back to room</a></nav>
+  <header class="sb-topbar">
+    <span class="sb-topbar__brand"><span class="sb-topbar__brand-dot"></span>singing-bridge</span>
+    <span class="sb-topbar__meta">Accompaniment library</span>
+    <span class="sb-topbar__spacer"></span>
+    <a id="back-link" class="sb-btn sb-btn--ghost sb-btn--sm" href="#">← Back to room</a>
+  </header>
 
-    <section id="upload-section">
+  <main class="library-page">
+    <div class="library-page__intro">
+      <h1>Accompaniment library</h1>
+      <p class="sb-card__subtitle">Upload sheet music, record from a MIDI keyboard, and manage backing tracks for your lessons.</p>
+    </div>
+
+    <section id="upload-section" class="sb-card library-section">
+      <h2 class="sb-card__title">Add a track</h2>
       <div id="drop-zone" class="drop-zone sb-dropzone" tabindex="0"
            aria-label="Drop PDF, MIDI, WAV, or MP3 file here">
         <p>Drop a PDF, MIDI, WAV, MP3, or MP4 file here, or
@@ -38,12 +48,12 @@
         </div>
         <button class="sb-btn" id="upload-btn" type="button">Upload</button>
       </div>
-      <p id="upload-error" class="error" hidden></p>
-      <p id="upload-progress" hidden>Uploading…</p>
+      <p id="upload-error" class="error sb-mt-2" hidden></p>
+      <p id="upload-progress" class="hint sb-mt-2" hidden>Uploading…</p>
     </section>
 
-    <section id="midi-record-section" hidden>
-      <h2>Record from keyboard</h2>
+    <section id="midi-record-section" class="sb-card library-section" hidden>
+      <h2 class="sb-card__title">Record from keyboard</h2>
       <div id="midi-device-row" hidden>
         <div class="sb-field">
           <label class="sb-label" for="midi-device-select">Keyboard</label>
@@ -61,17 +71,20 @@
         <button class="sb-btn sb-btn--accent" id="midi-record-btn" type="button">Start recording</button>
         <button class="sb-btn sb-btn--ghost" id="midi-stop-btn" type="button" hidden>Stop</button>
       </div>
-      <p id="midi-note-display" aria-live="polite" hidden></p>
-      <p id="midi-upload-progress" hidden>Uploading…</p>
-      <p id="midi-error" class="error" hidden></p>
+      <p id="midi-note-display" class="hint sb-mt-2" aria-live="polite" hidden></p>
+      <p id="midi-upload-progress" class="hint sb-mt-2" hidden>Uploading…</p>
+      <p id="midi-error" class="error sb-mt-2" hidden></p>
     </section>
-    <p id="midi-unavailable-note" class="hint" hidden>
+    <p id="midi-unavailable-note" class="hint library-page__hint" hidden>
       MIDI keyboard recording requires Chrome or Edge with a MIDI device connected.
     </p>
 
-    <ul id="asset-list" aria-live="polite"></ul>
-    <p id="assets-empty" hidden>No assets yet. Upload a PDF, MIDI, WAV, MP3, or MP4 above.</p>
-    <p id="assets-error" class="error" hidden></p>
+    <section class="sb-card library-section library-section--list">
+      <h2 class="sb-card__title">Your tracks</h2>
+      <ul id="asset-list" aria-live="polite"></ul>
+      <p id="assets-empty" class="hint" hidden>No assets yet. Upload a PDF, MIDI, WAV, MP3, or MP4 above.</p>
+      <p id="assets-error" class="error" hidden></p>
+    </section>
 
     <!-- Synthesis modal — static skeleton; JS fills dynamic content -->
     <dialog id="synth-modal" class="sb-dialog synth-modal" aria-labelledby="synth-modal-title">
@@ -116,8 +129,8 @@
       </div>
       <div id="score-modal-pages" class="score-modal__pages"></div>
     </dialog>
-
-    <script src="/assets/library.js"></script>
   </main>
+
+  <script src="/assets/library.js"></script>
 </body>
 </html>

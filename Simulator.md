@@ -16,13 +16,14 @@ playwright install chromium
 > **Note:** pip may print warnings about `vvp-issuer` or `typer` version conflicts from unrelated
 > packages in your environment. These are harmless — the install still succeeds.
 
-**PostgreSQL** must be reachable and `SB_DATABASE_URL` set. For local dev, export it before running:
+**PostgreSQL** must be reachable and `SB_DATABASE_URL` set. Use the production database:
 
 ```bash
-export SB_DATABASE_URL=postgres://localhost:5432/singing_bridge
+export SB_DATABASE_URL="postgres://sbapp:PTj3sooCb4sPicaRoQOzUHiQ6oAUXpri@vvp-postgres.postgres.database.azure.com/singing_bridge?sslmode=verify-full"
 ```
 
-Or point it at your deployed database URL (no `sslmode=verify-full` required in dev).
+> **Note:** this points at the live production database — bot sessions and tokens created
+> during testing will be real rows.
 
 **Server must be running in dev mode** (the routes are compiled out of release builds):
 

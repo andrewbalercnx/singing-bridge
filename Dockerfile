@@ -3,10 +3,17 @@
 # Role: Production container image for Azure Container Apps.
 # Invariants: Final image runs as non-root (UID 65532). SB_STATIC_DIR=/app/web.
 #             Migrations are bundled at /app/migrations.
-# Last updated: Sprint 20 (2026-04-25) -- ARG GIT_SHA in stage 2 to bust ACR layer cache for web assets
+#             Build stage pulls from sbprodacr (ACR) to avoid Docker Hub rate limits.
+# Last updated: Sprint 26 (2026-04-29) -- use ACR-cached debian+rustup to avoid Docker Hub rate limit
 
-# stage 1: build
-FROM docker.io/library/rust:1.82-bookworm AS build
+# stage 1: build — debian:bookworm-slim from ACR mirror; rustup installs the pinned toolchain
+FROM sbprodacr.azurecr.io/debian:bookworm-slim AS build
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates curl gcc libc6-dev pkg-config \
+ && rm -rf /var/lib/apt/lists/*
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+  | sh -s -- -y --profile minimal --default-toolchain stable
+ENV PATH="/root/.cargo/bin:${PATH}"
 WORKDIR /src
 
 # Cache dependency build separately from application code.

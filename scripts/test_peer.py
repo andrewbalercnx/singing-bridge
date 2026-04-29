@@ -170,7 +170,7 @@ async def student_bot(page, server: str, slug: str) -> None:
     await page.goto(f'{server}/teach/{slug}')
 
     await page.fill('#join-email', 'test-bot@singing-bridge.dev')
-    await page.locator('#join-form').evaluate('f => f.submit()')
+    await page.locator('#join-form button[type="submit"]').click()
 
     # Wait for session to become visible (admitted by human teacher).
     await page.locator('[data-testid="session-active"]').wait_for(
@@ -198,11 +198,14 @@ async def main() -> None:
         async with async_playwright() as pw:
             browser = await pw.chromium.launch(args=[
                 '--use-fake-ui-for-media-stream',
+                '--use-fake-device-for-media-stream',
                 f'--use-file-for-fake-audio-capture={wav_path}',
                 '--allow-running-insecure-content',
                 '--no-sandbox',
             ])
-            context = await browser.new_context()
+            context = await browser.new_context(
+                permissions=['microphone', 'camera'],
+            )
             page = await context.new_page()
 
             if args.mode == 'teacher':

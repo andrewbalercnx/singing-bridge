@@ -13,6 +13,17 @@ pip install -r scripts/requirements-test-peer.txt
 playwright install chromium
 ```
 
+> **Note:** pip may print warnings about `vvp-issuer` or `typer` version conflicts from unrelated
+> packages in your environment. These are harmless — the install still succeeds.
+
+**PostgreSQL** must be reachable and `SB_DATABASE_URL` set. For local dev, export it before running:
+
+```bash
+export SB_DATABASE_URL=postgres://localhost:5432/singing_bridge
+```
+
+Or point it at your deployed database URL (no `sslmode=verify-full` required in dev).
+
 **Server must be running in dev mode** (the routes are compiled out of release builds):
 
 ```bash

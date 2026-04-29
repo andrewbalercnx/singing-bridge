@@ -28,12 +28,13 @@
   function getInputDeviceId() { return get(INPUT_KEY); }
   function getOutputDeviceId() { return get(OUTPUT_KEY); }
 
-  // Apply current output preference to one audio element.
+  // Apply current output preference to one audio element. Returns the
+  // setSinkId promise so callers can await it before calling play().
   function applySinkId(el) {
-    if (!el || typeof el.setSinkId !== 'function') return;
+    if (!el || typeof el.setSinkId !== 'function') return Promise.resolve();
     var id = get(OUTPUT_KEY);
-    if (!id) return;
-    el.setSinkId(id).catch(function () {});
+    if (!id) return Promise.resolve();
+    return el.setSinkId(id).catch(function () {});
   }
 
   // Apply to every remote audio element on the page (marked with data-remote).

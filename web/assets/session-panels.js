@@ -84,13 +84,15 @@
         var level = Math.min(smoothLevel, 1);
         ring.style.boxShadow = 'inset 0 0 0 ' + (4 + level * 10) + 'px rgba(225,127,139,' + (0.15 + level * 0.35) + ')';
       },
-      setStream: function (stream) {
+      setStream: async function (stream) {
         vid.srcObject = stream || null;
         aud.srcObject = stream || null;
         if (vid.srcObject) vid.play().catch(function () {});
         if (aud.srcObject) {
+          if (window.sbDevicePicker) {
+            try { await window.sbDevicePicker.applySinkId(aud); } catch (_) {}
+          }
           aud.play().catch(function () {});
-          if (window.sbDevicePicker) window.sbDevicePicker.applySinkId(aud);
         }
       },
       teardown: function () { vid.srcObject = null; aud.srcObject = null; },

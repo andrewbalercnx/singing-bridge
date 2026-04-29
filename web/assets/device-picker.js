@@ -9,7 +9,7 @@
 // Invariants: Degrades gracefully when APIs are unavailable. Never throws.
 //             Output selection is a no-op when setSinkId is unsupported (Firefox, Safari).
 //             Input selection takes effect on the next getUserMedia call (session start).
-// Last updated: Sprint 25+ (2026-04-29) -- initial implementation
+// Last updated: Sprint 26 (2026-04-29) -- initial implementation
 
 (function () {
   'use strict';

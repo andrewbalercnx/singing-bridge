@@ -46,7 +46,15 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
   };
 
   var startLocalAudio = async function () {
-    var stream = await navigator.mediaDevices.getUserMedia(AUDIO_CONSTRAINTS);
+    var constraints = {
+      audio: Object.assign({}, AUDIO_CONSTRAINTS.audio),
+      video: false,
+    };
+    if (window.sbDevicePicker) {
+      var deviceId = window.sbDevicePicker.getInputDeviceId();
+      if (deviceId) constraints.audio.deviceId = { exact: deviceId };
+    }
+    var stream = await navigator.mediaDevices.getUserMedia(constraints);
     var track = stream.getAudioTracks()[0];
     return { stream: stream, track: track, settings: track.getSettings() };
   };

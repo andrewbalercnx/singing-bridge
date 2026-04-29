@@ -10,6 +10,8 @@
   // pathname is /teach/<slug>/session — extract the middle segment
   const slug = location.pathname.split('/')[2] || '';
   document.getElementById('room-heading').textContent = `Your room: ${slug}`;
+
+  if (window.sbDevicePicker) window.sbDevicePicker.mount('audio-device-picker');
   const recordingsLink = document.getElementById('recordings-link');
   if (recordingsLink) recordingsLink.href = `/teach/${slug}/recordings`;
 

@@ -50,6 +50,10 @@ details.why[open] { display: block; margin-top: 0.5rem; }
 
 #unmute-audio { margin: 0.5rem 0; }
 
+.sb-audio-settings { margin: 0.75rem 0; }
+.sb-audio-settings__toggle { cursor: pointer; color: var(--accent); font-size: 0.875rem; }
+.sb-audio-settings__inner { display: flex; flex-direction: column; gap: 0.5rem; padding: 0.75rem 0 0.25rem; }
+
 #remote-audio { display: none; }
 
 #loopback-results { white-space: pre-wrap; padding: 0.75rem; background: #0001; border-radius: 4px; }

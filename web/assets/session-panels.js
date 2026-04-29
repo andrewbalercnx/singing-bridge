@@ -61,6 +61,7 @@
     vid.autoplay = true; vid.playsInline = true; vid.muted = true;
     var aud = document.createElement('audio');
     aud.autoplay = true;
+    aud.setAttribute('data-remote', '');
     var namePlate = el('div', 'sb-name-plate');
     var nameEl = el('div', 'sb-name'); nameEl.textContent = opts.remoteName;
     var roleEl = el('div', 'sb-role'); roleEl.textContent = opts.remoteRoleLabel;
@@ -87,7 +88,10 @@
         vid.srcObject = stream || null;
         aud.srcObject = stream || null;
         if (vid.srcObject) vid.play().catch(function () {});
-        if (aud.srcObject) aud.play().catch(function () {});
+        if (aud.srcObject) {
+          aud.play().catch(function () {});
+          if (window.sbDevicePicker) window.sbDevicePicker.applySinkId(aud);
+        }
       },
       teardown: function () { vid.srcObject = null; aud.srcObject = null; },
     };

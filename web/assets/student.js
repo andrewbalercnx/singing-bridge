@@ -7,6 +7,7 @@
 
 (function () {
   const slug = location.pathname.replace(/^\/teach\//, '');
+  if (window.sbDevicePicker) window.sbDevicePicker.mount('audio-device-picker');
   const joinSection = document.getElementById('join');
   const form = document.getElementById('join-form');
   const lobbyStatus = document.getElementById('lobby-status');

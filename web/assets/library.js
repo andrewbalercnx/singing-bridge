@@ -11,7 +11,7 @@
 //             MIDI port.name set via .textContent only (no innerHTML);
 //             serializeMidi is a pure function — no side effects, no DOM access;
 //             openSynthModal submit handler registered once at init — no listener accumulation.
-// Last updated: Sprint 25 (2026-04-28) -- score modal scrolls highlighted bar into upper third
+// Last updated: Sprint 26 (2026-05-05) -- score modal: backdrop click closes dialog
 
 (function (root, factory) {
   'use strict';
@@ -645,6 +645,10 @@
     if (!dialog) return;
     document.getElementById('score-modal-close').addEventListener('click', function () {
       dialog.close();
+    });
+    // Clicking the backdrop (the dialog element itself, not its content) closes the modal.
+    dialog.addEventListener('click', function (e) {
+      if (e.target === dialog) dialog.close();
     });
     dialog.addEventListener('close', function () {
       if (_scoreAudio) { _scoreAudio.pause(); }

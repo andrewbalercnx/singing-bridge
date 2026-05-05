@@ -10,7 +10,7 @@
 //             (no user input reaches innerHTML).
 //             buildIconBar: teacher gets 5 buttons (mic, vid, accmp, chat, end);
 //             non-teacher gets 3 (mic, vid, end).
-// Last updated: Sprint 17 (2026-04-23) -- new v2 builders; removed buildControls/buildSelfPreview
+// Last updated: Sprint 26 (2026-05-05) -- buildAccmpPanel: add track selector dropdown
 
 (function (root, factory) {
   'use strict';
@@ -116,6 +116,14 @@
   function buildAccmpPanel() {
     var panel = el('div', 'sb-accmp-panel-inner');
 
+    var trackSel = document.createElement('select');
+    trackSel.className = 'sb-select sb-accmp-track-select';
+    trackSel.setAttribute('aria-label', 'Select track');
+    var defOpt = document.createElement('option');
+    defOpt.value = ''; defOpt.textContent = '— select a track —';
+    defOpt.disabled = true; defOpt.selected = true;
+    trackSel.appendChild(defOpt);
+
     var trackName = el('p', 'sb-accmp-track-name');
     trackName.textContent = 'No track selected';
 
@@ -142,7 +150,7 @@
     var btnRow = el('div', 'sb-accmp-btn-row');
     btnRow.append(pauseBtn, scoreBtn);
 
-    panel.append(trackName, slider, btnRow);
+    panel.append(trackSel, trackName, slider, btnRow);
 
     return {
       node: panel,
@@ -156,6 +164,7 @@
         pauseBtn.setAttribute('aria-label', paused ? 'Resume' : 'Pause');
       },
       getSlider: function () { return slider; },
+      trackSelect: trackSel,
     };
   }
 

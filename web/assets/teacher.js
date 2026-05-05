@@ -2,7 +2,7 @@
 // Purpose: Teacher UI wiring. Student-supplied strings rendered via
 //          textContent only (no innerHTML — XSS prevention). Sprint 8:
 //          replaced wireControls with sbSessionUI.mount into #session-root.
-// Last updated: Sprint 25 (2026-04-27) -- VAD wiring; chat chip; acoustic profile chip; setAcousticProfile
+// Last updated: Sprint 26 (2026-05-05) -- show recording-controls on connect; fetch track list for accompaniment
 
 'use strict';
 
@@ -15,6 +15,7 @@
   const recordingsLink = document.getElementById('recordings-link');
   if (recordingsLink) recordingsLink.href = `/teach/${slug}/recordings`;
 
+  const recordingControls = document.getElementById('recording-controls');
   const listEl = document.getElementById('lobby-list');
   const emptyEl = document.getElementById('lobby-empty');
   const statusEl = document.getElementById('session-status');
@@ -283,6 +284,7 @@
       statusEl.textContent = 'Connected.';
       localAudioTrack = audioTrack;
       if (qualityBadge) qualityBadge.hidden = false;
+      if (recordingControls) recordingControls.hidden = false;
       setRecordState('idle');
 
       // Mount session UI first so we can pass accmpPanel to the accompaniment drawer.
@@ -362,6 +364,21 @@
             if (scoreRoot) scoreRoot.hidden = pressed;
           });
         }
+        // Populate track selector from library.
+        fetch('/teach/' + slug + '/library/assets')
+          .then(function (r) { return r.json(); })
+          .then(function (assets) {
+            const useful = assets.filter(function (a) { return a.variant_count > 0; });
+            return Promise.all(useful.map(function (a) {
+              return fetch('/teach/' + slug + '/library/assets/' + a.id)
+                .then(function (r) { return r.json(); })
+                .then(function (d) { return Object.assign({}, a, { variants: d.variants || [] }); });
+            }));
+          })
+          .then(function (full) {
+            if (accompanimentHandle) accompanimentHandle.setTrackList(full);
+          })
+          .catch(function () {});
       }
       dataChannel.addEventListener('message', (e) => {
         statusEl.textContent = `Student says: ${e.data}`;
@@ -370,6 +387,7 @@
     },
     onPeerDisconnected() {
       statusEl.textContent = 'Student disconnected.';
+      if (recordingControls) recordingControls.hidden = true;
       localAudioTrack = null;
       accompanimentIsPlaying = false;
       if (vadHandle) { vadHandle.teardown(); vadHandle = null; }

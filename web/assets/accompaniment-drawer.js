@@ -13,7 +13,7 @@
 //             opts.panelEl: when provided (v2 layout), drives panelEl API instead of
 //             building own UI; container may be null in that case.
 //             audio.muted = true when acousticProfile !== 'headphones'.
-// Last updated: Sprint 20 (2026-04-25) -- setAcousticProfile: muting + banner
+// Last updated: Sprint 26 (2026-05-05) -- setTrackList + trackSelect wiring for in-session track picker
 
 (function (root, factory) {
   'use strict';
@@ -162,6 +162,16 @@
           sendWs({ type: 'accompaniment_play', asset_id: Number(_assetId), variant_id: Number(_variantId), position_ms: posMs });
         }
       });
+      // Track selector: sets _assetId/_variantId from option value "assetId:variantId".
+      if (panelEl.trackSelect) {
+        panelEl.trackSelect.addEventListener('change', function () {
+          var parts = (panelEl.trackSelect.value || '').split(':');
+          if (parts.length === 2 && parts[0] && parts[1]) {
+            _assetId = parts[0];
+            _variantId = parts[1];
+          }
+        });
+      }
     }
 
     // ---- Acoustic profile ----
@@ -348,6 +358,23 @@
       updateState: updateState,
       setScoreView: function (handle) { scoreViewHandle = handle; },
       setAcousticProfile: _applyProfile,
+      // Populate track selector with [{id, title, variants:[{id,label,tempo_pct}]}].
+      setTrackList: function (assets) {
+        if (!panelEl || !panelEl.trackSelect) return;
+        var sel = panelEl.trackSelect;
+        while (sel.options.length > 1) sel.remove(1);
+        assets.forEach(function (a) {
+          var grp = document.createElement('optgroup');
+          grp.label = a.title;
+          (a.variants || []).forEach(function (v) {
+            var opt = document.createElement('option');
+            opt.value = a.id + ':' + v.id;
+            opt.textContent = v.label + ' \u2014 ' + v.tempo_pct + '%';
+            grp.appendChild(opt);
+          });
+          sel.appendChild(grp);
+        });
+      },
     };
   }
 

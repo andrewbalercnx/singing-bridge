@@ -9,7 +9,7 @@
  * Invariants: no colour, font, radius, or shadow literal in other CSS files —
  *             always a var(--sb-...). Dark surfaces (session UI) use the
  *             same tokens with a `.sb-theme-dark` scope flip.
- * Last updated: Sprint 25 (2026-04-28) -- score modal: continuous pages, no per-page chrome.
+ * Last updated: Sprint 26 (2026-05-05) -- score modal: fix always-visible bug (display:flex moved to [open] only).
  */
 
 /* ============================================================
@@ -1378,6 +1378,10 @@
   height: 92vh;
   max-height: 92vh;
   padding: 0;
+}
+/* display:flex only when the dialog is open — avoids overriding the UA's
+   display:none on closed <dialog> elements, which kept the modal always visible. */
+.score-modal[open] {
   display: flex;
   flex-direction: column;
 }

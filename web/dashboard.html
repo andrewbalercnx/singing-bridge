@@ -15,21 +15,27 @@
   <!-- sb:debug -->
 </head>
 <body class="sb-page">
-  <header class="sb-dashboard-nav">
-    <span class="sb-dashboard-brand">singing-bridge</span>
+  <header class="sb-dashboard-nav sb-fade sb-fade-1">
+    <span class="sb-dashboard-brand">
+      <span class="sb-brand__dot" aria-hidden="true"></span>singing-bridge
+    </span>
     <span id="room-name" class="sb-dashboard-room"></span>
-    <a id="enter-room-btn" class="sb-btn" href="#">Enter Room</a>
+    <a id="enter-room-btn" class="sb-btn sb-btn--accent" href="#">Enter Room</a>
   </header>
 
-  <main class="sb-dashboard">
+  <div class="sb-dotted sb-dashboard-staffline sb-fade sb-fade-2" aria-hidden="true"></div>
+
+  <main class="sb-dashboard sb-fade sb-fade-3">
     <div class="sb-dashboard-grid">
 
       <section class="sb-dashboard-panel" id="panel-history">
-        <h2 class="sb-dashboard-panel-title">Session History</h2>
+        <span class="sb-dashboard-panel-eyebrow">Past lessons</span>
+        <h2 class="sb-dashboard-panel-title">Session history</h2>
         <p><a id="history-link" href="#">View full history →</a></p>
       </section>
 
       <section class="sb-dashboard-panel" id="panel-recordings">
+        <span class="sb-dashboard-panel-eyebrow">Captured takes</span>
         <h2 class="sb-dashboard-panel-title">Recordings</h2>
         <div id="recordings-list" aria-live="polite">
           <p class="sb-dashboard-loading">Loading…</p>
@@ -37,7 +43,8 @@
       </section>
 
       <section class="sb-dashboard-panel sb-dashboard-panel--wide" id="panel-library">
-        <h2 class="sb-dashboard-panel-title">Accompaniment Library</h2>
+        <span class="sb-dashboard-panel-eyebrow">Repertoire</span>
+        <h2 class="sb-dashboard-panel-title">Accompaniment library</h2>
         <div id="library-summary" aria-live="polite">
           <p class="sb-dashboard-loading">Loading…</p>
         </div>

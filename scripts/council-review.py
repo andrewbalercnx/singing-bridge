@@ -1224,13 +1224,17 @@ def build_council_prompt(
 
 {_output_discipline_clause(role)}"""
 
-    user_prompt = f"""## Review Type
+    # Materials (stable corpus) come first so the prefix is identical across
+    # parallel members and across rounds where the diff hasn't changed.
+    # Variable content (round number, tracker state) follows — cache misses
+    # are confined to the smaller suffix rather than the entire prompt.
+    user_prompt = f"""## Materials Under Review
+{materials}
+
+## Review Instructions
 This is a {review_type_label} review for Sprint {sprint}: {title} (Round {round_num}).
 {_round_context(round_num)}
 {_tracker_section(tracker_content, round_num)}
-## Materials Under Review
-{materials}
-
 {_council_output_format(role, label, sprint, round_num, review_type_label)}"""
 
     return system_prompt, user_prompt

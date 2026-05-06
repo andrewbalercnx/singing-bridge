@@ -209,6 +209,11 @@ state machine and the `RECURRING` auto-demotion rule.
   rounds-to-convergence, lens activity, reviewer success rate,
   security-bypass count. Run before deciding whether a lens is
   pulling its weight.
+- `python3 scripts/council-retrospective.py <sprint> [sprint2 ...]` —
+  generate a cross-sprint retrospective draft using Haiku 4.5
+  (cheap model). Reads findings archive + metrics JSONL; outputs
+  structured markdown. Pass `--output <path>` to write a file.
+  Edit the draft before committing to `Documentation/`.
 - `python3 scripts/token-audit.py` — tier-1 + meta-prompt token
   sizes against baseline; fails CI on growth. Run with
   `--update-baseline` after intentional growth and commit the new

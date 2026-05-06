@@ -16,24 +16,32 @@
   <!-- sb:debug -->
 </head>
 <body class="sb-page">
-  <main class="student">
-    <h1>Join your lesson</h1>
+  <main class="student sb-teach-landing">
+    <p class="sb-teach-landing__brand sb-fade sb-fade-1">
+      <span class="sb-brand__dot" aria-hidden="true"></span>singing-bridge
+    </p>
+    <p class="sb-eyebrow sb-fade sb-fade-2">Your lesson room</p>
+    <h1 class="sb-fade sb-fade-3">Join your lesson</h1>
+    <p class="sb-lede sb-fade sb-fade-4">
+      A room built for the way the voice actually sounds.
+    </p>
+    <div class="sb-dotted sb-fade sb-fade-4" aria-hidden="true"></div>
 
-    <section id="block-notice" class="sb-notice sb-notice--danger" hidden>
+    <section id="block-notice" class="sb-notice sb-notice--danger sb-mt-6" hidden>
       <h2>This browser can't run the lesson tool</h2>
       <p id="block-reason"></p>
       <p>Open the link in Chrome, Firefox, Safari, or Edge.</p>
     </section>
 
-    <section id="degraded-notice" class="degraded sb-notice sb-notice--warning" hidden>
+    <section id="degraded-notice" class="degraded sb-notice sb-notice--warning sb-mt-4" hidden>
       <p id="degraded-reason"></p>
     </section>
 
-    <section id="ios-note" class="sb-notice sb-notice--info" hidden>
-      <p>📱 AEC is always on for your device — headphones are still recommended for best quality.</p>
+    <section id="ios-note" class="sb-notice sb-notice--info sb-mt-4" hidden>
+      <p>AEC is always on for your device — headphones are still recommended for best quality.</p>
     </section>
 
-    <section id="join">
+    <section id="join" class="sb-card--paper sb-fade sb-fade-5">
       <p class="setup-note">Please wear headphones.
         <details class="why">
           <summary>Why?</summary>
@@ -43,7 +51,7 @@
         </details>
       </p>
       <div id="audio-device-picker"></div>
-      <form id="join-form" class="sb-stack">
+      <form id="join-form" class="sb-stack sb-mt-4">
         <div class="sb-field">
           <label class="sb-label" for="join-email">Your email</label>
           <input class="sb-input" id="join-email" type="email" name="email" autocomplete="email" required>

@@ -1066,6 +1066,97 @@
 
 
 /* ============================================================
+  18. Entrance motion — staggered fade-up for landing surfaces
+   ============================================================ */
+
+@keyframes sb-fade-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.sb-fade { animation: sb-fade-up var(--sb-dur-med) var(--sb-ease) both; }
+.sb-fade-1 { animation-delay: 0ms; }
+.sb-fade-2 { animation-delay: 70ms; }
+.sb-fade-3 { animation-delay: 140ms; }
+.sb-fade-4 { animation-delay: 210ms; }
+.sb-fade-5 { animation-delay: 300ms; }
+
+@media (prefers-reduced-motion: reduce) {
+  .sb-fade { animation: none; }
+}
+
+/* ============================================================
+  19. Teach landing — student join surface
+   ============================================================ */
+
+.sb-teach-landing {
+  width: 100%;
+  max-width: 520px;
+  margin: 0 auto;
+  padding: var(--sb-space-12) var(--sb-space-6) var(--sb-space-10);
+}
+.sb-teach-landing > * + * { margin-top: var(--sb-space-3); }
+.sb-teach-landing .sb-card--paper { margin-top: var(--sb-space-8); }
+.sb-teach-landing__brand {
+  font-family: var(--sb-font-display);
+  font-weight: 500;
+  font-size: var(--sb-text-md);
+  letter-spacing: -0.01em;
+  color: var(--sb-fg-muted);
+}
+.sb-teach-landing h1 { margin: 0; }
+.sb-teach-landing .sb-lede { margin: var(--sb-space-2) 0 0; }
+.sb-teach-landing .sb-dotted { margin: var(--sb-space-6) 0 0; }
+
+/* Lobby list inside teacher.html — wraps the dense JS-rendered <li> rows in
+   the design system without requiring JS changes. */
+.teacher { padding: var(--sb-space-8) var(--sb-space-6); max-width: 880px; margin: 0 auto; }
+.teacher .sb-eyebrow { display: block; }
+.teacher h1 { margin-top: var(--sb-space-1); }
+.teacher .lobby {
+  margin-top: var(--sb-space-6);
+  padding: var(--sb-space-5) var(--sb-space-6);
+  background: var(--sb-bg-raised);
+  border: 1px solid var(--sb-border);
+  border-radius: var(--sb-r-lg);
+  box-shadow: var(--sb-shadow-1);
+}
+.teacher .lobby h2 { margin: var(--sb-space-1) 0 var(--sb-space-4); }
+.teacher .lobby ul {
+  list-style: none;
+  margin: 0 0 var(--sb-space-3);
+  padding: 0;
+}
+.teacher .lobby ul:empty { display: none; }
+.teacher .lobby ul > li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sb-space-2);
+  padding: var(--sb-space-3) 0;
+  border-bottom: 1px solid var(--sb-line-soft);
+}
+.teacher .lobby ul > li:last-child { border-bottom: none; }
+.teacher .lobby #lobby-empty {
+  margin: 0;
+  font-family: var(--sb-font-display);
+  font-style: italic;
+  color: var(--sb-fg-muted);
+}
+.teacher .session { margin-top: var(--sb-space-8); }
+
+/* Dashboard — staff-line motif + eyebrowed panel titles */
+.sb-dashboard-staffline { margin: 0 var(--sb-space-8); }
+.sb-dashboard-panel-eyebrow {
+  display: block;
+  font-size: var(--sb-text-xs);
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--sb-fg-subtle);
+  margin: 0 0 var(--sb-space-2);
+}
+
+/* ============================================================
   Synthesis modal (Sprint 24)
    ============================================================ */
 

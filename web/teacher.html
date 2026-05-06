@@ -17,16 +17,19 @@
 </head>
 <body class="sb-page">
   <main class="teacher">
-    <h1 id="room-heading">Your room</h1>
+    <p class="sb-eyebrow sb-fade sb-fade-1">Studio</p>
+    <h1 id="room-heading" class="sb-fade sb-fade-2">Your room</h1>
+    <div class="sb-dotted sb-fade sb-fade-3" aria-hidden="true"></div>
 
-    <section class="lobby">
-      <h2>Lobby</h2>
+    <section class="lobby sb-fade sb-fade-4">
+      <p class="sb-eyebrow">Lobby</p>
+      <h2>Who's waiting</h2>
       <ul id="lobby-list" aria-live="polite"></ul>
-      <p id="lobby-empty">No one is waiting.</p>
-      <nav><a id="recordings-link" href="#">View recordings</a></nav>
+      <p id="lobby-empty">The studio is quiet — no one is waiting yet.</p>
+      <nav class="sb-mt-4"><a id="recordings-link" href="#">View recordings →</a></nav>
     </section>
 
-    <section class="session">
+    <section class="session sb-fade sb-fade-5">
       <h2>Session</h2>
       <p class="setup-note">Please wear headphones.
         <details class="why">

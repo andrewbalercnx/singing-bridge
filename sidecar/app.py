@@ -36,6 +36,7 @@ from pipeline import (
     midi_to_wav,
     pdf_to_musicxml,
     rasterize_pdf_for_display,
+    render_parts_to_svgs,
 )
 
 # ---------------------------------------------------------------------------
@@ -275,6 +276,48 @@ def extract_midi():
         midi_bytes = midi_path.read_bytes()
 
     return Response(midi_bytes, mimetype="audio/midi")
+
+
+@app.route("/render-score", methods=["POST"])
+@require_auth
+def render_score():
+    xml_bytes, err = _require_file("musicxml")
+    if err:
+        return err
+
+    raw_indices = request.form.get("part_indices")
+    if not raw_indices:
+        return error_resp("INVALID_PART_INDICES", "Missing part_indices", 422)
+    try:
+        part_indices = json.loads(raw_indices)
+        if not isinstance(part_indices, list) or not part_indices:
+            raise ValueError("empty or non-list")
+        if len(part_indices) > MAX_PART_INDICES:
+            raise ValueError("too many")
+        part_indices = [int(i) for i in part_indices]
+    except (ValueError, TypeError) as e:
+        return error_resp("INVALID_PART_INDICES", f"Invalid part_indices: {e}", 422)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        xml_path = Path(tmp) / "score.musicxml"
+        xml_path.write_bytes(xml_bytes)
+
+        try:
+            svgs = render_parts_to_svgs(xml_path, part_indices)
+        except ImportError as e:
+            return error_resp("VEROVIO_MISSING", str(e), 503)
+        except IndexError as e:
+            return error_resp("INVALID_PART_INDICES", str(e), 422)
+        except Exception as e:
+            return error_resp("INVALID_MUSICXML", f"Could not render score: {e}", 422)
+
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            for i, svg_str in enumerate(svgs):
+                zf.writestr(f"page_{i + 1:04d}.svg", svg_str.encode("utf-8"))
+        zip_bytes = buf.getvalue()
+
+    return Response(zip_bytes, mimetype="application/zip")
 
 
 @app.route("/bar-timings", methods=["POST"])

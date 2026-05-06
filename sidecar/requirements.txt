@@ -3,3 +3,4 @@ music21>=9.1
 mido>=1.3
 gunicorn>=22.0
 Pillow>=10.0
+verovio>=3.14

@@ -128,7 +128,7 @@ impl SidecarClient {
 
     fn map_code(code: &str, message: &str) -> AppError {
         match code {
-            "AUDIVERIS_MISSING" | "FLUIDSYNTH_MISSING" => AppError::SidecarUnavailable,
+            "AUDIVERIS_MISSING" | "FLUIDSYNTH_MISSING" | "VEROVIO_MISSING" => AppError::SidecarUnavailable,
             _ => AppError::SidecarBadInput(message.to_string().into()),
         }
     }
@@ -268,6 +268,28 @@ impl SidecarClient {
 
         let resp = Self::check(resp).await?;
         let zip_bytes = resp.bytes().await.map_err(|_| AppError::Internal("sidecar rasterise bytes".into()))?;
+        unzip_pages(&zip_bytes)
+    }
+
+    pub async fn render_score(&self, musicxml: Bytes, part_indices: &[usize]) -> Result<Vec<(String, Bytes)>> {
+        let indices_json = serde_json::to_string(part_indices)
+            .map_err(|_| AppError::Internal("part_indices json".into()))?;
+
+        let form = reqwest::multipart::Form::new()
+            .part("musicxml", reqwest::multipart::Part::bytes(musicxml.to_vec()).file_name("score.musicxml"))
+            .text("part_indices", indices_json);
+
+        let resp = self
+            .client
+            .post(self.url("/render-score"))
+            .header("Authorization", self.auth())
+            .multipart(form)
+            .send()
+            .await
+            .map_err(|e| Self::send_err(e, "render-score"))?;
+
+        let resp = Self::check(resp).await?;
+        let zip_bytes = resp.bytes().await.map_err(|_| AppError::Internal("sidecar render-score bytes".into()))?;
         unzip_pages(&zip_bytes)
     }
 

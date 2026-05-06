@@ -11,7 +11,7 @@
 //             MIDI port.name set via .textContent only (no innerHTML);
 //             serializeMidi is a pure function — no side effects, no DOM access;
 //             openSynthModal submit handler registered once at init — no listener accumulation.
-// Last updated: Sprint 26 (2026-05-05) -- score modal: backdrop click closes dialog
+// Last updated: Sprint 26 (2026-05-05) -- View Score button on variant rows + dynamic post-rasterise reveal
 
 (function (root, factory) {
   'use strict';
@@ -160,7 +160,7 @@
   // Asset detail (expand)
   // ---------------------------------------------------------------------------
 
-  function buildOmrSection(id, variantListEl, base, bannerEl) {
+  function buildOmrSection(id, variantListEl, base, bannerEl, onRasterised) {
     var statusEl = document.createElement('p');
     statusEl.className = 'omr-status';
     statusEl.setAttribute('aria-live', 'polite');
@@ -180,7 +180,7 @@
     omrBtn.addEventListener('click', function () {
       omrBtn.disabled = true;
       omrBtn.textContent = 'Running\u2026';
-      runOmr(id, partPickerEl, omrBtn, statusEl, variantListEl, base, bannerEl);
+      runOmr(id, partPickerEl, omrBtn, statusEl, variantListEl, base, bannerEl, onRasterised);
     });
 
     section.appendChild(omrBtn);
@@ -216,19 +216,33 @@
           };
         }
 
-        if (detail.page_tokens && detail.page_tokens.length > 0) {
-          var viewScoreBtn = document.createElement('button');
-          viewScoreBtn.type = 'button';
-          viewScoreBtn.className = 'sb-btn sb-btn--ghost view-score-btn sb-mt-2';
-          viewScoreBtn.textContent = 'View Score';
-          viewScoreBtn.addEventListener('click', function () {
-            openScoreModal(detail, base);
-          });
-          detailEl.appendChild(viewScoreBtn);
+        // viewScoreFn — opens score modal pre-selecting the given variant.
+        // Called with variantId from renderVariantRow, or with null from the asset-level button.
+        // Kept in a closure so rasterise() can swap in fresh page_tokens after it completes.
+        var _detail = detail; // mutable ref updated after rasterise
+        function makeViewScoreFn(variantId) {
+          return function () { openScoreModal(_detail, base, variantId, true); };
         }
 
+        // Asset-level "View Score" button — hidden until pages exist; revealed by rasterise().
+        var assetScoreBtn = document.createElement('button');
+        assetScoreBtn.type = 'button';
+        assetScoreBtn.className = 'sb-btn sb-btn--ghost view-score-btn sb-mt-2';
+        assetScoreBtn.textContent = 'View Score';
+        assetScoreBtn.hidden = !(detail.page_tokens && detail.page_tokens.length > 0);
+        assetScoreBtn.addEventListener('click', function() { openScoreModal(_detail, base, null, false); });
+        detailEl.appendChild(assetScoreBtn);
+
         if (detail.has_pdf) {
-          detailEl.appendChild(buildOmrSection(id, variantListEl, base, bannerEl));
+          // Wrap rasterise so we can reveal the score button and update _detail on completion.
+          var omrSection = buildOmrSection(id, variantListEl, base, bannerEl, function onRasterised(freshDetail) {
+            _detail = freshDetail;
+            assetScoreBtn.hidden = false;
+            // Update all variant-row score buttons (token URLs are now valid).
+            var scoreBtns = variantListEl.querySelectorAll('.variant-score-btn');
+            for (var i = 0; i < scoreBtns.length; i++) { scoreBtns[i].hidden = false; }
+          });
+          detailEl.appendChild(omrSection);
         }
 
         // "New variant" button (shown only when MIDI exists — parts already extracted).
@@ -245,10 +259,12 @@
         }
 
         // Variant list — re-synthesise only available when MIDI exists.
+        // Variant score button shown when MIDI exists (parts were selected); pages may still be rendering.
         if (detail.variants) {
           detail.variants.forEach(function (variant) {
             var resynCb = detail.has_midi ? makeResynFn(variantListEl) : null;
-            variantListEl.appendChild(renderVariantRow(id, variant, base, bannerEl, resynCb));
+            var viewFn = detail.has_midi ? makeViewScoreFn(variant.id) : null;
+            variantListEl.appendChild(renderVariantRow(id, variant, base, bannerEl, resynCb, viewFn));
           });
         }
         detailEl.appendChild(variantListEl);
@@ -303,7 +319,7 @@
   // OMR flow
   // ---------------------------------------------------------------------------
 
-  function runOmr(assetId, partPickerEl, omrBtn, statusEl, variantListEl, base, bannerEl) {
+  function runOmr(assetId, partPickerEl, omrBtn, statusEl, variantListEl, base, bannerEl, onRasterised) {
     fetch(base + '/' + assetId + '/parts', { method: 'POST' })
       .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, status: r.status, data: d }; }); })
       .then(function (res) {
@@ -315,7 +331,7 @@
           return;
         }
         statusEl.textContent = 'OMR running\u2026';
-        pollOmrJob(res.data.poll_url, assetId, partPickerEl, omrBtn, statusEl, variantListEl, base, bannerEl);
+        pollOmrJob(res.data.poll_url, assetId, partPickerEl, omrBtn, statusEl, variantListEl, base, bannerEl, onRasterised);
       })
       .catch(function (err) {
         omrBtn.disabled = false;
@@ -324,13 +340,13 @@
       });
   }
 
-  function pollOmrJob(pollUrl, assetId, partPickerEl, omrBtn, statusEl, variantListEl, base, bannerEl) {
+  function pollOmrJob(pollUrl, assetId, partPickerEl, omrBtn, statusEl, variantListEl, base, bannerEl, onRasterised) {
     fetch(pollUrl)
       .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, status: r.status, data: d }; }); })
       .then(function (res) {
         if (res.status === 202) {
           setTimeout(function () {
-            pollOmrJob(pollUrl, assetId, partPickerEl, omrBtn, statusEl, variantListEl, base, bannerEl);
+            pollOmrJob(pollUrl, assetId, partPickerEl, omrBtn, statusEl, variantListEl, base, bannerEl, onRasterised);
           }, 3000);
           return;
         }
@@ -343,7 +359,7 @@
         }
         var parts = res.data.parts || [];
         partPickerEl.hidden = true; // part picker no longer needed; modal handles voice selection
-        rasterise(assetId, statusEl, base, bannerEl);
+        rasterise(assetId, statusEl, base, bannerEl, onRasterised);
         if (parts.length > 0) {
           openSynthModal(assetId, parts, false, variantListEl, null, base, bannerEl);
         } else {
@@ -380,7 +396,7 @@
       });
   }
 
-  function rasterise(assetId, statusEl, base, bannerEl) {
+  function rasterise(assetId, statusEl, base, bannerEl, onRasterised) {
     fetch(base + '/' + assetId + '/rasterise', { method: 'POST' })
       .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, status: r.status, data: d }; }); })
       .then(function (res) {
@@ -390,6 +406,13 @@
           return;
         }
         statusEl.textContent = res.data.page_count + ' pages rasterised';
+        // Fetch fresh detail (with page_tokens) and notify caller.
+        if (onRasterised) {
+          fetch(base + '/' + assetId)
+            .then(function (r) { return r.ok ? r.json() : null; })
+            .then(function (d) { if (d) onRasterised(d); })
+            .catch(function () {});
+        }
       })
       .catch(function (err) {
         statusEl.textContent = 'Rasterise failed: ' + err.message;
@@ -445,7 +468,7 @@
       });
   }
 
-  function renderVariantRow(assetId, variant, base, bannerEl, synthesiseFn) {
+  function renderVariantRow(assetId, variant, base, bannerEl, synthesiseFn, viewScoreFn) {
     var li = document.createElement('li');
     li.className = 'variant-row';
 
@@ -488,6 +511,14 @@
         });
       });
       li.appendChild(resynBtn);
+    }
+    if (viewScoreFn) {
+      var scoreBtn = document.createElement('button');
+      scoreBtn.type = 'button';
+      scoreBtn.className = 'variant-score-btn';
+      scoreBtn.textContent = 'View Score';
+      scoreBtn.addEventListener('click', function () { viewScoreFn(variant.id); });
+      li.appendChild(scoreBtn);
     }
     li.appendChild(deleteBtn);
     return li;
@@ -655,7 +686,7 @@
     });
   }
 
-  function openScoreModal(detail, base) {
+  function openScoreModal(detail, base, preSelectVariantId, useScorePages) {
     var dialog = document.getElementById('score-modal');
     if (!dialog) return;
 
@@ -675,10 +706,21 @@
         var opt = document.createElement('option');
         opt.value = '/api/media/' + v.token;
         opt.setAttribute('data-tempo', String(v.tempo_pct));
+        opt.setAttribute('data-variant-id', String(v.id));
         opt.textContent = v.label + ' \u2014 ' + v.tempo_pct + '%';
         variantSel.appendChild(opt);
       });
-      _scoreTempoPct = detail.variants[0].tempo_pct;
+      // Pre-select the requested variant, falling back to the first.
+      var selectedIdx = 0;
+      if (preSelectVariantId != null) {
+        for (var vi = 0; vi < variantSel.options.length; vi++) {
+          if (variantSel.options[vi].getAttribute('data-variant-id') === String(preSelectVariantId)) {
+            selectedIdx = vi; break;
+          }
+        }
+      }
+      variantSel.selectedIndex = selectedIdx;
+      _scoreTempoPct = parseInt(variantSel.options[selectedIdx].getAttribute('data-tempo'), 10) || 100;
     }
 
     // Audio element — rebuild fresh each open
@@ -704,27 +746,35 @@
     audioEl.addEventListener('ended', scoreClearHighlights);
     audioEl.addEventListener('seeked', scoreHighlightBar);
 
-    // Pages
+    // Pages — use score_page_tokens (SVG, selected voices) or page_tokens (full PDF raster).
+    var pageTokens = useScorePages ? (detail.score_page_tokens || []) : (detail.page_tokens || []);
     var pagesEl = document.getElementById('score-modal-pages');
     pagesEl.textContent = '';
-    detail.page_tokens.forEach(function (token, pageIdx) {
-      var wrapper = document.createElement('div');
-      wrapper.className = 'score-page';
-      wrapper.setAttribute('data-page', String(pageIdx));
-      var img = document.createElement('img');
-      img.src = '/api/media/' + token;
-      img.className = 'score-page__img';
-      img.alt = 'Page ' + (pageIdx + 1);
-      var canvas = document.createElement('canvas');
-      canvas.className = 'score-page__overlay';
-      img.addEventListener('load', function () {
-        canvas.width = img.naturalWidth;
-        canvas.height = img.naturalHeight;
+    if (pageTokens.length === 0) {
+      var msg = document.createElement('p');
+      msg.className = 'score-modal__no-pages';
+      msg.textContent = useScorePages ? 'Score rendering in progress\u2026' : 'No pages available.';
+      pagesEl.appendChild(msg);
+    } else {
+      pageTokens.forEach(function (token, pageIdx) {
+        var wrapper = document.createElement('div');
+        wrapper.className = 'score-page';
+        wrapper.setAttribute('data-page', String(pageIdx));
+        var img = document.createElement('img');
+        img.src = '/api/media/' + token;
+        img.className = 'score-page__img';
+        img.alt = 'Page ' + (pageIdx + 1);
+        var canvas = document.createElement('canvas');
+        canvas.className = 'score-page__overlay';
+        img.addEventListener('load', function () {
+          canvas.width = img.naturalWidth;
+          canvas.height = img.naturalHeight;
+        });
+        wrapper.appendChild(img);
+        wrapper.appendChild(canvas);
+        pagesEl.appendChild(wrapper);
       });
-      wrapper.appendChild(img);
-      wrapper.appendChild(canvas);
-      pagesEl.appendChild(wrapper);
-    });
+    }
 
     dialog.showModal();
   }

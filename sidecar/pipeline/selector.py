@@ -37,6 +37,7 @@ Last updated: Sprint 12a (2026-04-21) -- promoted from spike to production sidec
 from __future__ import annotations
 
 import copy
+import tempfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -390,6 +391,39 @@ def compute_bar_timings(musicxml_path: Path) -> list[dict]:
             "dur_sec": round(canonical_dur * 60.0 / bpm, 4),
         })
     return result
+
+
+def render_parts_to_svgs(musicxml_path: Path, part_indices: list[int]) -> list[str]:
+    """Render selected parts to a list of SVG strings (one per page).
+
+    Uses verovio to typeset the filtered MusicXML. Each element of the returned
+    list is a complete SVG document string for one page of the score.
+
+    Raises ImportError if verovio is not installed.
+    Raises IndexError if any part_index is out of range.
+    """
+    try:
+        import verovio
+    except ImportError:
+        raise ImportError("verovio is required for score rendering; pip install verovio")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        filtered_xml = extract_parts_musicxml(musicxml_path, part_indices, Path(tmp) / "filtered.musicxml")
+        tk = verovio.toolkit()
+        tk.setOptions({
+            "pageWidth": 2100,
+            "pageHeight": 2970,
+            "scale": 40,
+            "adjustPageHeight": True,
+            "breaks": "auto",
+        })
+        with open(filtered_xml) as f:
+            xml_str = f.read()
+        tk.loadData(xml_str)
+        pages = []
+        for i in range(1, tk.getPageCount() + 1):
+            pages.append(tk.renderToSVG(i))
+        return pages
 
 
 def extract_parts_musicxml(

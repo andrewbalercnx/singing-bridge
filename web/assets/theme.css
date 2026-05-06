@@ -1278,10 +1278,10 @@
 
 .variant-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  grid-template-columns: minmax(0, 1fr) auto auto auto auto;
   grid-template-areas:
-    "label  meta    resynth delete"
-    "audio  audio   audio   audio";
+    "label  meta    score   resynth delete"
+    "audio  audio   audio   audio   audio";
   gap: var(--sb-space-2) var(--sb-space-3);
   align-items: center;
   padding: var(--sb-space-3);
@@ -1306,6 +1306,7 @@
 }
 
 .variant-resynth-btn,
+.variant-score-btn,
 .variant-delete-btn {
   background: transparent;
   border: 1px solid var(--sb-border);
@@ -1321,6 +1322,8 @@
 }
 .variant-resynth-btn { grid-area: resynth; color: var(--sb-fg); }
 .variant-resynth-btn:hover { background: var(--sb-bg-sunken); }
+.variant-score-btn { grid-area: score; color: var(--sb-fg); }
+.variant-score-btn:hover { background: var(--sb-bg-sunken); }
 .variant-delete-btn { grid-area: delete; }
 .variant-delete-btn:hover { color: var(--sb-clay); border-color: var(--sb-clay); }
 
@@ -1361,9 +1364,11 @@
     grid-template-areas:
       "label   meta"
       "audio   audio"
+      "score   score"
       "resynth delete";
   }
   .variant-resynth-btn,
+  .variant-score-btn,
   .variant-delete-btn { justify-self: stretch; }
   .asset-meta { display: none; }
 }

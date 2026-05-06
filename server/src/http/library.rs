@@ -73,6 +73,7 @@ pub(crate) struct AssetDetail {
     has_pdf: bool,
     has_midi: bool,
     page_tokens: Vec<String>,
+    score_page_tokens: Vec<String>,
     bar_coords: serde_json::Value,
     bar_timings: serde_json::Value,
     variants: Vec<VariantView>,
@@ -423,10 +424,10 @@ pub(crate) async fn get_asset(
     require_slug_owner(&state, teacher_id, &slug).await?;
     let ttl = Duration::from_secs(state.config.media_token_ttl_secs);
 
-    let row: Option<(i64, String, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, i64)> =
+    let row: Option<(i64, String, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, i64)> =
         sqlx::query_as(
             "SELECT id, title, pdf_blob_key, midi_blob_key, page_blob_keys_json,
-                    bar_coords_json, bar_timings_json, created_at
+                    bar_coords_json, bar_timings_json, score_page_blob_keys_json, created_at
              FROM accompaniments
              WHERE id = $1 AND teacher_id = $2 AND deleted_at IS NULL",
         )
@@ -435,7 +436,7 @@ pub(crate) async fn get_asset(
         .fetch_optional(&state.db)
         .await?;
 
-    let (id, title, pdf_key, midi_key, pages_json, coords_json, timings_json, created_at) =
+    let (id, title, pdf_key, midi_key, pages_json, coords_json, timings_json, score_pages_json, created_at) =
         row.ok_or(AppError::NotFound)?;
 
     // Issue media tokens for page images.
@@ -444,6 +445,16 @@ pub(crate) async fn get_asset(
         .and_then(|s| serde_json::from_str(s).ok())
         .unwrap_or_default();
     let page_tokens: Vec<String> = page_keys
+        .iter()
+        .map(|k| state.media_tokens.insert(k.clone(), ttl, false))
+        .collect();
+
+    // Issue media tokens for score SVG pages.
+    let score_page_keys: Vec<String> = score_pages_json
+        .as_deref()
+        .and_then(|s| serde_json::from_str(s).ok())
+        .unwrap_or_default();
+    let score_page_tokens: Vec<String> = score_page_keys
         .iter()
         .map(|k| state.media_tokens.insert(k.clone(), ttl, false))
         .collect();
@@ -496,6 +507,7 @@ pub(crate) async fn get_asset(
             has_pdf: pdf_key.is_some(),
             has_midi: midi_key.is_some(),
             page_tokens,
+            score_page_tokens,
             bar_coords,
             bar_timings,
             variants,
@@ -805,12 +817,16 @@ pub(crate) async fn post_midi(
         let _ = state.blob.delete(&old).await;
     }
 
+    let part_indices_json = serde_json::to_string(&req.part_indices)
+        .map_err(|_| AppError::Internal("part_indices json".into()))?;
+
     let update = sqlx::query(
-        "UPDATE accompaniments SET midi_blob_key = $1, bar_timings_json = $2
-         WHERE id = $3 AND teacher_id = $4 AND deleted_at IS NULL",
+        "UPDATE accompaniments SET midi_blob_key = $1, bar_timings_json = $2, part_indices_json = $3
+         WHERE id = $4 AND teacher_id = $5 AND deleted_at IS NULL",
     )
     .bind(&midi_key)
     .bind(&timings_json)
+    .bind(&part_indices_json)
     .bind(asset_id)
     .bind(teacher_id)
     .execute(&state.db)
@@ -819,6 +835,53 @@ pub(crate) async fn post_midi(
     if let Err(e) = update {
         let _ = state.blob.delete(&midi_key).await;
         return Err(AppError::Sqlx(e));
+    }
+
+    // Spawn background task: fetch MusicXML, render SVG pages via sidecar, store blobs.
+    {
+        let state2 = Arc::clone(&state);
+        let part_indices = req.part_indices.clone();
+        tokio::spawn(async move {
+            let musicxml_bytes = match get_cached_musicxml_or_rerun_omr(&state2, asset_id, teacher_id).await {
+                Ok(b) => b,
+                Err(e) => {
+                    tracing::warn!(asset_id, error = %e, "render_score: could not get musicxml");
+                    return;
+                }
+            };
+            let pages = match state2.sidecar.render_score(musicxml_bytes, &part_indices).await {
+                Ok(p) => p,
+                Err(e) => {
+                    tracing::warn!(asset_id, error = %e, "render_score: sidecar call failed");
+                    return;
+                }
+            };
+            let mut score_keys: Vec<String> = Vec::with_capacity(pages.len());
+            for (_, svg_bytes) in &pages {
+                let k = format!("{}.svg", uuid::Uuid::new_v4());
+                if let Err(e) = state2.blob.put(&k, Box::pin(std::io::Cursor::new(svg_bytes.to_vec()))).await {
+                    tracing::warn!(asset_id, error = %e, "render_score: blob put failed");
+                    return;
+                }
+                score_keys.push(k);
+            }
+            let score_keys_json = match serde_json::to_string(&score_keys) {
+                Ok(j) => j,
+                Err(_) => return,
+            };
+            if let Err(e) = sqlx::query(
+                "UPDATE accompaniments SET score_page_blob_keys_json = $1 WHERE id = $2",
+            )
+            .bind(&score_keys_json)
+            .bind(asset_id)
+            .execute(&state2.db)
+            .await
+            {
+                tracing::warn!(asset_id, error = %e, "render_score: db update failed");
+            } else {
+                tracing::info!(asset_id, pages = score_keys.len(), "render_score: score pages stored");
+            }
+        });
     }
 
     Ok((StatusCode::OK, Json(serde_json::json!({ "bar_count": timings.len() }))).into_response())
@@ -1291,6 +1354,8 @@ fn mime_for_key(key: &str) -> &'static str {
         "image/png"
     } else if key.ends_with(".mid") {
         "audio/midi"
+    } else if key.ends_with(".svg") {
+        "image/svg+xml"
     } else {
         "application/octet-stream"
     }

@@ -2,7 +2,9 @@
 // Purpose: In-session accompaniment playback UI — audio control and bar-advancement loop.
 //          Teacher sees play/pause/stop controls; student sees read-only status.
 // Role: Manages the Audio element lifecycle, rAF bar-advancement loop, and WS message dispatch.
-// Exports: window.sbAccompanimentDrawer.mount(container, opts) → { teardown, updateState, setScoreView, setAcousticProfile(profile) }
+// Exports: window.sbAccompanimentDrawer.mount(container, opts) → { teardown, updateState,
+//          setScoreView, setAcousticProfile, setTrackList, setAssetList,
+//          setSendWs, setGetOneWayLatencyMs, enterLobbyMode, exitLobbyMode }
 // Depends: DOM, Audio, requestAnimationFrame, signalling.js (caller provides sendWs)
 // Invariants: skewMs sampled once on receipt; not resampled per rAF tick.
 //             _lastTempoPct fallback = 100 when tempo_pct is null or absent.
@@ -13,7 +15,10 @@
 //             opts.panelEl: when provided (v2 layout), drives panelEl API instead of
 //             building own UI; container may be null in that case.
 //             audio.muted = true when acousticProfile !== 'headphones'.
-// Last updated: Sprint 26 (2026-05-05) -- setTrackList + trackSelect wiring for in-session track picker
+//             updateState is a no-op in lobby mode (_lobbyMode guard at top).
+//             _destroyLobbyAudio called on error, ended, exitLobbyMode, enterLobbyMode, teardown.
+//             _pendingPreviewFetch cleared unconditionally before lobby-mode guard in .then().
+// Last updated: Sprint 26 (2026-05-07) -- lobby mode: mutable sendWs ref, lobby preview audio, setAssetList
 
 (function (root, factory) {
   'use strict';
@@ -76,9 +81,14 @@
   function mount(container, opts) {
     var role = (opts && opts.role) || 'student';
     var panelEl = (opts && opts.panelEl) || null; // buildAccmpPanel handle (v2 layout)
-    var sendWs = (opts && opts.sendWs) || function () {};
-    var getOneWayLatencyMs = (opts && opts.getOneWayLatencyMs) || function () { return 0; };
+    var _sendWs = (opts && opts.sendWs) || function () {};
+    var _getOneWayLatencyMs = (opts && opts.getOneWayLatencyMs) || function () { return 0; };
     var _acousticProfile = (opts && opts.acousticProfile) || 'headphones';
+    var _lobbyMode = !!(opts && opts.lobbyMode);
+    var _lobbyAudio = null;
+    var _trackMap = new Map();  // "assetId:variantId" → { token }; lobby fetches accumulate here per asset; bound by TOKEN_CAP (1000) enforced server-side
+    var _base = (opts && opts.base) || '';  // base URL prefix for lazy fetch; empty string when opts.base omitted — fetch then fails silently via .catch
+    var _pendingPreviewFetch = false;       // prevents duplicate in-flight fetches
 
     var audio = null;
     var rafHandle = null;
@@ -93,6 +103,14 @@
     var statusEl = null;
     var controls = null;
     var _bannerEl = null;
+
+    function _destroyLobbyAudio() {
+      if (_lobbyAudio) {
+        _lobbyAudio.pause();
+        _lobbyAudio.src = '';
+        _lobbyAudio = null;
+      }
+    }
 
     if (!panelEl) {
       // Build own floating UI (backward-compatible path).
@@ -124,16 +142,16 @@
         playBtn.addEventListener('click', function () {
           if (!_assetId || !_variantId) return;
           var posMs = audio && !audio.paused ? Math.round(audio.currentTime * 1000) : 0;
-          sendWs({ type: 'accompaniment_play', asset_id: Number(_assetId), variant_id: Number(_variantId), position_ms: posMs });
+          _sendWs({ type: 'accompaniment_play', asset_id: Number(_assetId), variant_id: Number(_variantId), position_ms: posMs });
         });
 
         pauseBtn.addEventListener('click', function () {
           var posMs = audio ? Math.round(audio.currentTime * 1000) : 0;
-          sendWs({ type: 'accompaniment_pause', position_ms: posMs });
+          _sendWs({ type: 'accompaniment_pause', position_ms: posMs });
         });
 
         stopBtn.addEventListener('click', function () {
-          sendWs({ type: 'accompaniment_stop' });
+          _sendWs({ type: 'accompaniment_stop' });
         });
 
         controls.appendChild(playBtn);
@@ -152,26 +170,93 @@
       if (container) container.appendChild(root);
     } else if (role === 'teacher') {
       // Drive the inline accmpPanel from session-panels.js (v2 layout).
+
+      function _startLobbyPlay(token) {
+        if (!_lobbyAudio) {
+          _lobbyAudio = new Audio('/api/media/' + token);
+          _lobbyAudio.addEventListener('ended', _destroyLobbyAudio);
+          _lobbyAudio.addEventListener('error', _destroyLobbyAudio);
+        }
+        _lobbyAudio.play().catch(_destroyLobbyAudio);
+      }
+
       panelEl.pauseBtn.addEventListener('click', function () {
+        if (_lobbyMode) {
+          if (!_assetId) return;
+          // Pause if already playing.
+          if (_lobbyAudio && !_lobbyAudio.paused) {
+            _lobbyAudio.pause();
+            return;
+          }
+          // Resume if paused and src already loaded.
+          if (_lobbyAudio && _lobbyAudio.paused && _lobbyAudio.src) {
+            _lobbyAudio.play().catch(_destroyLobbyAudio);
+            return;
+          }
+          // Check token cache first (only if _variantId known from a prior fetch).
+          var key = _assetId + ':' + (_variantId || '');
+          var entry = _variantId ? _trackMap.get(key) : null;
+          if (entry && entry.token) {
+            _startLobbyPlay(entry.token);
+            return;
+          }
+          // Lazy fetch — get token for selected asset.
+          if (_pendingPreviewFetch) return;
+          _pendingPreviewFetch = true;
+          var capturedAssetId = _assetId;  // guard against selection change during fetch
+          fetch(_base + '/' + capturedAssetId)
+            .then(function (r) { return r.json(); })
+            .then(function (detail) {
+              _pendingPreviewFetch = false;              // clear unconditionally first
+              if (!_lobbyMode) return;                   // exit if peer connected during fetch
+              if (_assetId !== capturedAssetId) return;  // user changed selection while fetch was in flight
+              // Store all variant tokens from this asset fetch.
+              (detail.variants || []).forEach(function (v) {
+                _trackMap.set(String(capturedAssetId) + ':' + String(v.id), { token: v.token });
+              });
+              // Play first variant if none selected.
+              var targetId = _variantId || (detail.variants && detail.variants[0] && String(detail.variants[0].id));
+              if (!targetId) return;
+              _variantId = targetId;
+              var tok = (_trackMap.get(String(capturedAssetId) + ':' + String(targetId)) || {}).token;
+              if (tok) _startLobbyPlay(tok);
+            })
+            .catch(function () { _pendingPreviewFetch = false; });
+          return;
+        }
+        // Live mode — WS path.
         if (!_assetId || !_variantId) return;
         var posMs = audio ? Math.round(audio.currentTime * 1000) : serverPositionMs;
         var isPlaying = audio && !audio.paused;
         if (isPlaying) {
-          sendWs({ type: 'accompaniment_pause', position_ms: posMs });
+          _sendWs({ type: 'accompaniment_pause', position_ms: posMs });
         } else {
-          sendWs({ type: 'accompaniment_play', asset_id: Number(_assetId), variant_id: Number(_variantId), position_ms: posMs });
+          _sendWs({ type: 'accompaniment_play', asset_id: Number(_assetId), variant_id: Number(_variantId), position_ms: posMs });
         }
       });
-      // Track selector: sets _assetId/_variantId from option value "assetId:variantId".
+
+      // Track selector: mode-aware change handler.
       if (panelEl.trackSelect) {
         panelEl.trackSelect.addEventListener('change', function () {
-          var parts = (panelEl.trackSelect.value || '').split(':');
-          if (parts.length === 2 && parts[0] && parts[1]) {
-            _assetId = parts[0];
-            _variantId = parts[1];
+          var val = panelEl.trackSelect.value || '';
+          if (_lobbyMode) {
+            // Lobby: value is just assetId.
+            _assetId = val || null;
+            _variantId = null;
+            _destroyLobbyAudio();
+          } else {
+            // Live: value is "assetId:variantId".
+            var parts = val.split(':');
+            if (parts.length === 2 && parts[0] && parts[1]) {
+              _assetId = parts[0];
+              _variantId = parts[1];
+            }
           }
         });
       }
+
+      // Apply lobby mode styling on mount.
+      if (_lobbyMode && panelEl.setLobbyMode) panelEl.setLobbyMode(true);
     }
 
     // ---- Acoustic profile ----
@@ -230,7 +315,7 @@
         audio.muted = (_acousticProfile !== 'headphones');
         audio.addEventListener('ended', function () {
           if (role === 'teacher') {
-            sendWs({ type: 'accompaniment_stop' });
+            _sendWs({ type: 'accompaniment_stop' });
           }
         });
         audio.addEventListener('error', function (e) {
@@ -247,6 +332,7 @@
     // ---- updateState ----
 
     function updateState(state) {
+      if (_lobbyMode) return;
       if (!state) return;
 
       stopRaf();
@@ -307,7 +393,7 @@
         // Teacher advances their playback by one-way latency so the track
         // arrives in sync with the student's voice (which is delayed by that
         // same amount on the teacher's feed).
-        var latencyOffsetMs = (role === 'teacher') ? getOneWayLatencyMs() : 0;
+        var latencyOffsetMs = (role === 'teacher') ? _getOneWayLatencyMs() : 0;
         audio.currentTime = (serverPositionMs + latencyOffsetMs) / 1000;
 
         if (isPlaying) {
@@ -343,6 +429,7 @@
 
     function teardown() {
       stopRaf();
+      _destroyLobbyAudio();
       if (audio) {
         audio.pause();
         audio.src = '';
@@ -358,8 +445,36 @@
       updateState: updateState,
       setScoreView: function (handle) { scoreViewHandle = handle; },
       setAcousticProfile: _applyProfile,
-      // Populate track selector with [{id, title, variants:[{id,label,tempo_pct}]}].
+      setSendWs: function (fn) { _sendWs = typeof fn === 'function' ? fn : function () {}; },
+      setGetOneWayLatencyMs: function (fn) {
+        _getOneWayLatencyMs = typeof fn === 'function' ? fn : function () { return 0; };
+      },
+      enterLobbyMode: function () {
+        _lobbyMode = true;
+        _destroyLobbyAudio();
+        if (panelEl && panelEl.setLobbyMode) panelEl.setLobbyMode(true);
+      },
+      exitLobbyMode: function () {
+        _lobbyMode = false;
+        _destroyLobbyAudio();
+        if (panelEl && panelEl.setLobbyMode) panelEl.setLobbyMode(false);
+      },
+      // Populate lobby track selector with [{id, title, variant_count}] — no tokens.
+      setAssetList: function (assets) {
+        if (!panelEl || !panelEl.trackSelect) return;
+        var sel = panelEl.trackSelect;
+        while (sel.options.length > 1) sel.remove(1);
+        assets.forEach(function (a) {
+          var opt = document.createElement('option');
+          opt.value = String(a.id);
+          opt.textContent = a.title + ' (' + a.variant_count + ' variant' +
+                            (a.variant_count === 1 ? '' : 's') + ')';
+          sel.appendChild(opt);
+        });
+      },
+      // Populate live track selector with [{id, title, variants:[{id,label,tempo_pct,token}]}].
       setTrackList: function (assets) {
+        _trackMap = new Map();  // idempotent clear
         if (!panelEl || !panelEl.trackSelect) return;
         var sel = panelEl.trackSelect;
         while (sel.options.length > 1) sel.remove(1);
@@ -371,6 +486,7 @@
             opt.value = a.id + ':' + v.id;
             opt.textContent = v.label + ' \u2014 ' + v.tempo_pct + '%';
             grp.appendChild(opt);
+            if (v.token) _trackMap.set(String(a.id) + ':' + String(v.id), { token: v.token });
           });
           sel.appendChild(grp);
         });

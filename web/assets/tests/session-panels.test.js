@@ -1,7 +1,7 @@
 // File: web/assets/tests/session-panels.test.js
 // Purpose: Unit tests for session-panels.js builders: buildSelfPip, buildAccmpPanel (setters),
 //          buildIconBar (button counts, aria-labels, callbacks), buildRemotePanel, buildEndDialog.
-// Last updated: Sprint 17 (2026-04-23) -- initial
+// Last updated: Sprint 26 (2026-05-07) -- classList stub; setLobbyMode test
 
 'use strict';
 
@@ -16,18 +16,34 @@ function makeEl(tag) {
   const attrs = {};
   const children = [];
   let textContent = '';
+  let _className = '';
   const el = {
     tag,
     get textContent() { return textContent; },
     set textContent(v) { textContent = String(v); },
     get hidden() { return attrs.hidden === true; },
     set hidden(v) { attrs.hidden = v; },
-    className: '',
+    get className() { return _className; },
+    set className(v) { _className = v; },
     style: {},
     children,
     parentNode: null,
     get innerHTML() { return attrs._innerHTML || ''; },
     set innerHTML(v) { attrs._innerHTML = v; },
+    classList: {
+      toggle(cls, force) {
+        const parts = _className.split(/\s+/).filter(Boolean);
+        const idx = parts.indexOf(cls);
+        const has = idx !== -1;
+        const add = (force === undefined) ? !has : !!force;
+        if (add && !has) parts.push(cls);
+        if (!add && has) parts.splice(idx, 1);
+        _className = parts.join(' ');
+      },
+      contains(cls) {
+        return _className.split(/\s+/).indexOf(cls) !== -1;
+      },
+    },
     appendChild(child) {
       if (child && typeof child === 'object') child.parentNode = el;
       children.push(child);
@@ -255,4 +271,23 @@ test('buildEndDialog: confirm calls onConfirm', () => {
   const actions = dlg.children.find(c => c.className === 'sb-end-dialog-actions');
   actions.children[1].dispatchClick(); // confirm
   assert.equal(confirmed, true);
+});
+
+// ---------------------------------------------------------------------------
+// buildAccmpPanel: setLobbyMode (Sprint 26)
+// ---------------------------------------------------------------------------
+
+test('buildAccmpPanel: setLobbyMode(true) adds lobby class and sets aria-label Preview', () => {
+  const p = mod.buildAccmpPanel();
+  p.setLobbyMode(true);
+  assert.ok(p.node.classList.contains('sb-accmp-panel--lobby'), 'lobby class added');
+  assert.equal(p.pauseBtn.getAttribute('aria-label'), 'Preview');
+});
+
+test('buildAccmpPanel: setLobbyMode(false) removes lobby class and sets aria-label Play / Pause', () => {
+  const p = mod.buildAccmpPanel();
+  p.setLobbyMode(true);
+  p.setLobbyMode(false);
+  assert.ok(!p.node.classList.contains('sb-accmp-panel--lobby'), 'lobby class removed');
+  assert.equal(p.pauseBtn.getAttribute('aria-label'), 'Play / Pause');
 });

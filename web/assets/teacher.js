@@ -2,7 +2,7 @@
 // Purpose: Teacher UI wiring. Student-supplied strings rendered via
 //          textContent only (no innerHTML — XSS prevention). Sprint 8:
 //          replaced wireControls with sbSessionUI.mount into #session-root.
-// Last updated: Sprint 26 (2026-05-05) -- show recording-controls on connect; fetch track list for accompaniment
+// Last updated: Sprint 26 (2026-05-07) -- lobby mode accompaniment panel; mutable sendWs/latency refs
 
 'use strict';
 
@@ -10,6 +10,11 @@
   // pathname is /teach/<slug>/session — extract the middle segment
   const slug = location.pathname.split('/')[2] || '';
   document.getElementById('room-heading').textContent = `Your room: ${slug}`;
+
+  const roomNameNav = document.getElementById('room-name-nav');
+  if (roomNameNav) roomNameNav.textContent = slug.toUpperCase();
+  const dashboardLink = document.getElementById('dashboard-link');
+  if (dashboardLink) dashboardLink.href = `/teach/${slug}/dashboard`;
 
   if (window.sbDevicePicker) window.sbDevicePicker.mount('audio-device-picker');
   const recordingsLink = document.getElementById('recordings-link');
@@ -251,6 +256,55 @@
   let sessionHandle = null;
   let accompanimentHandle = null;
   let scoreViewHandle = null;
+  let accmpPanel = null;
+
+  const noOpSendWs = function () {};
+  const BASE = '/teach/' + slug + '/library/assets';
+  const drawerRoot = document.getElementById('accompaniment-drawer-root');
+
+  // Lobby setup: build panel and mount accompaniment drawer at page load.
+  if (window.sbSessionPanels) {
+    accmpPanel = window.sbSessionPanels.buildAccmpPanel();
+  } else {
+    console.error('[teacher] sbSessionPanels not loaded');
+  }
+  if (drawerRoot && accmpPanel) drawerRoot.appendChild(accmpPanel.node);
+
+  if (window.sbAccompanimentDrawer && accmpPanel) {
+    accompanimentHandle = window.sbAccompanimentDrawer.mount(null, {
+      role: 'teacher',
+      panelEl: accmpPanel,
+      sendWs: noOpSendWs,
+      getOneWayLatencyMs: function () { return 0; },
+      acousticProfile: 'headphones',
+      lobbyMode: true,
+      base: BASE,
+    });
+  }
+
+  const scoreRoot = document.getElementById('score-view-root');
+  if (window.sbScoreView && scoreRoot && accompanimentHandle) {
+    scoreViewHandle = window.sbScoreView.mount(scoreRoot);
+    accompanimentHandle.setScoreView(scoreViewHandle);
+  }
+
+  if (accmpPanel && accmpPanel.scoreToggleBtn && scoreRoot) {
+    accmpPanel.scoreToggleBtn.addEventListener('click', function () {
+      const pressed = accmpPanel.scoreToggleBtn.getAttribute('aria-pressed') === 'true';
+      accmpPanel.scoreToggleBtn.setAttribute('aria-pressed', pressed ? 'false' : 'true');
+      scoreRoot.hidden = pressed;
+    });
+  }
+
+  // Fetch asset list only (no tokens issued at page load).
+  fetch(BASE)
+    .then(function (r) { return r.json(); })
+    .then(function (assets) {
+      if (accompanimentHandle) accompanimentHandle.setAssetList(
+        assets.filter(function (a) { return a.variant_count > 0; })
+      );
+    })
+    .catch(function () {});
 
   window.signallingClient.connectTeacher({
     slug,
@@ -267,7 +321,6 @@
     },
     onAccompanimentState(state) {
       if (accompanimentHandle) accompanimentHandle.updateState(state);
-      if (scoreViewHandle) scoreViewHandle.updatePages(state.page_urls || null, state.bar_coords || null);
       const wasPlaying = accompanimentIsPlaying;
       accompanimentIsPlaying = !!state.is_playing;
       if (vadHandle && accompanimentIsPlaying !== wasPlaying) {
@@ -287,7 +340,19 @@
       if (recordingControls) recordingControls.hidden = false;
       setRecordState('idle');
 
-      // Mount session UI first so we can pass accmpPanel to the accompaniment drawer.
+      // Re-parent panel from lobby root into session layout before session UI mounts.
+      if (drawerRoot && accmpPanel && drawerRoot.contains(accmpPanel.node)) {
+        drawerRoot.removeChild(accmpPanel.node);
+      }
+
+      // Wire live functions into persistent drawer.
+      if (accompanimentHandle) {
+        accompanimentHandle.setSendWs(function (msg) { if (sessionHandle) sessionHandle.sendRaw(msg); });
+        accompanimentHandle.setGetOneWayLatencyMs(getOneWayLatencyMs || function () { return 0; });
+        accompanimentHandle.setAcousticProfile(lastStudentAcousticProfile);
+        accompanimentHandle.exitLobbyMode();
+      }
+
       const sessionRoot = document.getElementById('session-root');
       sessionUiHandle = window.sbSessionUI.mount(sessionRoot, {
         isTeacher: true,
@@ -298,6 +363,7 @@
         headphonesConfirmed: lastStudentHeadphones,
         micEnabled: true,
         videoEnabled: true,
+        accmpPanel: accmpPanel,
         onMicToggle() {
           const track = localStream && localStream.getAudioTracks()[0];
           if (track) track.enabled = !track.enabled;
@@ -340,37 +406,14 @@
         }
       }
 
-      // Wire accompaniment into the inline panel (v2 layout).
-      const accmpPanel = sessionUiHandle && sessionUiHandle.accmpPanel;
-      if (window.sbAccompanimentDrawer && accmpPanel) {
-        accompanimentHandle = window.sbAccompanimentDrawer.mount(null, {
-          role: 'teacher',
-          panelEl: accmpPanel,
-          slug,
-          acousticProfile: lastStudentAcousticProfile,
-          sendWs(msg) { if (sessionHandle) sessionHandle.sendRaw(msg); },
-          getOneWayLatencyMs: getOneWayLatencyMs || function () { return 0; },
-        });
-        const scoreRoot = document.getElementById('score-view-root');
-        if (window.sbScoreView && scoreRoot) {
-          scoreViewHandle = window.sbScoreView.mount(scoreRoot);
-          accompanimentHandle.setScoreView(scoreViewHandle);
-        }
-        // Wire score-viewer toggle button.
-        if (accmpPanel.scoreToggleBtn && scoreViewHandle) {
-          accmpPanel.scoreToggleBtn.addEventListener('click', function () {
-            const pressed = accmpPanel.scoreToggleBtn.getAttribute('aria-pressed') === 'true';
-            accmpPanel.scoreToggleBtn.setAttribute('aria-pressed', pressed ? 'false' : 'true');
-            if (scoreRoot) scoreRoot.hidden = pressed;
-          });
-        }
-        // Populate track selector from library.
-        fetch('/teach/' + slug + '/library/assets')
+      // Full variant detail fetch (with tokens) for live track selector.
+      if (accompanimentHandle) {
+        fetch(BASE)
           .then(function (r) { return r.json(); })
           .then(function (assets) {
             const useful = assets.filter(function (a) { return a.variant_count > 0; });
             return Promise.all(useful.map(function (a) {
-              return fetch('/teach/' + slug + '/library/assets/' + a.id)
+              return fetch(BASE + '/' + a.id)
                 .then(function (r) { return r.json(); })
                 .then(function (d) { return Object.assign({}, a, { variants: d.variants || [] }); });
             }));
@@ -380,6 +423,7 @@
           })
           .catch(function () {});
       }
+
       dataChannel.addEventListener('message', (e) => {
         statusEl.textContent = `Student says: ${e.data}`;
       });
@@ -392,9 +436,18 @@
       accompanimentIsPlaying = false;
       if (vadHandle) { vadHandle.teardown(); vadHandle = null; }
       if (chatChipEl && chatChipEl.parentNode) { chatChipEl.parentNode.removeChild(chatChipEl); chatChipEl = null; }
+      // Move panel back to lobby root before session UI teardown destroys accmpPanelWrap.
+      if (drawerRoot && accmpPanel && !drawerRoot.contains(accmpPanel.node)) {
+        drawerRoot.appendChild(accmpPanel.node);
+      }
       if (sessionUiHandle) { sessionUiHandle.teardown(); sessionUiHandle = null; }
-      if (accompanimentHandle) { accompanimentHandle.teardown(); accompanimentHandle = null; }
-      if (scoreViewHandle) { scoreViewHandle.teardown(); scoreViewHandle = null; }
+      // Revert drawer to lobby mode — handle stays alive for reconnect.
+      if (accompanimentHandle) {
+        accompanimentHandle.setSendWs(noOpSendWs);
+        accompanimentHandle.setGetOneWayLatencyMs(function () { return 0; });
+        accompanimentHandle.setAcousticProfile('headphones');
+        accompanimentHandle.enterLobbyMode();
+      }
       if (qualityBadge) qualityBadge.hidden = true;
       if (reconnectBanner) reconnectBanner.hidden = true;
       if (floorNotice) floorNotice.hidden = true;

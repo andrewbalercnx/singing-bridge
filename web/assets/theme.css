@@ -916,6 +916,11 @@
   color: var(--sb-fg-muted);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+.sb-accmp-panel--lobby .sb-accmp-track-name::after {
+  content: ' (preview)';
+  color: var(--sb-text-muted);
+  font-size: var(--sb-text-sm);
+}
 .sb-accmp-slider {
   width: 100%;
   accent-color: var(--sb-rose);

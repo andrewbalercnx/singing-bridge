@@ -266,7 +266,7 @@
 
     var remotePanel = panels.buildRemotePanel({ remoteName: opts.remoteName, remoteRoleLabel: opts.remoteRoleLabel, headphonesConfirmed: opts.headphonesConfirmed });
     var selfPip = panels.buildSelfPip(opts.localStream);
-    var accmpPanel = isTeacher ? panels.buildAccmpPanel() : null;
+    var accmpPanel = isTeacher ? (opts.accmpPanel || panels.buildAccmpPanel()) : null;
     var baseline = buildBaselineStrip();
     var mutedBanner = opts.localStream ? buildMutedBanner() : makeNullBanner();
     var endDialog = panels.buildEndDialog(function () { opts.onEnd(); });

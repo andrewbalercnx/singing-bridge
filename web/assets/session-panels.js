@@ -10,7 +10,7 @@
 //             (no user input reaches innerHTML).
 //             buildIconBar: teacher gets 5 buttons (mic, vid, accmp, chat, end);
 //             non-teacher gets 3 (mic, vid, end).
-// Last updated: Sprint 26 (2026-05-05) -- buildAccmpPanel: add track selector dropdown
+// Last updated: Sprint 26 (2026-05-07) -- buildAccmpPanel: add setLobbyMode
 
 (function (root, factory) {
   'use strict';
@@ -137,7 +137,7 @@
 
     var pauseBtn = el('button', 'sb-iconbtn sb-accmp-pause');
     pauseBtn.type = 'button';
-    pauseBtn.setAttribute('aria-label', 'Pause');
+    pauseBtn.setAttribute('aria-label', 'Play / Pause');
     pauseBtn.setAttribute('aria-pressed', 'false');
     pauseBtn.appendChild(svgIcon('music'));
 
@@ -165,6 +165,10 @@
       },
       getSlider: function () { return slider; },
       trackSelect: trackSel,
+      setLobbyMode: function (on) {
+        panel.classList.toggle('sb-accmp-panel--lobby', !!on);
+        pauseBtn.setAttribute('aria-label', on ? 'Preview' : 'Play / Pause');
+      },
     };
   }
 

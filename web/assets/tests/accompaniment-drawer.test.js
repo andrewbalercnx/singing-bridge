@@ -2,7 +2,7 @@
 // Purpose: Unit tests for accompaniment-drawer.js: audio lifecycle, rAF bar-advancement,
 //          clock skew clamping, teacher/student roles, validation, edge cases,
 //          panelEl path (Sprint 17 v2 layout), and acoustic profile muting (Sprint 20).
-// Last updated: Sprint 20 (2026-04-25) -- setAcousticProfile muting + banner tests
+// Last updated: Sprint 26 (2026-05-07) -- lobby mode tests (Tests 1-12)
 
 'use strict';
 
@@ -96,7 +96,7 @@ function makeEl() {
   };
   return el;
 }
-globalThis.document = { createElement: function () { return makeEl(); } };
+globalThis.document = { createElement: function (tag) { var el = makeEl(); el.tag = tag; return el; } };
 
 const drawer = require('../accompaniment-drawer.js');
 
@@ -520,19 +520,45 @@ function makePanelEl() {
   var durationMs = 0;
   var trackName = 'No track selected';
   var pausedState = true;
+  var setLobbyModeCalls = [];
   var pauseClickListeners = [];
   var pauseBtn = {
-    addEventListener: function (ev, fn) { if (ev === 'click') pauseClickListeners.push(fn); },
+    addEventListener: function (ev, fn) {
+      if (ev === 'click') pauseClickListeners.push(fn);
+    },
+    setAttribute: function (k, v) { pauseBtn[k] = v; },
+    getAttribute: function (k) { return pauseBtn[k] || null; },
     firePauseClick: function () { pauseClickListeners.forEach(function (f) { f(); }); },
+    _fire: function (ev) { if (ev === 'click') pauseClickListeners.forEach(function (f) { f(); }); },
+  };
+  var trackSel = makeEl();
+  trackSel.options = [{ value: '', disabled: true }];
+  trackSel.remove = function (i) { trackSel.options.splice(i, 1); };
+  trackSel.value = '';
+  // Bridge appendChild → options so setAssetList (<option>) and setTrackList (<optgroup>) work.
+  var _tsAppend = trackSel.appendChild.bind(trackSel);
+  trackSel.appendChild = function (child) {
+    _tsAppend(child);
+    if (child && child.tag === 'option') {
+      trackSel.options.push(child);
+    } else if (child && child.tag === 'optgroup') {
+      (child._children || []).forEach(function (c) {
+        if (c && c.tag === 'option') trackSel.options.push(c);
+      });
+    }
+    return child;
   };
   return {
     pauseBtn: pauseBtn,
     scoreToggleBtn: { addEventListener: function () {} },
+    trackSelect: trackSel,
     setTrackName: function (name) { trackName = name; },
     setPosition: function (ms) { positionMs = ms; },
     setDuration: function (ms) { durationMs = ms; },
     setPaused: function (v) { pausedState = v; },
     getSlider: function () { return { addEventListener: function () {}, value: '0', max: '0' }; },
+    setLobbyMode: function (on) { setLobbyModeCalls.push(on); },
+    _setLobbyModeCalls: setLobbyModeCalls,
     _get: function () { return { positionMs: positionMs, durationMs: durationMs, trackName: trackName, pausedState: pausedState }; },
   };
 }
@@ -763,4 +789,343 @@ test('Sprint 14 regression: audio.currentTime tracking correct when audio.muted=
   drainRaf();
   var last = sv.calls[sv.calls.length - 1];
   assert.ok(last !== undefined, 'seekToBar still called when audio muted');
+});
+
+// ---------------------------------------------------------------------------
+// Sprint 26 — Lobby mode tests (Tests 1-12)
+// ---------------------------------------------------------------------------
+
+test('Test 1: setTrackList idempotency — repeated calls replace _trackMap', function () {
+  var panel = makePanelEl();
+  var h = drawer.mount(null, { role: 'teacher', panelEl: panel, lobbyMode: false });
+  h.setTrackList([{ id: 1, title: 'A', variants: [{ id: 10, label: 'x', tempo_pct: 100, token: 'tok1' }] }]);
+  h.setTrackList([{ id: 2, title: 'B', variants: [{ id: 20, label: 'y', tempo_pct: 80, token: 'tok2' }] }]);
+  // Only asset 2 variants should be in the select (default opt + 1 optgroup with 1 opt = 2).
+  assert.strictEqual(panel.trackSelect.options.length, 2);
+  assert.ok(String(panel.trackSelect.options[1].value).includes('2:20'));
+});
+
+test('Test 2: setSendWs — live WS called after exitLobbyMode', function () {
+  var panel = makePanelEl();
+  var h = drawer.mount(null, { role: 'teacher', panelEl: panel, lobbyMode: true, sendWs: function () {} });
+  var sent = [];
+  h.setSendWs(function (msg) { sent.push(msg); });
+  h.exitLobbyMode();
+  // Set assetId/variantId via live-mode trackSelect change.
+  panel.trackSelect.value = '1:2';
+  panel.trackSelect._fire('change');
+  panel.pauseBtn._fire('click');
+  assert.strictEqual(sent.length, 1);
+  assert.strictEqual(sent[0].type, 'accompaniment_play');
+});
+
+test('Test 3: updateState is no-op in lobby mode', function () {
+  lastAudio = null;
+  var panel = makePanelEl();
+  var h = drawer.mount(null, { role: 'teacher', panelEl: panel, lobbyMode: true });
+  h.updateState({ asset_id: 1, variant_id: 2, is_playing: true, position_ms: 0,
+                  wav_url: 'http://x/a.wav', server_time_ms: fakeNow });
+  assert.strictEqual(lastAudio, null, 'no Audio created in lobby mode');
+});
+
+test('Test 4: lobby click — no Audio when token missing from cache', function () {
+  var panel = makePanelEl();
+  var fetchCalls = [];
+  var origFetch = globalThis.fetch;
+  globalThis.fetch = function (url) {
+    fetchCalls.push(url);
+    return Promise.reject(new Error('no server'));
+  };
+  try {
+    var h = drawer.mount(null, { role: 'teacher', panelEl: panel, lobbyMode: true, base: '/assets' });
+    panel.trackSelect.value = '5';
+    panel.trackSelect._fire('change');
+    lastAudio = null;
+    panel.pauseBtn._fire('click');
+    assert.strictEqual(lastAudio, null);
+    assert.strictEqual(fetchCalls.length, 1);
+  } finally {
+    globalThis.fetch = origFetch;
+  }
+});
+
+test('Test 4b: lobby click — second click while fetch in flight does not issue duplicate fetch', function () {
+  var panel = makePanelEl();
+  var fetchCalls = [];
+  var origFetch = globalThis.fetch;
+  globalThis.fetch = function (url) {
+    fetchCalls.push(url);
+    return new Promise(function () {});  // never resolves
+  };
+  try {
+    var h = drawer.mount(null, { role: 'teacher', panelEl: panel, lobbyMode: true, base: '/assets' });
+    panel.trackSelect.value = '5';
+    panel.trackSelect._fire('change');
+    panel.pauseBtn._fire('click');   // first click → fetch started
+    panel.pauseBtn._fire('click');   // second click → suppressed
+    panel.pauseBtn._fire('click');   // third click → suppressed
+    assert.strictEqual(fetchCalls.length, 1, 'only one fetch issued');
+  } finally {
+    globalThis.fetch = origFetch;
+  }
+});
+
+test('Test 4c: lobby click — second preview click uses cached token without fetching again', function () {
+  var panel = makePanelEl();
+  var origFetch = globalThis.fetch;
+  var origAudio = globalThis.Audio;
+  var fetchCount = 0;
+  var audios = [];
+  var fetchResolvers = [];
+  globalThis.fetch = function () {
+    fetchCount++;
+    return new Promise(function (res) { fetchResolvers.push(res); });
+  };
+  globalThis.Audio = function () {
+    var a = makeAudioStub();
+    audios.push(a);
+    return a;
+  };
+  var h = drawer.mount(null, { role: 'teacher', panelEl: panel, lobbyMode: true, base: '/b' });
+  panel.trackSelect.value = '3';
+  panel.trackSelect._fire('change');
+  panel.pauseBtn._fire('click');  // first click → lazy fetch
+  assert.strictEqual(fetchCount, 1, 'first click triggers fetch');
+  fetchResolvers[0]({ json: function () { return Promise.resolve({
+    variants: [{ id: 7, label: 'x', tempo_pct: 100, token: 'cached-tok' }]
+  }); }});
+  return new Promise(function (resolve) {
+    setTimeout(function () {
+      try {
+        assert.strictEqual(audios.length, 1, 'audio created after fetch');
+        audios[0]._fire('ended');  // _lobbyAudio cleared
+        panel.pauseBtn._fire('click');  // second click: _variantId set → cache hit
+        assert.strictEqual(fetchCount, 1, 'no second fetch — cache hit');
+        assert.strictEqual(audios.length, 2, 'new Audio created from cache');
+      } finally {
+        globalThis.fetch = origFetch;
+        globalThis.Audio = origAudio;
+      }
+      resolve();
+    }, 10);
+  });
+});
+
+test('Test 5a: lobby audio — _lobbyAudio reset on error event', function () {
+  var panel = makePanelEl();
+  var origFetch = globalThis.fetch;
+  var origAudio = globalThis.Audio;
+  var audios = [];
+  var fetchResolvers = [];
+  globalThis.fetch = function () {
+    return new Promise(function (res) { fetchResolvers.push(res); });
+  };
+  globalThis.Audio = function () {
+    var a = makeAudioStub();
+    audios.push(a);
+    return a;
+  };
+  var h = drawer.mount(null, { role: 'teacher', panelEl: panel, lobbyMode: true, base: '/b' });
+  panel.trackSelect.value = '1';
+  panel.trackSelect._fire('change');
+  panel.pauseBtn._fire('click');  // lazy fetch
+  fetchResolvers[0]({ json: function () { return Promise.resolve({
+    variants: [{ id: 2, label: 'x', tempo_pct: 100, token: 'abc' }]
+  }); }});
+  return new Promise(function (resolve) {
+    setTimeout(function () {
+      try {
+        assert.strictEqual(audios.length, 1, 'audio created after fetch');
+        audios[0]._fire('error');  // _lobbyAudio cleared; _variantId still set
+        panel.pauseBtn._fire('click');  // cache hit → new Audio
+        assert.strictEqual(audios.length, 2, 'new audio created after error (from cache)');
+        assert.notStrictEqual(audios[1], audios[0], 'different Audio instance');
+      } finally {
+        globalThis.fetch = origFetch;
+        globalThis.Audio = origAudio;
+      }
+      resolve();
+    }, 10);
+  });
+});
+
+test('Test 5b: lobby audio — _lobbyAudio reset on play() rejection', function () {
+  var panel = makePanelEl();
+  var origAudio = globalThis.Audio;
+  var audios = [];
+  globalThis.Audio = function () {
+    var a = makeAudioStub();
+    a.play = function () { return Promise.reject(new Error('blocked')); };
+    audios.push(a);
+    return a;
+  };
+  try {
+    // Mount in live mode to establish asset/variant via the live-mode change path.
+    var h = drawer.mount(null, { role: 'teacher', panelEl: panel, lobbyMode: false });
+    h.setTrackList([{ id: 1, title: 'T', variants: [{ id: 2, label: 'l', tempo_pct: 100, token: 'tok' }] }]);
+    panel.trackSelect.value = '1:2';
+    panel.trackSelect._fire('change');  // live: _assetId='1', _variantId='2', token in _trackMap
+    h.enterLobbyMode();
+    // Click: _variantId set → cache hit → _startLobbyPlay → Audio created → play() rejects.
+    panel.pauseBtn._fire('click');
+    assert.strictEqual(audios.length, 1, 'Audio constructed');
+    return new Promise(function (resolve) {
+      setTimeout(function () {
+        try {
+          panel.pauseBtn._fire('click');
+          assert.strictEqual(audios.length, 2, 'new Audio created after play rejection');
+        } finally {
+          globalThis.Audio = origAudio;
+        }
+        resolve();
+      }, 10);
+    });
+  } catch (e) {
+    globalThis.Audio = origAudio;
+    throw e;
+  }
+});
+
+test('Test 6: enterLobbyMode/exitLobbyMode call panelEl.setLobbyMode only', function () {
+  var panel = makePanelEl();
+  var h = drawer.mount(null, { role: 'teacher', panelEl: panel, lobbyMode: false });
+  h.enterLobbyMode();
+  assert.deepStrictEqual(panel._setLobbyModeCalls, [true]);
+  h.exitLobbyMode();
+  assert.deepStrictEqual(panel._setLobbyModeCalls, [true, false]);
+});
+
+test('Test 8: setAssetList — renders options; idempotent; empty list leaves placeholder', function () {
+  var panel = makePanelEl();
+  var h = drawer.mount(null, { role: 'teacher', panelEl: panel, lobbyMode: true });
+  h.setAssetList([
+    { id: 1, title: 'Song A', variant_count: 1 },
+    { id: 2, title: 'Song B', variant_count: 3 },
+  ]);
+  assert.strictEqual(panel.trackSelect.options.length, 3);
+  assert.strictEqual(panel.trackSelect.options[1].textContent, 'Song A (1 variant)');
+  assert.strictEqual(panel.trackSelect.options[2].textContent, 'Song B (3 variants)');
+  h.setAssetList([{ id: 3, title: 'Song C', variant_count: 0 }]);
+  assert.strictEqual(panel.trackSelect.options.length, 2);
+  assert.strictEqual(panel.trackSelect.options[1].textContent, 'Song C (0 variants)');
+  h.setAssetList([]);
+  assert.strictEqual(panel.trackSelect.options.length, 1, 'only placeholder with empty list');
+});
+
+test('Test 9: reconnect — updateState(null asset_id) calls updatePages(null, null)', function () {
+  var panel = makePanelEl();
+  var updatePagesCalls = [];
+  var scoreViewHandle = {
+    updatePages: function (pages, coords) { updatePagesCalls.push({ pages: pages, coords: coords }); },
+    seekToBar: function () {},
+    teardown: function () {},
+  };
+  var h = drawer.mount(null, { role: 'teacher', panelEl: panel, lobbyMode: true });
+  h.setScoreView(scoreViewHandle);
+  h.exitLobbyMode();
+  h.updateState({ asset_id: 5, variant_id: 1, is_playing: false, position_ms: 0,
+                  page_urls: ['a.jpg'], bar_coords: [], server_time_ms: fakeNow });
+  h.enterLobbyMode();
+  h.exitLobbyMode();
+  h.updateState({ asset_id: null, variant_id: null, is_playing: false, position_ms: 0,
+                  page_urls: null, bar_coords: null, server_time_ms: fakeNow });
+  var nullCall = updatePagesCalls.find(function (c) { return c.pages === null; });
+  assert.ok(nullCall, 'updatePages(null, null) called — score view cleared after reconnect');
+});
+
+test('Test 10: teardown — _lobbyAudio pause called and src cleared', function () {
+  var panel = makePanelEl();
+  var origFetch = globalThis.fetch;
+  var origAudio = globalThis.Audio;
+  var fetchResolvers = [];
+  var capturedAudio = null;
+  globalThis.fetch = function () {
+    return new Promise(function (res) { fetchResolvers.push(res); });
+  };
+  globalThis.Audio = function () {
+    var a = makeAudioStub();
+    a.src = 'blob://original';
+    capturedAudio = a;
+    return a;
+  };
+  var h = drawer.mount(null, { role: 'teacher', panelEl: panel, lobbyMode: true, base: '/b' });
+  panel.trackSelect.value = '1';
+  panel.trackSelect._fire('change');
+  panel.pauseBtn._fire('click');  // fetch starts
+  fetchResolvers[0]({ json: function () { return Promise.resolve({
+    variants: [{ id: 2, label: 'l', tempo_pct: 100, token: 'tok' }]
+  }); }});
+  return new Promise(function (resolve) {
+    setTimeout(function () {
+      try {
+        assert.ok(capturedAudio, 'audio created');
+        h.teardown();
+        assert.strictEqual(capturedAudio.src, '',
+          '_lobbyAudio.src cleared — proves _destroyLobbyAudio ran');
+      } finally {
+        globalThis.fetch = origFetch;
+        globalThis.Audio = origAudio;
+      }
+      resolve();
+    }, 10);
+  });
+});
+
+test('Test 11: async race — fetch resolving after exitLobbyMode clears flag without creating audio', function () {
+  var panel = makePanelEl();
+  var origFetch = globalThis.fetch;
+  var origAudio = globalThis.Audio;
+  var fetchCount = 0;
+  var audios = [];
+  var fetchResolvers = [];
+  globalThis.fetch = function () {
+    fetchCount++;
+    return new Promise(function (res) { fetchResolvers.push(res); });
+  };
+  globalThis.Audio = function () {
+    var a = makeAudioStub();
+    audios.push(a);
+    return a;
+  };
+  var h = drawer.mount(null, { role: 'teacher', panelEl: panel, lobbyMode: true, base: '/b' });
+  panel.trackSelect.value = '1';
+  panel.trackSelect._fire('change');
+  panel.pauseBtn._fire('click');  // fetch started
+  assert.strictEqual(fetchCount, 1, 'fetch started');
+  h.exitLobbyMode();  // peer connects → exit lobby
+  fetchResolvers[0]({ json: function () { return Promise.resolve({
+    variants: [{ id: 2, label: 'x', tempo_pct: 100, token: 'tok' }]
+  }); }});
+  return new Promise(function (resolve) {
+    setTimeout(function () {
+      try {
+        assert.strictEqual(audios.length, 0, 'no audio created (lobby guard fired)');
+        h.enterLobbyMode();
+        panel.trackSelect.value = '1';
+        panel.trackSelect._fire('change');
+        panel.pauseBtn._fire('click');  // should start new fetch (flag was cleared)
+        assert.strictEqual(fetchCount, 2, 'second fetch started — _pendingPreviewFetch was cleared');
+      } finally {
+        globalThis.fetch = origFetch;
+        globalThis.Audio = origAudio;
+      }
+      resolve();
+    }, 10);
+  });
+});
+
+test('Test 12: setGetOneWayLatencyMs — injected function called in live play path', function () {
+  var panel = makePanelEl();
+  var sent = [];
+  var latencyCalls = 0;
+  var h = drawer.mount(null, { role: 'teacher', panelEl: panel, lobbyMode: false,
+                               sendWs: function (msg) { sent.push(msg); } });
+  h.setGetOneWayLatencyMs(function () { latencyCalls++; return 0; });
+  h.setTrackList([{ id: 1, title: 'T', variants: [{ id: 2, label: 'x', tempo_pct: 100, token: 'tok' }] }]);
+  panel.trackSelect.value = '1:2';
+  panel.trackSelect._fire('change');
+  // Trigger audio creation so getOneWayLatencyMs is called via updateState.
+  h.updateState({ asset_id: 1, variant_id: 2, is_playing: true, position_ms: 0,
+                  wav_url: 'http://x/a.wav', server_time_ms: fakeNow });
+  assert.ok(latencyCalls >= 1, 'injected getOneWayLatencyMs called in live play path');
 });

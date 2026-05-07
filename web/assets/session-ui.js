@@ -14,7 +14,7 @@
 //             exactly one RAF loop per mount; teardown is idempotent;
 //             mount is an orchestrator only (no audio/DOM logic beyond named builders);
 //             accmpPanel open-state persisted in sessionStorage (sb-accmp-open).
-// Last updated: Sprint 17 (2026-04-23) -- v2 layout: sb-session-v2 grid, buildSelfPip, buildIconBar, buildAccmpPanel
+// Last updated: Sprint 26 (2026-05-07) -- accept pre-built accmpPanel via opts.accmpPanel
 
 (function (root, factory) {
   'use strict';

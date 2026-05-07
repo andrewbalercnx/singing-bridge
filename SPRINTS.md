@@ -846,3 +846,28 @@ _Backwards compatibility_
 - All existing tests pass
 
 **Status:** IN PROGRESS
+
+---
+
+## Sprint 26: Accompaniment Drawer Lobby Mode
+
+**Goal:** The teacher can browse, select, and preview their accompaniment tracks while waiting in the lobby — before any student has connected.
+
+**Deliverables:**
+- `sbAccompanimentDrawer` mounts once at page load (not inside `onPeerConnected`) with a stub `sendWs`
+- New handle methods: `setSendWs(fn)`, `setGetOneWayLatencyMs(fn)`, `enterLobbyMode()`, `exitLobbyMode()`
+- Lobby preview mode: clicking Play/Preview plays audio locally (no WS) via `_lobbyAudio`; `_trackMap` stores tokens from `setTrackList` for URL construction
+- `session-panels.js` `buildAccmpPanel` panel handle gains `setLobbyMode(bool)` for label and CSS class update
+- `session-ui.js` accepts `opts.accmpPanel`; if provided, re-parents the node instead of calling `buildAccmpPanel()` internally
+- `teacher.js` moves drawer mount and track fetch to `init()`; wires/unwires live functions in `onPeerConnected`/`onPeerDisconnected`; DOM re-parenting of panel node across lobby ↔ session
+- `theme.css` `.sb-accmp-panel--lobby` modifier for visual distinction
+
+**Exit criteria:**
+- Teacher opens session page with no student waiting: accompaniment panel visible, track list populated, "Preview" button present
+- Teacher selects a track and variant, clicks Preview: audio plays locally in the browser
+- Student connects: panel transitions to live mode; previously selected track is pre-loaded; Play sends WS message; audio syncs with server state
+- Student disconnects: panel reverts to lobby/preview mode; track selection is preserved
+- No visible UI glitch when panel re-parents between lobby and session layout
+- All existing Rust and JS tests pass
+
+**Status:** COMPLETE

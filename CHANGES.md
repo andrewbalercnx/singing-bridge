@@ -11,6 +11,19 @@
 > **Commit:** `<sha>`
 > ```
 
+## Sprint 26: Accompaniment Drawer Lobby Mode — 2026-05-07
+
+**Files changed:**
+- `web/assets/accompaniment-drawer.js` — lobby mode: mutable sendWs/getOneWayLatencyMs refs, `_lobbyAudio` preview, `enterLobbyMode`/`exitLobbyMode`/`setSendWs`/`setGetOneWayLatencyMs`/`setAssetList` handle methods, async race guard
+- `web/assets/session-panels.js` — `buildAccmpPanel` gains `setLobbyMode(bool)` method; initial aria-label 'Play / Pause'
+- `web/assets/session-ui.js` — accepts `opts.accmpPanel` to re-parent pre-built panel
+- `web/assets/teacher.js` — drawer mounted once at page load; panel re-parents between lobby and live session on connect/disconnect
+- `web/assets/theme.css` — `.sb-accmp-panel--lobby` modifier with `(preview)` label annotation
+- `web/assets/tests/accompaniment-drawer.test.js` — `makePanelEl` extended; `document.createElement` stores tag; Tests 1-12 added for lobby mode
+- `web/assets/tests/session-panels.test.js` — `classList` stub added to `makeEl`; `setLobbyMode` tests added
+
+**Commit:** `f5b1e64`
+
 ## Sprint 25: Bot Peer for Manual UX Testing — 2026-04-27
 
 **Files changed:**

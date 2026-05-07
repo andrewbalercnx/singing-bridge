@@ -1045,6 +1045,10 @@ test('Test 10: teardown — _lobbyAudio pause called and src cleared', function 
   globalThis.Audio = function () {
     var a = makeAudioStub();
     a.src = 'blob://original';
+    var pauseCalls = 0;
+    var origPause = a.pause.bind(a);
+    a.pause = function () { pauseCalls++; origPause(); };
+    a._pauseCalls = function () { return pauseCalls; };
     capturedAudio = a;
     return a;
   };
@@ -1060,8 +1064,8 @@ test('Test 10: teardown — _lobbyAudio pause called and src cleared', function 
       try {
         assert.ok(capturedAudio, 'audio created');
         h.teardown();
-        assert.strictEqual(capturedAudio.src, '',
-          '_lobbyAudio.src cleared — proves _destroyLobbyAudio ran');
+        assert.strictEqual(capturedAudio._pauseCalls(), 1, 'pause() called once by _destroyLobbyAudio');
+        assert.strictEqual(capturedAudio.src, '', '_lobbyAudio.src cleared');
       } finally {
         globalThis.fetch = origFetch;
         globalThis.Audio = origAudio;

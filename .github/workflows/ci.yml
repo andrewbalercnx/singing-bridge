@@ -72,6 +72,8 @@ jobs:
         run: node --test web/assets/tests/*.test.js
 
       - name: Rust unit tests (fast gate)
+        env:
+          DATABASE_TEST_URL: ${{ secrets.DATABASE_TEST_URL }}
         run: cargo nextest run -p singing-bridge-server --lib
 
       - name: Rust integration tests

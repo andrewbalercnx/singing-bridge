@@ -21,6 +21,7 @@ pub mod recordings;
 pub mod security_headers;
 pub mod signup;
 pub mod static_assets;
+pub mod synthetic_auth;
 pub mod teach;
 pub mod turn;
 #[cfg(debug_assertions)]
@@ -89,6 +90,11 @@ pub fn router(state: Arc<AppState>) -> Router {
     #[cfg(debug_assertions)]
     if dev {
         r = r.route("/api/dev-blob/:key", get(recordings::get_dev_blob));
+    }
+
+    // Synthetic-peer auth (not debug-gated; only mounted when secret is configured).
+    if state.config.synthetic_peer_secret.is_some() {
+        r = r.route("/api/synthetic-auth", post(synthetic_auth::post_synthetic_auth));
     }
 
     // Test-peer bot endpoint (compile-time gated; also requires SB_TEST_PEER=true).

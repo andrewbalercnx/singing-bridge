@@ -75,6 +75,8 @@ EXCLUDED_DIRS = {
     ".ruff_cache",
     "coverage",
     ".next",
+    "target",          # Rust build artefacts
+    ".playwright-mcp", # Playwright MCP session snapshots
 }
 
 # Top-level path prefixes to skip (relative to repo root).
@@ -87,6 +89,7 @@ EXCLUDED_PREFIXES = (
 # Individual files to skip.
 EXCLUDED_FILES = {
     "docker-compose.yml",
+    "app.yaml",  # Azure Container App manifest downloaded/mutated by CI deploy step
 }
 
 # File-name patterns that are generated / vendored and do not need headers.

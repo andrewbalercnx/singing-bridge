@@ -97,6 +97,8 @@ pub struct Config {
     // Test-peer bot (debug builds only; rejected by validate_prod_config)
     pub test_peer: bool,
     pub test_peer_script: Option<String>,
+    // Synthetic-peer auth (optional; works in release; secret must be ≥ 32 chars)
+    pub synthetic_peer_secret: Option<String>,
 }
 
 impl Config {
@@ -148,6 +150,7 @@ impl Config {
             media_token_ttl_secs: 3600,
             test_peer: true,
             test_peer_script: None,
+            synthetic_peer_secret: None,
         }
     }
 
@@ -292,6 +295,7 @@ impl Config {
                 .map_err(|e| ConfigError::Invalid("SB_MEDIA_TOKEN_TTL_SECS", format!("{e}")))?,
             test_peer: std::env::var("SB_TEST_PEER").map(|v| v == "true").unwrap_or(false),
             test_peer_script: std::env::var("SB_TEST_PEER_SCRIPT").ok(),
+            synthetic_peer_secret: std::env::var("SB_SYNTHETIC_PEER_SECRET").ok(),
         })
     }
 

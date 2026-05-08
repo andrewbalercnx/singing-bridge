@@ -1,0 +1,90 @@
+/* File: web/assets/home.css
+ * Purpose: Styles for the public home/landing page (/).
+ * Last updated: 2026-05-07 — initial
+ */
+
+.home-hero {
+  text-align: center;
+  padding: var(--sb-space-16) var(--sb-space-6) var(--sb-space-10);
+}
+.home-hero__eyebrow { margin-bottom: var(--sb-space-3); }
+.home-hero__title {
+  font-family: var(--sb-font-display);
+  font-size: var(--sb-text-3xl);
+  font-weight: 500;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  margin: 0 auto var(--sb-space-4);
+  max-width: 520px;
+}
+.home-hero__lede {
+  max-width: 400px;
+  margin: 0 auto;
+  color: var(--sb-fg-muted);
+  font-style: italic;
+  font-family: var(--sb-font-display);
+}
+
+.home-cards {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--sb-space-6);
+  max-width: 720px;
+  margin: 0 auto var(--sb-space-16);
+  padding: 0 var(--sb-space-6);
+}
+@media (max-width: 560px) {
+  .home-cards { grid-template-columns: 1fr; }
+  .home-hero__title { font-size: var(--sb-text-2xl); }
+}
+
+.home-card__icon { font-size: 28px; margin-bottom: var(--sb-space-3); line-height: 1; }
+.home-card__title {
+  font-family: var(--sb-font-display);
+  font-size: var(--sb-text-xl);
+  font-weight: 500;
+  margin: 0 0 var(--sb-space-2);
+}
+.home-card__body {
+  font-size: var(--sb-text-sm);
+  color: var(--sb-fg-muted);
+  margin: 0 0 var(--sb-space-5);
+  line-height: 1.55;
+}
+.home-card__actions { display: flex; flex-direction: column; gap: var(--sb-space-2); }
+
+/* Student join form */
+.student-join { margin-top: var(--sb-space-2); }
+.student-join__row {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  margin-top: var(--sb-space-2);
+}
+.student-join__input { margin-top: var(--sb-space-2); }
+.student-join__go { margin-top: var(--sb-space-3); }
+
+/* 404 notice */
+.not-found-notice {
+  max-width: 720px;
+  margin: var(--sb-space-8) auto 0;
+  padding: 0 var(--sb-space-6);
+}
+.not-found-notice .sb-notice {
+  border-radius: var(--sb-r-md);
+  padding: var(--sb-space-4) var(--sb-space-5);
+  background: var(--sb-bg-sunken);
+  border: 1px solid var(--sb-border-strong);
+  font-size: var(--sb-text-sm);
+}
+.not-found-notice__label {
+  font-weight: 600;
+  color: var(--sb-danger);
+  margin-bottom: var(--sb-space-1);
+}
+.not-found-notice__url {
+  font-family: ui-monospace, monospace;
+  font-size: var(--sb-text-xs);
+  color: var(--sb-fg-muted);
+  word-break: break-all;
+}

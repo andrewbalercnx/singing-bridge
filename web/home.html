@@ -1,0 +1,63 @@
+<!doctype html>
+<!--
+  File: web/home.html
+  Purpose: Public landing page — invites teachers and students, routes each to the
+           right entry point. Also served (with 404 status) for unknown URLs.
+  Last updated: 2026-05-07 — move inline style/script to home.css / home.js (CSP)
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>singing-bridge</title>
+  <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/assets/styles.css">
+  <link rel="stylesheet" href="/assets/theme.css">
+  <link rel="stylesheet" href="/assets/home.css">
+</head>
+<body class="sb-page sb-shell">
+  <header class="sb-topbar">
+    <span class="sb-topbar__brand">
+      <span class="sb-topbar__brand-dot"></span>singing-bridge
+    </span>
+  </header>
+
+  <!-- sb:not-found-panel -->
+
+  <main>
+    <div class="home-hero">
+      <p class="sb-eyebrow home-hero__eyebrow">Rich Connexions</p>
+      <h1 class="home-hero__title">Where music lessons<br>come alive</h1>
+      <p class="home-hero__lede">Low-latency audio for real musical connection between teachers and students.</p>
+    </div>
+
+    <div class="home-cards">
+      <div class="sb-card sb-card--paper">
+        <div class="home-card__icon">🎹</div>
+        <h2 class="home-card__title">I'm a teacher</h2>
+        <p class="home-card__body">Manage your studio, run lessons, and build an accompaniment library for your students.</p>
+        <div class="home-card__actions">
+          <a href="/auth/login" class="sb-btn sb-btn--block">Log in</a>
+          <a href="/signup" class="sb-btn sb-btn--ghost sb-btn--block">Create an account</a>
+        </div>
+      </div>
+
+      <div class="sb-card sb-card--paper">
+        <div class="home-card__icon">🎤</div>
+        <h2 class="home-card__title">I'm a student</h2>
+        <p class="home-card__body">Your teacher will share a room name — enter it below to join your lesson.</p>
+        <form class="student-join" id="student-join-form">
+          <label class="sb-label" for="room-input">Room name</label>
+          <input id="room-input" class="sb-input student-join__input" type="text"
+            placeholder="e.g. andrewbale" autocomplete="off" autocapitalize="none"
+            spellcheck="false" aria-label="Room name">
+          <button type="submit" class="sb-btn sb-btn--block student-join__go">Go →</button>
+          <p id="room-error" class="sb-help sb-help--error" hidden>Please enter a room name.</p>
+        </form>
+      </div>
+    </div>
+  </main>
+
+  <script src="/assets/home.js"></script>
+</body>
+</html>

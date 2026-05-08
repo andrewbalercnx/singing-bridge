@@ -19,6 +19,7 @@
     var email = form.email.value.trim();
     var password = form.password.value;
     status.textContent = 'Logging in…';
+    status.className = '';
 
     fetch('/auth/login', {
       method: 'POST',
@@ -33,14 +34,17 @@
         }
         if (r.status === 429) {
           status.textContent = 'Too many attempts — please wait a few minutes before trying again.';
+          status.className = 'sb-help--error';
           return;
         }
         return r.json().then(function (body) {
           status.textContent = body.message || 'Invalid email or password.';
+          status.className = 'sb-help--error';
         });
       })
       .catch(function () {
         status.textContent = 'Network error — please try again.';
+        status.className = 'sb-help--error';
       });
   });
 }());

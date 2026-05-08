@@ -8,7 +8,7 @@
 
 (function () {
   var slug = location.pathname.replace(/^\/teach\//, '').replace(/\/recordings$/, '');
-  document.getElementById('back-link').href = '/teach/' + slug;
+  document.getElementById('back-link').href = '/teach/' + slug + '/dashboard';
 
   var listEl = document.getElementById('recordings-list');
   var emptyEl = document.getElementById('recordings-empty');

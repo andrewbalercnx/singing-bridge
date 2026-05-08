@@ -10,6 +10,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>singing-bridge — dashboard</title>
+  <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/assets/styles.css">
   <link rel="stylesheet" href="/assets/theme.css">
   <!-- sb:debug -->
@@ -21,6 +22,7 @@
     </span>
     <span id="room-name" class="sb-dashboard-room"></span>
     <a id="enter-room-btn" class="sb-btn sb-btn--accent" href="#">Enter Room</a>
+    <button id="logout-btn" class="sb-btn sb-btn--ghost sb-btn--sm" type="button">Log out</button>
   </header>
 
   <div class="sb-dotted sb-dashboard-staffline sb-fade sb-fade-2" aria-hidden="true"></div>
@@ -40,6 +42,7 @@
         <div id="recordings-list" aria-live="polite">
           <p class="sb-dashboard-loading">Loading…</p>
         </div>
+        <a id="recordings-link" class="sb-btn sb-btn--ghost sb-mt-3" href="#">View all recordings →</a>
       </section>
 
       <section class="sb-dashboard-panel sb-dashboard-panel--wide" id="panel-library">
@@ -55,6 +58,6 @@
   </main>
 
   <div id="sb-debug"></div>
-  <script src="/assets/dashboard.js"></script>
+  <script src="/assets/dashboard.js?v=2"></script>
 </body>
 </html>

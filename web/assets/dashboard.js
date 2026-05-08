@@ -22,6 +22,15 @@
   var enterBtn = document.getElementById('enter-room-btn');
   if (enterBtn) enterBtn.href = '/teach/' + slug + '/session';
 
+  // "Log out" → POST /auth/logout then redirect home
+  var logoutBtn = document.getElementById('logout-btn');
+  if (logoutBtn) {
+    logoutBtn.addEventListener('click', function () {
+      fetch('/auth/logout', { method: 'POST', credentials: 'same-origin' })
+        .finally(function () { window.location.href = '/'; });
+    });
+  }
+
   // History link
   var historyLink = document.getElementById('history-link');
   if (historyLink) historyLink.href = '/teach/' + slug + '/history';
@@ -89,6 +98,8 @@
   var librarySummary = document.getElementById('library-summary');
   var libraryLink = document.getElementById('library-link');
   if (libraryLink) libraryLink.href = '/teach/' + slug + '/library';
+  var recordingsLink = document.getElementById('recordings-link');
+  if (recordingsLink) recordingsLink.href = '/teach/' + slug + '/recordings';
 
   function renderLibrary(items) {
     if (!librarySummary) return;

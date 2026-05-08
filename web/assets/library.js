@@ -11,7 +11,7 @@
 //             MIDI port.name set via .textContent only (no innerHTML);
 //             serializeMidi is a pure function — no side effects, no DOM access;
 //             openSynthModal submit handler registered once at init — no listener accumulation.
-// Last updated: Sprint 26 (2026-05-05) -- View Score button on variant rows + dynamic post-rasterise reveal
+// Last updated: Sprint 26 (2026-05-06) -- variant score_bar_coords for correct highlight; lazy parts populate; View Score fix
 
 (function (root, factory) {
   'use strict';
@@ -32,6 +32,7 @@
   var _modalHasMidi = false;
   var _modalVariantListEl = null;
   var _modalResynFn = null;     // (variant) => void — passed to renderVariantRow for new rows
+  var _modalMakeViewFn = null;  // (variant) => () => void — builds viewScoreFn for new rows
   var _modalBannerEl = null;
   var _modalBase = '';
 
@@ -109,7 +110,12 @@
     var date = new Date(asset.created_at * 1000).toLocaleDateString();
     var meta = document.createElement('span');
     meta.className = 'asset-meta';
-    meta.textContent = kind + ' · ' + asset.variant_count + ' variants · ' + date;
+    var countSpan = document.createElement('span');
+    countSpan.className = 'asset-variant-count';
+    countSpan.textContent = String(asset.variant_count);
+    meta.appendChild(document.createTextNode(kind + ' · '));
+    meta.appendChild(countSpan);
+    meta.appendChild(document.createTextNode((asset.variant_count === 1 ? ' variant · ' : ' variants · ') + date));
 
     var deleteBtn = document.createElement('button');
     deleteBtn.type = 'button';
@@ -160,7 +166,7 @@
   // Asset detail (expand)
   // ---------------------------------------------------------------------------
 
-  function buildOmrSection(id, variantListEl, base, bannerEl, onRasterised) {
+  function buildOmrSection(id, variantListEl, base, bannerEl, onRasterised, makeViewFn) {
     var statusEl = document.createElement('p');
     statusEl.className = 'omr-status';
     statusEl.setAttribute('aria-live', 'polite');
@@ -180,7 +186,7 @@
     omrBtn.addEventListener('click', function () {
       omrBtn.disabled = true;
       omrBtn.textContent = 'Running\u2026';
-      runOmr(id, partPickerEl, omrBtn, statusEl, variantListEl, base, bannerEl, onRasterised);
+      runOmr(id, partPickerEl, omrBtn, statusEl, variantListEl, base, bannerEl, onRasterised, makeViewFn);
     });
 
     section.appendChild(omrBtn);
@@ -217,11 +223,25 @@
         }
 
         // viewScoreFn — opens score modal pre-selecting the given variant.
-        // Called with variantId from renderVariantRow, or with null from the asset-level button.
+        // When the variant has its own score_page_tokens, those are used (per-variant SVG pages).
+        // Falls back to asset-level score pages if the variant has none yet.
         // Kept in a closure so rasterise() can swap in fresh page_tokens after it completes.
         var _detail = detail; // mutable ref updated after rasterise
-        function makeViewScoreFn(variantId) {
-          return function () { openScoreModal(_detail, base, variantId, true); };
+        function makeViewScoreFn(variant) {
+          return function () {
+            var hasVariantPages = variant.score_page_tokens && variant.score_page_tokens.length > 0;
+            // Use per-variant SVG bar coords when available; they match the verovio page layout.
+            // Fall back to asset-level PDF bar coords only when showing the original raster pages.
+            var scoreDetail = Object.assign({}, _detail, {
+              score_page_tokens: hasVariantPages
+                ? variant.score_page_tokens
+                : (_detail.score_page_tokens || []),
+              bar_coords: (hasVariantPages && variant.score_bar_coords && variant.score_bar_coords.length > 0)
+                ? variant.score_bar_coords
+                : (_detail.bar_coords || []),
+            });
+            openScoreModal(scoreDetail, base, variant.id, true);
+          };
         }
 
         // Asset-level "View Score" button — hidden until pages exist; revealed by rasterise().
@@ -241,7 +261,7 @@
             // Update all variant-row score buttons (token URLs are now valid).
             var scoreBtns = variantListEl.querySelectorAll('.variant-score-btn');
             for (var i = 0; i < scoreBtns.length; i++) { scoreBtns[i].hidden = false; }
-          });
+          }, makeViewScoreFn);
           detailEl.appendChild(omrSection);
         }
 
@@ -253,7 +273,7 @@
           newVariantBtn.setAttribute('data-asset-id', String(id));
           newVariantBtn.textContent = '+ New variant';
           newVariantBtn.addEventListener('click', function () {
-            openSynthModal(id, null, true, variantListEl, null, base, bannerEl);
+            openSynthModal(id, detail.parts && detail.parts.length > 0 ? detail.parts : null, true, variantListEl, null, base, bannerEl, detail.has_musicxml ? makeViewScoreFn : null);
           });
           detailEl.appendChild(newVariantBtn);
         }
@@ -263,8 +283,9 @@
         if (detail.variants) {
           detail.variants.forEach(function (variant) {
             var resynCb = detail.has_midi ? makeResynFn(variantListEl) : null;
-            var viewFn = detail.has_midi ? makeViewScoreFn(variant.id) : null;
-            variantListEl.appendChild(renderVariantRow(id, variant, base, bannerEl, resynCb, viewFn));
+            var viewFn = detail.has_musicxml ? makeViewScoreFn(variant) : null;
+            var assetHasPages = !!(detail.score_page_tokens && detail.score_page_tokens.length > 0);
+            variantListEl.appendChild(renderVariantRow(id, variant, base, bannerEl, resynCb, viewFn, assetHasPages));
           });
         }
         detailEl.appendChild(variantListEl);
@@ -319,7 +340,7 @@
   // OMR flow
   // ---------------------------------------------------------------------------
 
-  function runOmr(assetId, partPickerEl, omrBtn, statusEl, variantListEl, base, bannerEl, onRasterised) {
+  function runOmr(assetId, partPickerEl, omrBtn, statusEl, variantListEl, base, bannerEl, onRasterised, makeViewFn) {
     fetch(base + '/' + assetId + '/parts', { method: 'POST' })
       .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, status: r.status, data: d }; }); })
       .then(function (res) {
@@ -331,7 +352,7 @@
           return;
         }
         statusEl.textContent = 'OMR running\u2026';
-        pollOmrJob(res.data.poll_url, assetId, partPickerEl, omrBtn, statusEl, variantListEl, base, bannerEl, onRasterised);
+        pollOmrJob(res.data.poll_url, assetId, partPickerEl, omrBtn, statusEl, variantListEl, base, bannerEl, onRasterised, makeViewFn);
       })
       .catch(function (err) {
         omrBtn.disabled = false;
@@ -340,13 +361,13 @@
       });
   }
 
-  function pollOmrJob(pollUrl, assetId, partPickerEl, omrBtn, statusEl, variantListEl, base, bannerEl, onRasterised) {
+  function pollOmrJob(pollUrl, assetId, partPickerEl, omrBtn, statusEl, variantListEl, base, bannerEl, onRasterised, makeViewFn) {
     fetch(pollUrl)
       .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, status: r.status, data: d }; }); })
       .then(function (res) {
         if (res.status === 202) {
           setTimeout(function () {
-            pollOmrJob(pollUrl, assetId, partPickerEl, omrBtn, statusEl, variantListEl, base, bannerEl, onRasterised);
+            pollOmrJob(pollUrl, assetId, partPickerEl, omrBtn, statusEl, variantListEl, base, bannerEl, onRasterised, makeViewFn);
           }, 3000);
           return;
         }
@@ -361,7 +382,7 @@
         partPickerEl.hidden = true; // part picker no longer needed; modal handles voice selection
         rasterise(assetId, statusEl, base, bannerEl, onRasterised);
         if (parts.length > 0) {
-          openSynthModal(assetId, parts, false, variantListEl, null, base, bannerEl);
+          openSynthModal(assetId, parts, false, variantListEl, null, base, bannerEl, makeViewFn);
         } else {
           statusEl.textContent = 'No voices detected \u2014 re-run OMR.';
         }
@@ -423,7 +444,7 @@
   // Synthesise
   // ---------------------------------------------------------------------------
 
-  function synthesise(assetId, req, statusEl, variantListEl, base, bannerEl, resynFn) {
+  function synthesise(assetId, req, statusEl, variantListEl, base, bannerEl, resynFn, makeViewFn) {
     if (!req.label || !req.label.trim()) {
       if (statusEl) statusEl.textContent = 'Label is required';
       return;
@@ -452,15 +473,20 @@
         var displayReq = {
           id: res.data.id,
           label: res.data.label,
+          token: res.data.token,
           tempo_pct: req.tempo_pct,
           transpose_semitones: req.transpose_semitones,
           respect_repeats: req.respect_repeats,
+          score_page_tokens: [],
         };
         if (variantListEl) {
           var rowResynFn = resynFn || function (rReq) {
             synthesise(assetId, rReq, statusEl, variantListEl, base, bannerEl);
           };
-          variantListEl.prepend(renderVariantRow(assetId, displayReq, base, bannerEl, rowResynFn));
+          var rowViewFn = makeViewFn ? makeViewFn(displayReq) : null;
+          variantListEl.prepend(renderVariantRow(assetId, displayReq, base, bannerEl, rowResynFn, rowViewFn));
+          var assetRow = typeof variantListEl.closest === 'function' ? variantListEl.closest('.asset-row') : null;
+          updateVariantCount(assetRow, +1);
         }
       })
       .catch(function (err) {
@@ -468,7 +494,7 @@
       });
   }
 
-  function renderVariantRow(assetId, variant, base, bannerEl, synthesiseFn, viewScoreFn) {
+  function renderVariantRow(assetId, variant, base, bannerEl, synthesiseFn, viewScoreFn, assetHasPages) {
     var li = document.createElement('li');
     li.className = 'variant-row';
 
@@ -516,8 +542,12 @@
       var scoreBtn = document.createElement('button');
       scoreBtn.type = 'button';
       scoreBtn.className = 'variant-score-btn';
-      scoreBtn.textContent = 'View Score';
-      scoreBtn.addEventListener('click', function () { viewScoreFn(variant.id); });
+      if ((variant.score_page_tokens && variant.score_page_tokens.length > 0) || assetHasPages) {
+        scoreBtn.textContent = 'View Score';
+      } else {
+        scoreBtn.textContent = 'Score rendering\u2026';
+      }
+      scoreBtn.addEventListener('click', function () { viewScoreFn(); });
       li.appendChild(scoreBtn);
     }
     li.appendChild(deleteBtn);
@@ -528,11 +558,19 @@
   // Delete
   // ---------------------------------------------------------------------------
 
-  function doDelete(url, li, confirmFn, prompt, alertFn) {
+  function updateVariantCount(assetRow, delta) {
+    if (!assetRow) return;
+    var countEl = assetRow.querySelector('.asset-variant-count');
+    if (!countEl) return;
+    var n = parseInt(countEl.textContent, 10);
+    if (!isNaN(n)) countEl.textContent = String(Math.max(0, n + delta));
+  }
+
+  function doDelete(url, li, confirmFn, prompt, alertFn, onRemoved) {
     if (!confirmFn(prompt)) return;
     fetch(url, { method: 'DELETE' })
       .then(function (r) {
-        if (r.status === 204) { li.remove(); return; }
+        if (r.status === 204) { li.remove(); if (onRemoved) onRemoved(); return; }
         return r.json().then(function (d) { alertFn((d && d.message) || 'Delete failed'); });
       })
       .catch(function (err) { alertFn('Delete failed: ' + err.message); });
@@ -544,7 +582,10 @@
   }
 
   function confirmDeleteVariant(assetId, variantId, variantLi, base, confirmFn, alertFn) {
-    doDelete(base + '/' + assetId + '/variants/' + variantId, variantLi, confirmFn, 'Delete this variant?', alertFn);
+    var assetRow = variantLi.closest('.asset-row');
+    doDelete(base + '/' + assetId + '/variants/' + variantId, variantLi, confirmFn, 'Delete this variant?', alertFn, function () {
+      updateVariantCount(assetRow, -1);
+    });
   }
 
   // ---------------------------------------------------------------------------
@@ -1187,11 +1228,11 @@
   // Synthesis modal
   // ---------------------------------------------------------------------------
 
-  function openSynthModal(assetId, parts, hasMidi, variantListEl, prefill, base, bannerEl) {
+  function openSynthModal(assetId, parts, hasMidi, variantListEl, prefill, base, bannerEl, makeViewFn) {
     var dialog = document.getElementById('synth-modal');
     if (!dialog) return;
 
-    // Guard: if no MIDI yet and no parts, cannot synthesise.
+    // Guard: cannot synthesise without either existing MIDI/musicxml or parts to extract from.
     if (!hasMidi && (!parts || parts.length === 0)) {
       return;
     }
@@ -1202,6 +1243,7 @@
     _modalVariantListEl = variantListEl;
     _modalBase = base;
     _modalBannerEl = bannerEl;
+    _modalMakeViewFn = makeViewFn || null;
     _modalResynFn = function (variant) {
       openSynthModal(assetId, null, true, variantListEl, {
         label: variant.label,
@@ -1227,9 +1269,10 @@
     if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = 'Create Backing Track'; }
     if (voicesError) { voicesError.textContent = ''; voicesError.hidden = true; }
 
-    // Voice checkboxes (only when parts need selecting).
+    // Voice checkboxes — shown when parts list is available (both first-time OMR and
+    // re-synth after OMR has been run). This allows per-variant part selection.
     if (voicesSection) {
-      if (!hasMidi && parts && parts.length > 0) {
+      if (parts && parts.length > 0) {
         voiceList.replaceChildren();
         parts.forEach(function (part) {
           var li = document.createElement('li');
@@ -1269,14 +1312,22 @@
     var tempo = tempoInput ? Number(tempoInput.value) : NaN;
     var transpose = transposeInput ? Number(transposeInput.value) : NaN;
 
-    if (!label || !label.trim()) { showError('Name is required'); return; }
+    var nameErrorEl = document.getElementById('synth-modal-name-error');
+    if (nameErrorEl) nameErrorEl.hidden = true;
+    if (!label || !label.trim()) {
+      if (nameErrorEl) { nameErrorEl.textContent = 'Name is required'; nameErrorEl.hidden = false; }
+      else { showError('Name is required'); }
+      return;
+    }
     if (!Number.isInteger(tempo) || tempo < 25 || tempo > 300) { showError('Tempo must be between 25 and 300'); return; }
     if (!Number.isInteger(transpose) || transpose < -12 || transpose > 12) { showError('Transpose must be between \u221212 and +12'); return; }
 
+    // Collect selected part indices from the voice picker (shown for both new-OMR and re-synth with parts).
     var checkedIndices = [];
-    if (!_modalHasMidi && voicesSection && !voicesSection.hidden) {
+    if (voicesSection && !voicesSection.hidden) {
       var checked = voicesSection.querySelectorAll('input[type=checkbox]:checked');
-      if (checked.length === 0) {
+      if (!_modalHasMidi && checked.length === 0) {
+        // Only mandatory when this is the first synthesis (no MIDI yet).
         if (voicesError) { voicesError.textContent = 'Select at least one voice'; voicesError.hidden = false; }
         return;
       }
@@ -1286,17 +1337,26 @@
     submitBtn.disabled = true;
     submitBtn.textContent = 'Synthesising\u2026';
 
+    // Build the request object. Include part_indices when the voice picker is visible
+    // so the server can extract a fresh per-variant MIDI for this part combination.
     var req = { label: label.trim(), tempo_pct: tempo, transpose_semitones: transpose, respect_repeats: false };
+    if (checkedIndices.length > 0) {
+      req.part_indices = checkedIndices;
+    }
     var assetId = _modalAssetId;
     var hasMidi = _modalHasMidi;
     var variantListEl = _modalVariantListEl;
     var resynFn = _modalResynFn;
+    var makeViewFn = _modalMakeViewFn;
     var base = _modalBase;
     var bannerEl = _modalBannerEl;
 
     var wrappedList = {
       prepend: function (el) {
-        if (variantListEl) variantListEl.prepend(el);
+        if (variantListEl) {
+          variantListEl.prepend(el);
+          updateVariantCount(variantListEl.closest('.asset-row'), +1);
+        }
         dialog.close();
         if (!hasMidi) showNewVariantButton(assetId, variantListEl, base, bannerEl);
       }
@@ -1313,16 +1373,19 @@
           if (v) resetSubmitBtn();
         },
       });
-      synthesise(assetId, req, statusProxy, wrappedList, base, bannerEl, resynFn);
+      synthesise(assetId, req, statusProxy, wrappedList, base, bannerEl, resynFn, makeViewFn);
     }
 
     if (!hasMidi) {
+      // Legacy path: no musicxml yet — extract asset-level MIDI first, then synthesise.
       extractMidi(assetId, checkedIndices, statusP,
         function onSuccess() { doSynth(); },
         function onFailure() { resetSubmitBtn(); },
         base, bannerEl
       );
     } else {
+      // musicxml (or raw MIDI) already exists — synthesise directly.
+      // part_indices is included in req when a voice selection was made.
       doSynth();
     }
   }
@@ -1370,7 +1433,7 @@
   function init() {
     var slug = location.pathname.replace(/^\/teach\//, '').replace(/\/library.*$/, '');
     BASE = '/teach/' + slug + '/library/assets';
-    document.getElementById('back-link').href = '/teach/' + slug;
+    document.getElementById('back-link').href = '/teach/' + slug + '/dashboard';
     var bannerEl = document.getElementById('sidecar-banner');
     document.getElementById('sidecar-banner-close')
       .addEventListener('click', function () { hide503Banner(bannerEl); });

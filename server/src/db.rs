@@ -37,7 +37,6 @@ pub async fn run_migrations(db_url: &str) -> Result<()> {
 /// Shared helpers for inline unit tests that need a per-test PostgreSQL database.
 /// Addresses R1 findings #34 (panic-safe cleanup), #37 (deduplication), #31 (URL
 /// construction preserves query parameters).
-#[cfg(test)]
 pub mod test_helpers {
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::Mutex;

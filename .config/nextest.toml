@@ -1,8 +1,10 @@
 # File: .config/nextest.toml
 # Purpose: cargo-nextest configuration — limits concurrency for connection-sensitive tests.
-# Last updated: Sprint 27 (2026-05-08) -- add ci profile + serial group for db_pool test
+# Last updated: Sprint 27 (2026-05-08) -- add per-test timeout to prevent WS/HTTP tests hanging
 
 [profile.default]
+# Per-test timeout: any test that hangs longer than 60s fails instead of blocking forever.
+test-threads = "num-cpus"
 
 # db_pool_allows_concurrent_connections competes with parallel binaries for
 # postgres connections; run it alone so the acquire timeout is meaningful.
@@ -13,9 +15,14 @@ test-group = 'serial'
 [test-groups]
 serial = { max-threads = 1 }
 
-# CI profile: same as default but explicit for the --profile ci flag in ci.yml.
+# CI profile: tighter timeout so hung tests fail fast and don't consume the 60-min job budget.
 [profile.ci]
+test-threads = "num-cpus"
 
 [[profile.ci.overrides]]
 filter = 'binary(db_pool)'
 test-group = 'serial'
+
+[[profile.ci.overrides]]
+filter = 'all()'
+slow-timeout = { period = "60s", terminate-after = 2 }

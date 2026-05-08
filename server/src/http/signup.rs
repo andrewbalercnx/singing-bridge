@@ -9,7 +9,7 @@
 //             raw magic-link tokens never appear in query strings or span fields;
 //             fragment-based URL keeps them client-side only.
 //             home_redirect always returns 302 / with no-store headers.
-// Last updated: 2026-05-07 -- home.html from file; home_redirect helper; 404 injection
+// Last updated: Sprint 26 (2026-05-07) -- home.html from file; home_redirect helper; 404 injection
 
 use std::sync::Arc;
 

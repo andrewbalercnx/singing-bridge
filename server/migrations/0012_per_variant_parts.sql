@@ -1,6 +1,6 @@
 -- File: server/migrations/0012_per_variant_parts.sql
 -- Purpose: Move MIDI/part/score data to per-variant; cache parts list on asset.
--- Last updated: Sprint 26 (2026-05-06)
+-- Last updated: Sprint 26 (2026-05-06) -- per-variant MIDI/part/score columns
 
 ALTER TABLE accompaniment_variants ADD COLUMN IF NOT EXISTS midi_blob_key TEXT;
 ALTER TABLE accompaniment_variants ADD COLUMN IF NOT EXISTS bar_timings_json TEXT;

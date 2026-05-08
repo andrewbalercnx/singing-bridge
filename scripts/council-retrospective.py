@@ -17,7 +17,7 @@ Role:
 
 Exports: None (CLI only)
 Depends: pathlib, re, json, subprocess, sys, argparse
-Last updated: 2026-05-06 -- initial implementation
+Last updated: Sprint 26 (2026-05-06) -- initial implementation
 """
 
 from __future__ import annotations

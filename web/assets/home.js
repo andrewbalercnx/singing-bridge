@@ -1,7 +1,7 @@
 // File: web/assets/home.js
 // Purpose: Home page JS — student room-join form, room-not-found query param handling,
 //          and last-used room persistence via localStorage.
-// Last updated: 2026-05-07 — persist last room name in localStorage
+// Last updated: Sprint 26 (2026-05-07) -- persist last room name in localStorage
 
 var ROOM_KEY = 'sb-student-room';
 

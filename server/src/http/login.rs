@@ -256,17 +256,30 @@ pub async fn post_logout(
     State(state): State<Arc<AppState>>,
     headers: axum::http::HeaderMap,
 ) -> Result<Response> {
-    if let Some(raw) = extract_cookie_value(&headers, SESSION_COOKIE_NAME) {
-        let hash = cookie_hash(&raw);
-        sqlx::query("DELETE FROM sessions WHERE cookie_hash = $1")
-            .bind(&hash)
-            .execute(&state.db)
-            .await?;
+    let raw = match extract_cookie_value(&headers, SESSION_COOKIE_NAME) {
+        Some(v) => v,
+        None => {
+            return Ok((
+                StatusCode::UNAUTHORIZED,
+                [(header::CACHE_CONTROL, HeaderValue::from_static("no-store"))],
+            ).into_response());
+        }
+    };
+    let hash = cookie_hash(&raw);
+    let result = sqlx::query("DELETE FROM sessions WHERE cookie_hash = $1 RETURNING id")
+        .bind(&hash)
+        .fetch_optional(&state.db)
+        .await?;
+    if result.is_none() {
+        return Ok((
+            StatusCode::UNAUTHORIZED,
+            [(header::CACHE_CONTROL, HeaderValue::from_static("no-store"))],
+        ).into_response());
     }
     let expire_header = format!(
         "{SESSION_COOKIE_NAME}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0"
     );
-    let mut resp = (StatusCode::FOUND, [(header::LOCATION, "/")]).into_response();
+    let mut resp = StatusCode::NO_CONTENT.into_response();
     resp.headers_mut().insert(
         header::SET_COOKIE,
         HeaderValue::from_str(&expire_header)

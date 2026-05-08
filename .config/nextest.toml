@@ -13,11 +13,8 @@ test-group = 'serial'
 [test-groups]
 serial = { max-threads = 1 }
 
-# CI profile: cap concurrency to avoid overwhelming the shared postgres instance.
-# 30 test binaries × 5 connections each = 150 potential connections; Azure Basic
-# tier caps at ~50. With test-threads=8 the peak is ~40 connections.
+# CI profile: same as default but explicit for the --profile ci flag in ci.yml.
 [profile.ci]
-test-threads = 8
 
 [[profile.ci.overrides]]
 filter = 'binary(db_pool)'

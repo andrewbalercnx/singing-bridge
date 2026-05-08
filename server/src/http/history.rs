@@ -83,7 +83,7 @@ pub(crate) async fn get_history(
 ) -> Response {
     let teacher_id = match resolve_teacher_from_cookie(&state.db, &headers).await {
         Some(id) => id,
-        None => return crate::http::signup::home_redirect(),
+        None => return axum::http::StatusCode::UNAUTHORIZED.into_response(),
     };
 
     // Verify the teacher owns the slug.
@@ -94,7 +94,7 @@ pub(crate) async fn get_history(
             .fetch_one(&state.db)
             .await;
     if row.is_err() {
-        return crate::http::signup::home_redirect();
+        return axum::http::StatusCode::UNAUTHORIZED.into_response();
     }
 
     let rows: Vec<(i64, i64, Option<i64>, Option<i64>, Option<String>, String, Option<i64>)> =

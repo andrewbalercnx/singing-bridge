@@ -166,7 +166,8 @@ pub mod test_helpers {
             .await
             .expect("connect admin for test DB creation");
         // Drop stale DB left by a crashed/killed previous run (same PID reused).
-        let _ = sqlx::query(&format!("DROP DATABASE IF EXISTS \"{db_name}\""))
+        // WITH (FORCE) terminates any open connections immediately rather than blocking.
+        let _ = sqlx::query(&format!("DROP DATABASE IF EXISTS \"{db_name}\" WITH (FORCE)"))
             .execute(&admin)
             .await;
         sqlx::query(&format!(

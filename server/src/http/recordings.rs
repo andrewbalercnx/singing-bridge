@@ -350,7 +350,10 @@ pub(crate) async fn get_recordings_page(
 ) -> Result<Response> {
     let teacher_id = match crate::auth::resolve_teacher_from_cookie(&state.db, &headers).await {
         Some(id) => id,
-        None => return Ok(crate::http::signup::home_redirect()),
+        None => return Ok((
+            StatusCode::UNAUTHORIZED,
+            [(header::CACHE_CONTROL, HeaderValue::from_static("no-store"))],
+        ).into_response()),
     };
 
     let (owns,): (i64,) = sqlx::query_as(
@@ -361,7 +364,10 @@ pub(crate) async fn get_recordings_page(
     .fetch_one(&state.db)
     .await?;
     if owns == 0 {
-        return Ok(crate::http::signup::home_redirect());
+        return Ok((
+            StatusCode::FORBIDDEN,
+            [(header::CACHE_CONTROL, HeaderValue::from_static("no-store"))],
+        ).into_response());
     }
 
     let html_path = state.config.static_dir.join("recordings.html");

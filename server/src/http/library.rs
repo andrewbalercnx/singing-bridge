@@ -107,7 +107,10 @@ pub(crate) async fn get_library_page(
 ) -> Result<Response> {
     let teacher_id = match crate::auth::resolve_teacher_from_cookie(&state.db, &headers).await {
         Some(id) => id,
-        None => return Ok(crate::http::signup::home_redirect()),
+        None => return Ok((
+            StatusCode::UNAUTHORIZED,
+            [(header::CACHE_CONTROL, HeaderValue::from_static("no-store"))],
+        ).into_response()),
     };
     let slug = validate(&slug).map_err(|_| AppError::NotFound)?;
     let (owned,): (i64,) = sqlx::query_as(
@@ -118,7 +121,10 @@ pub(crate) async fn get_library_page(
     .fetch_one(&state.db)
     .await?;
     if owned == 0 {
-        return Ok(crate::http::signup::home_redirect());
+        return Ok((
+            StatusCode::FORBIDDEN,
+            [(header::CACHE_CONTROL, HeaderValue::from_static("no-store"))],
+        ).into_response());
     }
     let html_path = state.config.static_dir.join("library.html");
     let html = tokio::fs::read_to_string(&html_path).await?;

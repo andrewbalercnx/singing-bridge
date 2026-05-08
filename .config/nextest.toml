@@ -1,0 +1,14 @@
+# File: .config/nextest.toml
+# Purpose: cargo-nextest configuration — limits concurrency for connection-sensitive tests.
+# Last updated: Sprint 27 (2026-05-08) -- add serial group for db_pool test
+
+[profile.default]
+
+# db_pool_allows_concurrent_connections competes with 30+ parallel binaries for
+# postgres connections; run it alone so the 5s acquire timeout is meaningful.
+[[profile.default.overrides]]
+filter = 'binary(db_pool)'
+test-group = 'serial'
+
+[test-groups]
+serial = { max-threads = 1 }

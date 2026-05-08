@@ -84,6 +84,7 @@ EXCLUDED_PREFIXES = (
     ".github/actions/",
     "design_handoff_singing_bridge_session/",
     "spike/",
+    "server/migrations/",  # migration files are immutable once applied — never modify headers
 )
 
 # Individual files to skip.

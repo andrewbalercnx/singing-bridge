@@ -1,6 +1,6 @@
 # File: .config/nextest.toml
 # Purpose: cargo-nextest configuration — limits concurrency for connection-sensitive tests.
-# Last updated: Sprint 27 (2026-05-08) -- add per-test timeout to prevent WS/HTTP tests hanging
+# Last updated: Sprint 27 (2026-05-08) -- shared template DB + test-threads=8 for CI
 
 [profile.default]
 
@@ -13,9 +13,12 @@ test-group = 'serial'
 [test-groups]
 serial = { max-threads = 1 }
 
-# CI profile: per-test timeout so hung tests fail fast instead of blocking the job.
-# test-threads deliberately omitted — nextest default runs all binaries in parallel.
+# CI profile: per-test timeout + higher parallelism.
+# test-threads=8 on 2-CPU runner: tests finish in ~10 min vs 45 min at default num-cpus=2.
+# With the shared template DB (advisory lock in ensure_template_db), concurrent test
+# processes don't each re-run migrations — only the first does; others wait then clone.
 [profile.ci]
+test-threads = 8
 
 [[profile.ci.overrides]]
 filter = 'binary(db_pool)'

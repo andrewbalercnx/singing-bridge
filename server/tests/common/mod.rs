@@ -1,7 +1,7 @@
 // File: server/tests/common/mod.rs
 // Purpose: Shared test harness — spawn_app, dev-mail reader, WS client.
 // Role: Keep integration-test bodies short and behaviour-focused.
-// Last updated: Sprint 25 (2026-04-27) -- template DB per process; skip per-test migrations
+// Last updated: Sprint 27 (2026-05-08) -- shared template DB via advisory lock
 
 #![allow(dead_code)]
 
@@ -139,7 +139,13 @@ impl Default for TestOpts {
     }
 }
 
-/// Return (or lazily create) a per-process template database with migrations applied.
+/// Return (or lazily create) the shared template database with all migrations applied.
+///
+/// Uses a PostgreSQL session-level advisory lock so that concurrent nextest processes
+/// coordinate: only one creates+migrates the template; others wait and then reuse it.
+/// The template persists across runs — sqlx migrate! is idempotent so subsequent runs
+/// skip already-applied migrations.  Admin connection is kept alive until migrations
+/// finish so the lock is held for the full critical section.
 async fn ensure_template_db(admin_url: &str) -> String {
     if let Some(name) = TEMPLATE_DB.lock().unwrap().as_ref() {
         return name.clone();
@@ -150,8 +156,7 @@ async fn ensure_template_db(admin_url: &str) -> String {
         if let Some(name) = guard.as_ref() {
             return name.clone();
         }
-        let pid = std::process::id();
-        let name = format!("singing_bridge_test_template_{pid}");
+        let name = "singing_bridge_test_template".to_string();
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -162,14 +167,26 @@ async fn ensure_template_db(admin_url: &str) -> String {
                 .connect(&admin_url)
                 .await
                 .expect("template: connect admin");
-            let _ = sqlx::query(&format!("DROP DATABASE IF EXISTS \"{name}\" WITH (FORCE)"))
-                .execute(&admin)
-                .await;
-            sqlx::query(&format!("CREATE DATABASE \"{name}\""))
+            // Advisory lock coordinates across all concurrent nextest processes.
+            // Released automatically when admin connection closes.
+            sqlx::query("SELECT pg_advisory_lock(9876543210)")
                 .execute(&admin)
                 .await
-                .expect("template: create");
-            admin.close().await;
+                .expect("template: advisory lock");
+            let (exists,): (bool,) = sqlx::query_as(
+                "SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname = $1)"
+            )
+            .bind(&name)
+            .fetch_one(&admin)
+            .await
+            .expect("template: check exists");
+            if !exists {
+                sqlx::query(&format!("CREATE DATABASE \"{name}\""))
+                    .execute(&admin)
+                    .await
+                    .expect("template: create");
+            }
+            // Apply any pending migrations while holding the advisory lock.
             let db_url = match Url::parse(&admin_url) {
                 Ok(mut u) => { u.set_path(&format!("/{name}")); u.to_string() }
                 Err(_) => match admin_url.rfind('/') {
@@ -178,6 +195,8 @@ async fn ensure_template_db(admin_url: &str) -> String {
                 },
             };
             run_migrations(&db_url).await.expect("template: run_migrations");
+            // Closing admin releases the advisory lock.
+            admin.close().await;
         });
         *guard = Some(name.clone());
         name

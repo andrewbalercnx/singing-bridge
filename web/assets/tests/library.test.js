@@ -34,6 +34,7 @@ globalThis.document = {
   getElementById: function() { return null; },
   querySelector: function() { return null; },
   querySelectorAll: function() { return []; },
+  createTextNode: function(text) { return { textContent: String(text), children: [] }; },
 };
 
 // ---------------------------------------------------------------------------
@@ -72,6 +73,7 @@ function makeEl() {
     querySelectorAll: function() { return []; },
     querySelector: function() { return null; },
     remove: function() { el._removed = true; },
+    closest: function() { return null; },
     classList: {
       _cls: '',
       add: function(c) {},

@@ -66,7 +66,6 @@ window.sbPitchDisplay = (function () {
   function setActive(on) {
     _active = on;
     if (_root) _root.hidden = !on;
-    if (!on) stopDemo();
   }
 
   return { mount: mount, setNote: setNote, setActive: setActive };

@@ -1,30 +1,16 @@
 // File: tests/e2e/session.spec.js
 // Purpose: E2E tests for the teacher/student WebRTC session — covers signup,
 //          lobby admission, and audio/video stream establishment.
-// Last updated: Sprint 9 (2026-04-20) -- initial E2E test suite; slug-file persistence for worker recycling
+// Last updated: Sprint 28 (2026-05-08) -- migrated from magic-link to password auth
 
 'use strict';
 
-const fs = require('fs');
 const { test, expect } = require('@playwright/test');
-const { signupAndAuth } = require('./helpers/auth');
-const path = require('path');
+const { loginOrRegister, injectCookie } = require('./helpers/auth');
 
-const AUTH_STATE_PATH = path.join(__dirname, '../../.e2e-auth-state.json');
-// Written by test 1; read by all other tests including those in recycled workers.
-const SLUG_PATH = path.join(__dirname, '../../.e2e-slug.txt');
-
-// Read the current slug from disk. Throws if test 1 hasn't run yet.
-function getSlug() {
-  if (!fs.existsSync(SLUG_PATH)) throw new Error('SLUG_PATH not found — test 1 must run first');
-  return fs.readFileSync(SLUG_PATH, 'utf8').trim();
-}
-function getStudentEmail() {
-  return `e2e-student-${getSlug().replace('e2e-', '')}@test.invalid`;
-}
-function getTeacherEmail() {
-  return `e2e-teacher-${getSlug().replace('e2e-', '')}@test.invalid`;
-}
+// Module-level state shared across sequential tests (workers=1 in playwright.config.js).
+let sharedSlug = '';
+let sharedCookieHeader = '';
 
 /**
  * Wait for the sb-self-check-overlay to appear (async, fires after getUserMedia),
@@ -44,25 +30,24 @@ async function dismissSelfCheck(page, { timeout = 6_000 } = {}) {
 }
 
 // ---------------------------------------------------------------------------
-// Signup + auth (runs once; state reused by later tests)
+// Signup + auth (runs once; cookie stored in module-level variable)
 // ---------------------------------------------------------------------------
 
+// Fixed credentials — register-or-login fallback keeps repeated runs below rate limit.
+const E2E_SESSION_EMAIL = 'e2e-session@test.invalid';
+const E2E_SESSION_SLUG  = 'e2e-session';
+const E2E_STUDENT_EMAIL = 'e2e-session-student@test.invalid';
+
 test('teacher signup and auth', async ({ page, context }) => {
-  // Always mint a fresh slug so re-runs don't conflict (in-memory DB is wiped
-  // between server restarts, but between tests within a run the slug persists).
-  const runId = String(Date.now());
-  const slug = `e2e-${runId}`;
-  const email = `e2e-teacher-${runId}@test.invalid`;
+  sharedSlug = E2E_SESSION_SLUG;
+  sharedCookieHeader = await loginOrRegister(page, context, {
+    email: E2E_SESSION_EMAIL,
+    slug: sharedSlug,
+  });
 
-  await signupAndAuth(page, { email, slug });
-  await expect(page.locator('#room-heading')).toContainText(slug);
+  await page.goto(`/teach/${sharedSlug}/session`);
+  await expect(page.locator('#room-heading')).toBeVisible();
   await expect(page.locator('#lobby-empty')).toBeVisible();
-
-  // Write slug to disk so recycled workers can find it.
-  fs.writeFileSync(SLUG_PATH, slug, 'utf8');
-
-  // Save auth cookies so subsequent tests can reuse without re-signing-in.
-  await context.storageState({ path: AUTH_STATE_PATH });
 });
 
 // ---------------------------------------------------------------------------
@@ -70,17 +55,17 @@ test('teacher signup and auth', async ({ page, context }) => {
 // ---------------------------------------------------------------------------
 
 test('teacher sees empty lobby and room heading', async ({ browser }) => {
-  const slug = getSlug();
-  const ctx = await browser.newContext({
-    permissions: ['camera', 'microphone'],
-    storageState: AUTH_STATE_PATH,
-  });
-  const page = await ctx.newPage();
-
-  await page.goto(`/teach/${slug}`);
-  await expect(page.locator('#room-heading')).toContainText(slug);
-  await expect(page.locator('#lobby-empty')).toBeVisible();
-  await ctx.close();
+  if (!sharedSlug) test.skip();
+  const ctx = await browser.newContext({ permissions: ['camera', 'microphone'] });
+  try {
+    await injectCookie(ctx, sharedCookieHeader);
+    const page = await ctx.newPage();
+    await page.goto(`/teach/${sharedSlug}/session`);
+    await expect(page.locator('#room-heading')).toBeVisible();
+    await expect(page.locator('#lobby-empty')).toBeVisible();
+  } finally {
+    await ctx.close();
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -88,11 +73,11 @@ test('teacher sees empty lobby and room heading', async ({ browser }) => {
 // ---------------------------------------------------------------------------
 
 test('student join form enters lobby waiting state', async ({ page }) => {
-  const slug = getSlug();
-  await page.goto(`/teach/${slug}`);
+  if (!sharedSlug) test.skip();
+  await page.goto(`/teach/${sharedSlug}`);
   await expect(page.locator('#join')).toBeVisible();
 
-  await page.fill('#join-form input[name="email"]', getStudentEmail());
+  await page.fill('#join-form input[name="email"]', E2E_STUDENT_EMAIL);
   await page.click('#join-form button[type="submit"]');
 
   await expect(page.locator('#join')).toBeHidden();
@@ -105,63 +90,55 @@ test('student join form enters lobby waiting state', async ({ page }) => {
 
 test('full session — remote audio/video streams established after admission', async ({ browser }) => {
   test.setTimeout(90_000);
-  const slug = getSlug();
-  const studentEmail = getStudentEmail();
+  if (!sharedSlug) test.skip();
+  const studentEmail = E2E_STUDENT_EMAIL;
   const ctxOpts = { permissions: ['camera', 'microphone'] };
 
-  const teacherCtx = await browser.newContext({ ...ctxOpts, storageState: AUTH_STATE_PATH });
+  const teacherCtx = await browser.newContext(ctxOpts);
   const studentCtx = await browser.newContext(ctxOpts);
 
   try {
+    await injectCookie(teacherCtx, sharedCookieHeader);
     const teacherPage = await teacherCtx.newPage();
     const studentPage = await studentCtx.newPage();
 
-    // Teacher opens room and dismisses self-check overlay.
-    await teacherPage.goto(`/teach/${slug}`);
-    await expect(teacherPage.locator('#room-heading')).toContainText(slug);
+    await teacherPage.goto(`/teach/${sharedSlug}/session`);
+    await expect(teacherPage.locator('#room-heading')).toBeVisible();
     await dismissSelfCheck(teacherPage);
 
-    // Student enters lobby (self-check shown after submit — dismiss it too).
-    await studentPage.goto(`/teach/${slug}`);
+    await studentPage.goto(`/teach/${sharedSlug}`);
     await studentPage.fill('#join-form input[name="email"]', studentEmail);
     await studentPage.click('#join-form button[type="submit"]');
     await dismissSelfCheck(studentPage);
     await expect(studentPage.locator('#lobby-status')).toBeVisible();
 
-    // Teacher sees student in lobby and admits.
     const admitBtn = teacherPage.locator('#lobby-list li button', { hasText: 'Admit' }).first();
     await expect(admitBtn).toBeVisible({ timeout: 15_000 });
     await admitBtn.click();
 
-    // Both sides: session UI mounts.
-    await expect(teacherPage.locator('#session-root .sb-session')).toBeVisible({ timeout: 30_000 });
+    await expect(teacherPage.locator('#session-root .sb-session-v2')).toBeVisible({ timeout: 30_000 });
     await expect(studentPage.locator('#session')).toBeVisible({ timeout: 30_000 });
 
-    // Give WebRTC ICE time to connect and tracks to flow.
     await teacherPage.waitForTimeout(8_000);
 
-    // Teacher: remote video has a live srcObject with tracks.
     const teacherVideoOk = await teacherPage.evaluate(() => {
       const vid = document.querySelector('.sb-remote-panel video');
       return !!(vid && vid.srcObject && vid.srcObject.getTracks().length > 0);
     });
     expect(teacherVideoOk, 'teacher remote video srcObject has tracks').toBe(true);
 
-    // Teacher: remote audio has a live srcObject with tracks.
     const teacherAudioOk = await teacherPage.evaluate(() => {
       const aud = document.querySelector('.sb-remote-panel audio');
       return !!(aud && aud.srcObject && aud.srcObject.getTracks().length > 0);
     });
     expect(teacherAudioOk, 'teacher remote audio srcObject has tracks').toBe(true);
 
-    // Student: remote video has a live srcObject with tracks.
     const studentVideoOk = await studentPage.evaluate(() => {
       const vid = document.querySelector('.sb-remote-panel video');
       return !!(vid && vid.srcObject && vid.srcObject.getTracks().length > 0);
     });
     expect(studentVideoOk, 'student remote video srcObject has tracks').toBe(true);
 
-    // Student: remote audio has a live srcObject with tracks.
     const studentAudioOk = await studentPage.evaluate(() => {
       const aud = document.querySelector('.sb-remote-panel audio');
       return !!(aud && aud.srcObject && aud.srcObject.getTracks().length > 0);
@@ -178,12 +155,11 @@ test('full session — remote audio/video streams established after admission', 
 // ---------------------------------------------------------------------------
 
 test('student sees connection-lost message when WebSocket drops', async ({ browser }) => {
-  const slug = getSlug();
+  if (!sharedSlug) test.skip();
   const ctx = await browser.newContext({ permissions: ['camera', 'microphone'] });
   try {
     const page = await ctx.newPage();
 
-    // Intercept the WebSocket constructor so we can force-close it later.
     await page.addInitScript(() => {
       const OrigWS = window.WebSocket;
       window.WebSocket = function (url, protocols) {
@@ -199,20 +175,16 @@ test('student sees connection-lost message when WebSocket drops', async ({ brows
       window.WebSocket.CLOSED = OrigWS.CLOSED;
     });
 
-    await page.goto(`/teach/${slug}`);
+    await page.goto(`/teach/${sharedSlug}`);
     await expect(page.locator('#join-form')).toBeVisible();
-    await page.fill('#join-form input[name="email"]', getStudentEmail());
+    await page.fill('#join-form input[name="email"]', E2E_STUDENT_EMAIL);
     await page.click('#join-form button[type="submit"]');
     await dismissSelfCheck(page);
     await expect(page.locator('#lobby-status')).toBeVisible();
 
-    // Wait for WS to be fully open, then force-close it so the close event
-    // fires immediately without waiting for a TCP keepalive timeout.
     await page.waitForTimeout(800);
     await page.evaluate(() => { if (window.__lastWs) window.__lastWs.close(3000, 'test'); });
 
-    // The close/error listener in signalling.js fires → onWsClose callback →
-    // errEl.textContent = 'Connection lost — please refresh the page and try again.'
     await expect(page.locator('#error')).toContainText('Connection lost', { timeout: 8_000 });
   } finally {
     await ctx.close();

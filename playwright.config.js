@@ -23,6 +23,11 @@ module.exports = defineConfig({
         '--use-fake-ui-for-media-stream',
         '--use-fake-device-for-media-stream',
         '--allow-file-access-from-files',
+        // Allow loopback (127.0.0.1) ICE candidates and expose real host IPs
+        // instead of mDNS-obfuscated names so two headless contexts on the same
+        // machine can connect without a STUN/TURN server.
+        '--allow-loopback-in-peer-connection',
+        '--disable-features=WebRtcHideLocalIpsWithMdns',
       ],
     },
     // Explicitly grant permissions so getUserMedia resolves immediately.
@@ -34,7 +39,8 @@ module.exports = defineConfig({
   projects: [
     {
       name: 'chromium',
-      use: { ...devices['Desktop Chrome'] },
+      // Use installed Chrome for WebRTC support (headless-shell lacks full ICE).
+      use: { ...devices['Desktop Chrome'], channel: 'chrome' },
     },
   ],
 

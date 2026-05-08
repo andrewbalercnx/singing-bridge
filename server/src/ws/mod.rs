@@ -903,15 +903,19 @@ async fn cleanup(state: &AppState, mut ctx: ConnContext, result: LoopExit) {
                         && rs.teacher_conn.as_ref().map(|c| c.id) == Some(ctx.id)
                     {
                         rs.teacher_conn = None;
-                        // Teacher disconnect: reset recording state, notify student.
+                        // Teacher disconnect: reset recording state, clear active session,
+                        // notify student. Clearing active_session here is critical — without
+                        // it, the next admit is blocked with SessionInProgress until the
+                        // student's WS also closes (a race the test suite can hit).
                         rs.consent_pending = false;
-                        if rs.recording_active {
-                            rs.recording_active = false;
-                            if let Some(student_tx) =
-                                rs.active_session.as_ref().map(|s| s.student.conn.tx.clone())
-                            {
-                                outbound.push((student_tx, ServerMsg::RecordingStopped));
+                        if let Some(session) = rs.active_session.take() {
+                            if rs.recording_active {
+                                rs.recording_active = false;
+                                outbound.push((session.student.conn.tx.clone(), ServerMsg::RecordingStopped));
                             }
+                            outbound.push((session.student.conn.tx, ServerMsg::PeerDisconnected));
+                        } else if rs.recording_active {
+                            rs.recording_active = false;
                         }
                     } else {
                         match rs.remove_by_connection(ctx.id) {

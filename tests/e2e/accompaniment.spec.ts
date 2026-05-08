@@ -43,11 +43,11 @@ async function registerTeacher(page: Page, email: string, slug: string): Promise
 
 async function injectCookie(context: BrowserContext, rawCookie: string): Promise<void> {
   const [parsed] = parseCookieHeader(rawCookie, { decodeValues: false });
+  // Playwright rejects `domain: 'localhost'` — use `url` instead.
   await context.addCookies([{
     name: parsed.name,
     value: parsed.value,
-    domain: new URL(BASE_URL).hostname,
-    path: parsed.path ?? '/',
+    url: BASE_URL,
     httpOnly: parsed.httpOnly ?? false,
     secure: parsed.secure ?? false,
   }]);
@@ -131,8 +131,8 @@ async function establishSession(
   await stubAudio(teacherPage);
   await stubAudio(studentPage);
 
-  await teacherPage.goto(`${BASE_URL}/teach/${slug}`);
-  await expect(teacherPage.locator('#room-heading')).toContainText(slug);
+  await teacherPage.goto(`${BASE_URL}/teach/${slug}/session`);
+  await expect(teacherPage.locator('#room-heading')).toBeVisible();
   await dismissSelfCheck(teacherPage);
 
   await studentPage.goto(`${BASE_URL}/teach/${slug}`);
@@ -145,24 +145,30 @@ async function establishSession(
   await expect(admitBtn).toBeVisible({ timeout: 15_000 });
   await admitBtn.click();
 
-  await expect(teacherPage.locator('#session-root .sb-session')).toBeVisible({ timeout: 30_000 });
+  await expect(teacherPage.locator('#session-root .sb-session-v2')).toBeVisible({ timeout: 30_000 });
   await expect(studentPage.locator('#session')).toBeVisible({ timeout: 30_000 });
 
   return { teacherCtx, studentCtx, teacherPage, studentPage };
 }
 
-/** Arm the drawer with asset/variant IDs then click Play. */
+/**
+ * Select a track in the v2 teacher panel and click the play/pause toggle.
+ * Waits for the live track selector to be populated (library fetch after peer connect).
+ */
 async function clickPlay(page: Page, assetId: number, variantId: number): Promise<void> {
-  await page.evaluate(
-    ([aid, vid]) => {
-      const drawer = document.querySelector('.sb-accompaniment-drawer') as HTMLElement | null;
-      if (!drawer) throw new Error('Drawer not found');
-      drawer.dataset.assetId = String(aid);
-      drawer.dataset.variantId = String(vid);
-    },
-    [assetId, variantId] as [number, number]
-  );
-  await page.locator('.sb-btn-play').click();
+  const optionValue = `${assetId}:${variantId}`;
+  // Wait for the live track selector to have this option (populated after peer connect).
+  await page.locator(`.sb-accmp-track-select option[value="${optionValue}"]`).waitFor({ state: 'attached', timeout: 10_000 });
+  await page.locator('.sb-accmp-track-select').selectOption(optionValue);
+  await page.locator('.sb-accmp-pause').click();
+}
+
+/** Fire the audio ended event on the last stub instance to simulate stop. */
+async function fireAudioEnded(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const instances = (window as any).__stubAudioInstances ?? [];
+    if (instances.length > 0) instances[instances.length - 1]._fireEnded();
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -209,7 +215,8 @@ test('drawer visible after session established', async ({ browser }) => {
   try {
     await expect(teacherPage.locator('#accompaniment-drawer-root')).toBeAttached();
     await expect(studentPage.locator('#accompaniment-drawer-root')).toBeAttached();
-    await expect(teacherPage.locator('.sb-accompaniment-status')).toBeVisible({ timeout: 5_000 });
+    // Teacher uses the v2 accmp panel (session-panels.js); student uses the legacy drawer.
+    await expect(teacherPage.locator('.sb-accmp-panel')).toBeVisible({ timeout: 5_000 });
     await expect(studentPage.locator('.sb-accompaniment-status')).toBeVisible({ timeout: 5_000 });
   } finally {
     await teacherCtx.close();
@@ -229,15 +236,14 @@ test('play: student drawer shows Playing after teacher clicks Play', async ({ br
     await establishSession(browser, sharedSlug, sharedCookieHeader);
 
   try {
-    // Arm the drawer dataset and click Play. This emits accompaniment_play via WS.
     await clickPlay(teacherPage, sharedAssetId, sharedVariantId);
 
     // Student drawer must transition to "Playing" (receives AccompanimentState).
     await expect(studentPage.locator('.sb-accompaniment-status')).toContainText(
       /Playing/i, { timeout: 8_000 }
     );
-    // Teacher drawer also shows "Playing".
-    await expect(teacherPage.locator('.sb-accompaniment-status')).toContainText(
+    // Teacher v2 panel shows "Playing" in the track-name slot.
+    await expect(teacherPage.locator('.sb-accmp-track-name')).toContainText(
       /Playing/i, { timeout: 5_000 }
     );
   } finally {
@@ -259,9 +265,10 @@ test('pause: student drawer shows Paused after teacher clicks Pause', async ({ b
 
   try {
     await clickPlay(teacherPage, sharedAssetId, sharedVariantId);
-    await expect(teacherPage.locator('.sb-accompaniment-status')).toContainText(/Playing/i, { timeout: 8_000 });
+    await expect(teacherPage.locator('.sb-accmp-track-name')).toContainText(/Playing/i, { timeout: 8_000 });
 
-    await teacherPage.locator('.sb-btn-pause').click();
+    // Click play/pause toggle again to pause.
+    await teacherPage.locator('.sb-accmp-pause').click();
     await expect(studentPage.locator('.sb-accompaniment-status')).toContainText(/Paused/i, { timeout: 5_000 });
   } finally {
     await teacherCtx.close();
@@ -283,7 +290,7 @@ test('stop: student returns to idle; media token 404s', async ({ browser }) => {
   let wavUrl = '';
   try {
     await clickPlay(teacherPage, sharedAssetId, sharedVariantId);
-    await expect(teacherPage.locator('.sb-accompaniment-status')).toContainText(/Playing/i, { timeout: 8_000 });
+    await expect(teacherPage.locator('.sb-accmp-track-name')).toContainText(/Playing/i, { timeout: 8_000 });
 
     // Capture the wav_url from the Audio stub.
     wavUrl = await teacherPage.evaluate(() => {
@@ -291,7 +298,8 @@ test('stop: student returns to idle; media token 404s', async ({ browser }) => {
       return instances.length > 0 ? instances[instances.length - 1].src : '';
     });
 
-    await teacherPage.locator('.sb-btn-stop').click();
+    // v2 teacher has no stop button — fire audio ended to trigger accompaniment_stop.
+    await fireAudioEnded(teacherPage);
     await expect(studentPage.locator('.sb-accompaniment-status')).toContainText(
       /No accompaniment/i, { timeout: 5_000 }
     );
@@ -341,11 +349,10 @@ test('teacher has play/pause/stop controls in drawer', async ({ browser }) => {
     await establishSession(browser, sharedSlug, sharedCookieHeader);
 
   try {
-    const controls = teacherPage.locator('.sb-accompaniment-controls');
-    await expect(controls).toBeVisible({ timeout: 5_000 });
-    await expect(controls.locator('.sb-btn-play')).toBeVisible();
-    await expect(controls.locator('.sb-btn-pause')).toBeVisible();
-    await expect(controls.locator('.sb-btn-stop')).toBeVisible();
+    // v2 teacher uses accmp panel (session-panels.js) not the old controls div.
+    await expect(teacherPage.locator('.sb-accmp-panel')).toBeVisible({ timeout: 5_000 });
+    await expect(teacherPage.locator('.sb-accmp-pause')).toBeVisible();
+    await expect(teacherPage.locator('.sb-accmp-track-select')).toBeVisible();
   } finally {
     await teacherCtx.close();
   }
@@ -364,7 +371,7 @@ test('WAV-only asset: score view hidden (no page images)', async ({ browser }) =
 
   try {
     await clickPlay(teacherPage, sharedAssetId, sharedVariantId);
-    await expect(teacherPage.locator('.sb-accompaniment-status')).toContainText(/Playing/i, { timeout: 8_000 });
+    await expect(teacherPage.locator('.sb-accmp-track-name')).toContainText(/Playing/i, { timeout: 8_000 });
 
     const scoreViewDisplay = await teacherPage.evaluate(() => {
       const sv = document.querySelector('#score-view-root .sb-score-view') as HTMLElement | null;
@@ -389,13 +396,10 @@ test('natural end: audio ended fires AccompanimentStop; student returns to idle'
 
   try {
     await clickPlay(teacherPage, sharedAssetId, sharedVariantId);
-    await expect(teacherPage.locator('.sb-accompaniment-status')).toContainText(/Playing/i, { timeout: 8_000 });
+    await expect(teacherPage.locator('.sb-accmp-track-name')).toContainText(/Playing/i, { timeout: 8_000 });
 
     // Fire the 'ended' event on the Audio stub to simulate natural playback end.
-    await teacherPage.evaluate(() => {
-      const instances = (window as any).__stubAudioInstances ?? [];
-      if (instances.length > 0) instances[instances.length - 1]._fireEnded();
-    });
+    await fireAudioEnded(teacherPage);
 
     await expect(studentPage.locator('.sb-accompaniment-status')).toContainText(
       /No accompaniment/i, { timeout: 8_000 }

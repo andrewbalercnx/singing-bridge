@@ -224,6 +224,8 @@
     // awaits this if the offer arrives before getUserMedia resolves.
     var mediaReady = null;
     var remoteStream = new MediaStream();
+    // Buffer for signals (offer/candidates) that race ahead of makePeerConnection.
+    var pendingSignals = [];
 
     sig.on('peer_connected', async function () {
       // Start getUserMedia immediately — before awaiting makePeerConnection — so
@@ -284,9 +286,16 @@
           });
         };
       };
+      // Drain signals that arrived while makePeerConnection + getUserMedia were
+      // in-flight. All refs are now wired so the handler can process them safely.
+      var buffered = pendingSignals.splice(0);
+      for (var i = 0; i < buffered.length; i++) {
+        var hs = sig.handlers.get('signal') || [];
+        for (var j = 0; j < hs.length; j++) hs[j](buffered[i]);
+      }
     });
     sig.on('signal', async function (m) {
-      if (!refs.pc) return;
+      if (!refs.pc) { pendingSignals.push(m); return; }
       var p = m.payload;
       if (p.sdp) {
         await refs.pc.setRemoteDescription(new RTCSessionDescription(p.sdp));

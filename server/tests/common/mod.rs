@@ -139,13 +139,28 @@ impl Default for TestOpts {
     }
 }
 
+/// Fingerprint of all embedded migrations — used as part of the template DB name so
+/// that a schema change automatically produces a new template without invalidating old ones.
+fn migration_fingerprint() -> u64 {
+    sqlx::migrate!("./migrations")
+        .migrations
+        .iter()
+        .fold(0u64, |acc, m| {
+            let csum = m.checksum.iter().copied()
+                .fold(0u64, |a, b| a.wrapping_mul(257).wrapping_add(b as u64));
+            acc.wrapping_add(m.version as u64).wrapping_add(csum)
+        })
+}
+
 /// Return (or lazily create) the shared template database with all migrations applied.
 ///
-/// Uses a PostgreSQL session-level advisory lock so that concurrent nextest processes
-/// coordinate: only one creates+migrates the template; others wait and then reuse it.
-/// The template persists across runs — sqlx migrate! is idempotent so subsequent runs
-/// skip already-applied migrations.  Admin connection is kept alive until migrations
-/// finish so the lock is held for the full critical section.
+/// The template name encodes the migration fingerprint, so a changed schema creates a
+/// new template automatically.  A PostgreSQL session-level advisory lock coordinates
+/// across concurrent nextest processes: only the first creates+migrates the template;
+/// others wait, then see it exists and skip — crucially without connecting to it.
+/// Avoiding a connection to the template when it already exists is what prevents the
+/// deadlock where spawn_app_with's `CREATE DATABASE … TEMPLATE` (which locks the
+/// template for new connections during the copy) races with a migration-check connection.
 async fn ensure_template_db(admin_url: &str) -> String {
     if let Some(name) = TEMPLATE_DB.lock().unwrap().as_ref() {
         return name.clone();
@@ -156,7 +171,8 @@ async fn ensure_template_db(admin_url: &str) -> String {
         if let Some(name) = guard.as_ref() {
             return name.clone();
         }
-        let name = "singing_bridge_test_template".to_string();
+        let fp = migration_fingerprint();
+        let name = format!("singing_bridge_test_template_{fp:016x}");
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -167,8 +183,8 @@ async fn ensure_template_db(admin_url: &str) -> String {
                 .connect(&admin_url)
                 .await
                 .expect("template: connect admin");
-            // Advisory lock coordinates across all concurrent nextest processes.
-            // Released automatically when admin connection closes.
+            // Advisory lock serialises template creation across all concurrent processes.
+            // Session-level: released automatically when admin connection closes.
             sqlx::query("SELECT pg_advisory_lock(9876543210)")
                 .execute(&admin)
                 .await
@@ -181,20 +197,22 @@ async fn ensure_template_db(admin_url: &str) -> String {
             .await
             .expect("template: check exists");
             if !exists {
+                // First process: create + migrate. The fingerprint in the name guarantees
+                // this template is fully migrated — no process ever connects to it again
+                // for migration checks, eliminating the CREATE DATABASE … TEMPLATE deadlock.
                 sqlx::query(&format!("CREATE DATABASE \"{name}\""))
                     .execute(&admin)
                     .await
                     .expect("template: create");
+                let db_url = match Url::parse(&admin_url) {
+                    Ok(mut u) => { u.set_path(&format!("/{name}")); u.to_string() }
+                    Err(_) => match admin_url.rfind('/') {
+                        Some(idx) => format!("{}/{}", &admin_url[..idx], name),
+                        None => format!("{}/{}", admin_url, name),
+                    },
+                };
+                run_migrations(&db_url).await.expect("template: run_migrations");
             }
-            // Apply any pending migrations while holding the advisory lock.
-            let db_url = match Url::parse(&admin_url) {
-                Ok(mut u) => { u.set_path(&format!("/{name}")); u.to_string() }
-                Err(_) => match admin_url.rfind('/') {
-                    Some(idx) => format!("{}/{}", &admin_url[..idx], name),
-                    None => format!("{}/{}", admin_url, name),
-                },
-            };
-            run_migrations(&db_url).await.expect("template: run_migrations");
             // Closing admin releases the advisory lock.
             admin.close().await;
         });

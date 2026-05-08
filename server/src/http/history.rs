@@ -76,6 +76,14 @@ fn format_duration(duration_secs: Option<i64>) -> String {
     }
 }
 
+fn unauth_response() -> axum::response::Response {
+    (
+        axum::http::StatusCode::UNAUTHORIZED,
+        [(header::CACHE_CONTROL, "no-store")],
+    )
+        .into_response()
+}
+
 pub(crate) async fn get_history(
     State(state): State<Arc<AppState>>,
     Path(slug): Path<String>,
@@ -83,7 +91,7 @@ pub(crate) async fn get_history(
 ) -> Response {
     let teacher_id = match resolve_teacher_from_cookie(&state.db, &headers).await {
         Some(id) => id,
-        None => return axum::http::StatusCode::UNAUTHORIZED.into_response(),
+        None => return unauth_response(),
     };
 
     // Verify the teacher owns the slug.
@@ -94,7 +102,7 @@ pub(crate) async fn get_history(
             .fetch_one(&state.db)
             .await;
     if row.is_err() {
-        return axum::http::StatusCode::UNAUTHORIZED.into_response();
+        return unauth_response();
     }
 
     let rows: Vec<(i64, i64, Option<i64>, Option<i64>, Option<String>, String, Option<i64>)> =

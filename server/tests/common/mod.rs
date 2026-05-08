@@ -162,7 +162,7 @@ async fn ensure_template_db(admin_url: &str) -> String {
                 .connect(&admin_url)
                 .await
                 .expect("template: connect admin");
-            let _ = sqlx::query(&format!("DROP DATABASE IF EXISTS \"{name}\""))
+            let _ = sqlx::query(&format!("DROP DATABASE IF EXISTS \"{name}\" WITH (FORCE)"))
                 .execute(&admin)
                 .await;
             sqlx::query(&format!("CREATE DATABASE \"{name}\""))
@@ -226,7 +226,8 @@ pub async fn spawn_app_with(opts: TestOpts) -> TestApp {
         .connect(&admin_url)
         .await
         .expect("connect admin pool");
-    let _ = sqlx::query(&format!("DROP DATABASE IF EXISTS \"{db_name}\""))
+    // WITH (FORCE) terminates stale connections from a previous run on the same machine/PID.
+    let _ = sqlx::query(&format!("DROP DATABASE IF EXISTS \"{db_name}\" WITH (FORCE)"))
         .execute(&admin)
         .await;
     sqlx::query(&format!(

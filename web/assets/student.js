@@ -7,6 +7,13 @@
 
 (function () {
   const slug = location.pathname.replace(/^\/teach\//, '');
+  const pitchDisplayRoot = document.getElementById('pitch-display-root');
+  if (window.sbPitchDisplay && pitchDisplayRoot) window.sbPitchDisplay.mount(pitchDisplayRoot);
+  const eyebrow = document.getElementById('room-eyebrow');
+  if (eyebrow) eyebrow.textContent = slug;
+  document.title = slug + ' — singing-bridge';
+  const wrongRoomLink = document.getElementById('wrong-room-link');
+  if (wrongRoomLink) wrongRoomLink.href = '/';
   if (window.sbDevicePicker) window.sbDevicePicker.mount('audio-device-picker');
   const joinSection = document.getElementById('join');
   const form = document.getElementById('join-form');
@@ -32,6 +39,24 @@
   let headphonesConfirmedState = false;
   let localAudioTrack = null;
   let lastChatModeApplied = null;
+  let pitchDataChannel = null;
+
+  function startPitch() {
+    if (!window.sbPitchEngine || !window.sbPitchDisplay || !localAudioTrack) return;
+    window.sbPitchDisplay.setActive(true);
+    const stream = new MediaStream([localAudioTrack]);
+    window.sbPitchEngine.start(stream, function (name, cents) {
+      if (window.sbPitchDisplay) window.sbPitchDisplay.setNote(name, cents);
+      if (pitchDataChannel && pitchDataChannel.readyState === 'open') {
+        pitchDataChannel.send(JSON.stringify({ type: 'pitch_data', name: name, cents: cents }));
+      }
+    });
+  }
+
+  function stopPitch() {
+    if (window.sbPitchEngine) window.sbPitchEngine.stop();
+    if (window.sbPitchDisplay) window.sbPitchDisplay.setActive(false);
+  }
 
   function deriveAcousticProfile(det) {
     return det.iosAecForced ? 'ios_forced' : null;
@@ -105,9 +130,19 @@
     iosNote.hidden = false;
   }
 
+  const emailInput = document.getElementById('join-email');
+  const emailError = document.getElementById('join-email-error');
+
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
     const email = new FormData(form).get('email');
+    if (!email || !emailInput.validity.valid) {
+      emailError.textContent = email ? 'Please enter a valid email address.' : 'Please enter your email address.';
+      emailError.hidden = false;
+      emailInput.focus();
+      return;
+    }
+    emailError.hidden = true;
     joinSection.hidden = true;
     lobbyStatus.hidden = false;
 
@@ -207,12 +242,20 @@
           onNote() { console.log('[sprint9] note panel'); },
           onSendChat(text) { if (handle) handle.sendChat(text); },
         });
+        pitchDataChannel = dataChannel;
         dataChannel.addEventListener('message', (ev) => {
+          try {
+            const msg = JSON.parse(ev.data);
+            if (msg.type === 'pitch_on')  { startPitch(); return; }
+            if (msg.type === 'pitch_off') { stopPitch();  return; }
+          } catch (_) {}
           errEl.textContent = `Teacher says: ${ev.data}`;
         });
         dataChannel.send(JSON.stringify({ hello: true, from: 'student' }));
       },
       onPeerDisconnected() {
+        stopPitch();
+        pitchDataChannel = null;
         if (sessionUiHandle) { sessionUiHandle.teardown(); sessionUiHandle = null; }
         if (accompanimentHandle) { accompanimentHandle.teardown(); accompanimentHandle = null; }
         if (scoreViewHandle) { scoreViewHandle.teardown(); scoreViewHandle = null; }

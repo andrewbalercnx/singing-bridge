@@ -1,0 +1,111 @@
+/* File: web/assets/pitch-display.css
+   Purpose: Styles for the pitch-display tuner widget (.sb-pitch-display).
+            Used inside .sb-theme-dark (session); inherits CSS custom properties.
+   Last updated: Sprint 27 (2026-05-07) -- initial mock */
+
+/* ── Container ─────────────────────────────────────────────────── */
+
+.sb-pitch-display {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 12px 16px 10px;
+  width: 200px;
+  box-sizing: border-box;
+  /* Self-contained dark surface — always dark regardless of page theme */
+  background: #1a232e;
+  border: 1px solid rgba(251, 246, 239, 0.12);
+  border-radius: var(--sb-r-md, 14px);
+  user-select: none;
+}
+
+/* ── SVG dial ───────────────────────────────────────────────────── */
+
+.sb-pitch-dial {
+  width: 160px;
+  height: 100px;
+  overflow: visible;
+}
+
+/* Arc track */
+.sb-pitch-track {
+  stroke: rgba(251, 246, 239, 0.14);
+  stroke-width: 4;
+  stroke-linecap: round;
+}
+
+/* Tick marks */
+.sb-pitch-tick {
+  stroke: rgba(251, 246, 239, 0.22);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+}
+
+.sb-pitch-tick--centre {
+  stroke: rgba(251, 246, 239, 0.5);
+  stroke-width: 2;
+}
+
+/* Needle */
+.sb-pitch-needle {
+  stroke: rgba(251, 246, 239, 0.85);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  transition: transform 0.12s ease-out;
+}
+
+/* Pivot dot */
+.sb-pitch-pivot {
+  fill: rgba(251, 246, 239, 0.85);
+}
+
+/* ── Text labels ────────────────────────────────────────────────── */
+
+.sb-pitch-note {
+  font-family: var(--sb-font-display, Georgia, serif);
+  font-size: 2rem;
+  font-weight: 700;
+  line-height: 1;
+  color: rgba(251, 246, 239, 0.9);
+  letter-spacing: -0.01em;
+}
+
+.sb-pitch-cents {
+  font-family: var(--sb-font-ui, system-ui, sans-serif);
+  font-size: var(--sb-text-xs, 11px);
+  color: rgba(251, 246, 239, 0.45);
+  letter-spacing: 0.06em;
+  min-height: 1.2em;
+}
+
+/* ── Intonation states (colour the needle, pivot, and note) ─────── */
+
+.sb-pitch--intune .sb-pitch-needle { stroke: var(--sb-moss, #6F9A7A); }
+.sb-pitch--intune .sb-pitch-pivot  { fill:   var(--sb-moss, #6F9A7A); }
+.sb-pitch--intune .sb-pitch-note   { color:  var(--sb-moss, #6F9A7A); }
+
+.sb-pitch--close .sb-pitch-needle  { stroke: var(--sb-amber, #E3A950); }
+.sb-pitch--close .sb-pitch-pivot   { fill:   var(--sb-amber, #E3A950); }
+.sb-pitch--close .sb-pitch-note    { color:  var(--sb-amber, #E3A950); }
+
+.sb-pitch--off .sb-pitch-needle    { stroke: var(--sb-rose, #E17F8B); }
+.sb-pitch--off .sb-pitch-pivot     { fill:   var(--sb-rose, #E17F8B); }
+.sb-pitch--off .sb-pitch-note      { color:  var(--sb-rose, #E17F8B); }
+
+/* ── Teacher toggle button (inside #pitch-controls wrapper) ─────── */
+
+#pitch-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: 8px;
+}
+
+/* ── Session layout: pitch panel sits below session-root ─────────── */
+
+#pitch-display-root {
+  display: block;
+  text-align: center;
+  margin-top: 12px;
+}

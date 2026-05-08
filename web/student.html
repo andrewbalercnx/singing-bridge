@@ -11,8 +11,10 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>singing-bridge — join</title>
+  <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/assets/styles.css">
   <link rel="stylesheet" href="/assets/theme.css">
+  <link rel="stylesheet" href="/assets/pitch-display.css">
   <!-- sb:debug -->
 </head>
 <body class="sb-page">
@@ -20,10 +22,13 @@
     <p class="sb-teach-landing__brand sb-fade sb-fade-1">
       <span class="sb-brand__dot" aria-hidden="true"></span>singing-bridge
     </p>
-    <p class="sb-eyebrow sb-fade sb-fade-2">Your lesson room</p>
+    <p class="sb-eyebrow sb-fade sb-fade-2" id="room-eyebrow">Your lesson room</p>
     <h1 class="sb-fade sb-fade-3">Join your lesson</h1>
     <p class="sb-lede sb-fade sb-fade-4">
       A room built for the way the voice actually sounds.
+    </p>
+    <p class="sb-fade sb-fade-4 sb-text-sm sb-text-muted">
+      <a id="wrong-room-link" href="/">Wrong room? Go back</a>
     </p>
     <div class="sb-dotted sb-fade sb-fade-4" aria-hidden="true"></div>
 
@@ -55,6 +60,7 @@
         <div class="sb-field">
           <label class="sb-label" for="join-email">Your email</label>
           <input class="sb-input" id="join-email" type="email" name="email" autocomplete="email" required>
+          <p id="join-email-error" class="sb-help--error" hidden></p>
         </div>
         <button class="sb-btn sb-btn--accent sb-btn--block sb-btn--lg" type="submit">Enter lobby</button>
       </form>
@@ -89,6 +95,9 @@
 
       <span id="quality-badge" class="quality-badge good" hidden>good</span>
 
+      <!-- Pitch display (activated by teacher via signalling) -->
+      <div id="pitch-display-root"></div>
+
     </section>
 
     <section id="floor-violation" class="floor-violation" hidden>
@@ -97,7 +106,7 @@
          you clearly. Try a different network or check with your teacher.</p>
     </section>
 
-    <section id="blocked-notice" class="floor-violation" hidden>
+    <section id="blocked-notice" class="sb-notice sb-notice--danger sb-mt-6" hidden>
       <h2>You have been blocked by the teacher.</h2>
       <p>You cannot join this room for now. Please contact your teacher if you think this is a mistake.</p>
     </section>
@@ -124,6 +133,8 @@
     <script src="/assets/signalling.js"></script>
     <script src="/assets/accompaniment-drawer.js"></script>
     <script src="/assets/score-view.js"></script>
+    <script src="/assets/pitch-engine.js"></script>
+    <script src="/assets/pitch-display.js"></script>
     <script src="/assets/student.js"></script>
   </main>
 </body>

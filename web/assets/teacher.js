@@ -21,6 +21,26 @@
   if (recordingsLink) recordingsLink.href = `/teach/${slug}/recordings`;
 
   const recordingControls = document.getElementById('recording-controls');
+  const pitchControls = document.getElementById('pitch-controls');
+  const pitchToggleBtn = document.getElementById('pitch-toggle');
+  const pitchDisplayRoot = document.getElementById('pitch-display-root');
+  if (window.sbPitchDisplay && pitchDisplayRoot) window.sbPitchDisplay.mount(pitchDisplayRoot);
+
+  let pitchActive = false;
+  let pitchDataChannel = null;
+
+  if (pitchToggleBtn) {
+    pitchToggleBtn.addEventListener('click', function () {
+      pitchActive = !pitchActive;
+      pitchToggleBtn.setAttribute('aria-pressed', String(pitchActive));
+      pitchToggleBtn.classList.toggle('sb-btn--accent', pitchActive);
+      if (window.sbPitchDisplay) window.sbPitchDisplay.setActive(pitchActive);
+      if (pitchDataChannel && pitchDataChannel.readyState === 'open') {
+        pitchDataChannel.send(JSON.stringify({ type: pitchActive ? 'pitch_on' : 'pitch_off' }));
+      }
+    });
+  }
+
   const listEl = document.getElementById('lobby-list');
   const emptyEl = document.getElementById('lobby-empty');
   const statusEl = document.getElementById('session-status');
@@ -338,6 +358,8 @@
       localAudioTrack = audioTrack;
       if (qualityBadge) qualityBadge.hidden = false;
       if (recordingControls) recordingControls.hidden = false;
+      if (pitchControls) pitchControls.hidden = false;
+      pitchDataChannel = dataChannel;
       setRecordState('idle');
 
       // Re-parent panel from lobby root into session layout before session UI mounts.
@@ -425,6 +447,13 @@
       }
 
       dataChannel.addEventListener('message', (e) => {
+        try {
+          const msg = JSON.parse(e.data);
+          if (msg.type === 'pitch_data') {
+            if (window.sbPitchDisplay) window.sbPitchDisplay.setNote(msg.name, msg.cents);
+            return;
+          }
+        } catch (_) {}
         statusEl.textContent = `Student says: ${e.data}`;
       });
       dataChannel.send(JSON.stringify({ hello: true, from: 'teacher' }));
@@ -432,6 +461,11 @@
     onPeerDisconnected() {
       statusEl.textContent = 'Student disconnected.';
       if (recordingControls) recordingControls.hidden = true;
+      if (pitchControls) pitchControls.hidden = true;
+      if (window.sbPitchDisplay) window.sbPitchDisplay.setActive(false);
+      pitchActive = false;
+      pitchDataChannel = null;
+      if (pitchToggleBtn) { pitchToggleBtn.setAttribute('aria-pressed', 'false'); pitchToggleBtn.classList.remove('sb-btn--accent'); }
       localAudioTrack = null;
       accompanimentIsPlaying = false;
       if (vadHandle) { vadHandle.teardown(); vadHandle = null; }

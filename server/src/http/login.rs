@@ -266,11 +266,11 @@ pub async fn post_logout(
         }
     };
     let hash = cookie_hash(&raw);
-    let result = sqlx::query("DELETE FROM sessions WHERE cookie_hash = $1 RETURNING id")
+    let result = sqlx::query("DELETE FROM sessions WHERE cookie_hash = $1")
         .bind(&hash)
-        .fetch_optional(&state.db)
+        .execute(&state.db)
         .await?;
-    if result.is_none() {
+    if result.rows_affected() == 0 {
         return Ok((
             StatusCode::UNAUTHORIZED,
             [(header::CACHE_CONTROL, HeaderValue::from_static("no-store"))],

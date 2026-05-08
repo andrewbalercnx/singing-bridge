@@ -1,8 +1,9 @@
 # File: .github/workflows/ci.yml
-# Purpose: CI + deploy pipeline. On push to main: run tests, then deploy if green.
+# Purpose: CI + deploy pipeline. On push to main: run tests and build in parallel,
+#   then deploy only if both are green.
 #   Skips rebuilding server or sidecar image if their source hasn't changed.
 #   On pull requests: run tests only. workflow_dispatch triggers full pipeline.
-# Last updated: Sprint 27 (2026-05-08) -- nextest + split unit/integration test steps
+# Last updated: Sprint 27 (2026-05-08) -- parallel build + test; latest tag only on successful deploy
 
 name: CI
 
@@ -79,10 +80,18 @@ jobs:
           DATABASE_TEST_URL: ${{ secrets.DATABASE_TEST_URL }}
         run: cargo nextest run -p singing-bridge-server --tests --profile ci
 
-  deploy:
-    needs: test
+  build:
+    # Runs in parallel with test — builds and pushes images by SHA tag only.
+    # The :latest tag is NOT pushed here; it is promoted in the deploy job only
+    # after tests pass, so a failed test run never taints :latest.
+    needs: []
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      sha: ${{ steps.detect.outputs.sha }}
+      build_server: ${{ steps.detect.outputs.build_server }}
+      build_sidecar: ${{ steps.detect.outputs.build_sidecar }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -90,29 +99,29 @@ jobs:
           fetch-depth: 2
 
       - name: Detect changed components
+        id: detect
         run: |
           SHA=$(git rev-parse --short HEAD)
-          echo "SHA=$SHA" >> "$GITHUB_ENV"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
 
-          # On workflow_dispatch always build both; otherwise diff against parent
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "BUILD_SERVER=true" >> "$GITHUB_ENV"
-            echo "BUILD_SIDECAR=true" >> "$GITHUB_ENV"
+            echo "build_server=true" >> "$GITHUB_OUTPUT"
+            echo "build_sidecar=true" >> "$GITHUB_OUTPUT"
           else
             CHANGED=$(git diff --name-only HEAD~1 HEAD)
             echo "Changed files:"
             echo "$CHANGED"
 
             if echo "$CHANGED" | grep -qv "^sidecar/"; then
-              echo "BUILD_SERVER=true" >> "$GITHUB_ENV"
+              echo "build_server=true" >> "$GITHUB_OUTPUT"
             else
-              echo "BUILD_SERVER=false" >> "$GITHUB_ENV"
+              echo "build_server=false" >> "$GITHUB_OUTPUT"
             fi
 
             if echo "$CHANGED" | grep -q "^sidecar/"; then
-              echo "BUILD_SIDECAR=true" >> "$GITHUB_ENV"
+              echo "build_sidecar=true" >> "$GITHUB_OUTPUT"
             else
-              echo "BUILD_SIDECAR=false" >> "$GITHUB_ENV"
+              echo "build_sidecar=false" >> "$GITHUB_OUTPUT"
             fi
           fi
 
@@ -122,28 +131,69 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Build and push server image
-        if: env.BUILD_SERVER == 'true'
+      - name: Build and push server image (SHA tag only)
+        if: steps.detect.outputs.build_server == 'true'
         run: |
+          SHA=${{ steps.detect.outputs.sha }}
           az acr build \
             --registry sbprodacr \
             --image singing-bridge:$SHA \
-            --image singing-bridge:latest \
             --build-arg GIT_SHA=$SHA \
             --build-arg WEB_CACHE_BUST=$(date +%s) \
             .
 
-      - name: Build and push sidecar image
-        if: env.BUILD_SIDECAR == 'true'
+      - name: Build and push sidecar image (SHA tag only)
+        if: steps.detect.outputs.build_sidecar == 'true'
         run: |
+          SHA=${{ steps.detect.outputs.sha }}
           az acr build \
             --registry sbprodacr \
             --image singing-bridge-sidecar:$SHA \
-            --image singing-bridge-sidecar:latest \
             sidecar/
+
+  deploy:
+    needs: [test, build]
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.sha }}
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Promote :latest tags (tests passed)
+        run: |
+          SHA=${{ needs.build.outputs.sha }}
+          BUILD_SERVER=${{ needs.build.outputs.build_server }}
+          BUILD_SIDECAR=${{ needs.build.outputs.build_sidecar }}
+
+          if [ "$BUILD_SERVER" = "true" ]; then
+            az acr import \
+              --name sbprodacr \
+              --source sbprodacr.azurecr.io/singing-bridge:$SHA \
+              --image singing-bridge:latest \
+              --force
+          fi
+
+          if [ "$BUILD_SIDECAR" = "true" ]; then
+            az acr import \
+              --name sbprodacr \
+              --source sbprodacr.azurecr.io/singing-bridge-sidecar:$SHA \
+              --image singing-bridge-sidecar:latest \
+              --force
+          fi
 
       - name: Update Container App
         run: |
+          SHA=${{ needs.build.outputs.sha }}
+          BUILD_SERVER=${{ needs.build.outputs.build_server }}
+          BUILD_SIDECAR=${{ needs.build.outputs.build_sidecar }}
+
           # Use SHA tag for rebuilt images; latest for unchanged ones
           SERVER_TAG=$( [ "$BUILD_SERVER" = "true" ] && echo "$SHA" || echo "latest" )
           SIDECAR_TAG=$( [ "$BUILD_SIDECAR" = "true" ] && echo "$SHA" || echo "latest" )
@@ -155,6 +205,9 @@ jobs:
 
       - name: Verify health
         run: |
+          SHA=${{ needs.build.outputs.sha }}
+          BUILD_SERVER=${{ needs.build.outputs.build_server }}
+
           # 1. Find the revision just created (latest by createdTime).
           NEW_REV=$(az containerapp revision list \
             --name sb-server --resource-group sb-prod-rg \
@@ -188,8 +241,6 @@ jobs:
           FQDN=$(az containerapp show \
             --name sb-server --resource-group sb-prod-rg \
             --query "properties.configuration.ingress.fqdn" --output tsv)
-          # Only check SHA when the server image was rebuilt; sidecar-only
-          # deploys retain the previous server SHA by design.
           if [ "$BUILD_SERVER" = "true" ]; then
             ACTUAL_SHA=$(curl --fail --silent "https://$FQDN/healthz" | \
               python3 -c "import sys,json; print(json.load(sys.stdin)['sha'])")

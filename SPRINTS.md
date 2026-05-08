@@ -871,3 +871,24 @@ _Backwards compatibility_
 - All existing Rust and JS tests pass
 
 **Status:** COMPLETE
+
+---
+
+## Sprint 28: CI Test Infrastructure — Eliminate WAN Latency
+
+**Goal:** Cut integration test CI time from ~13 minutes to under 5 minutes by replacing the Azure WAN PostgreSQL with a local GitHub Actions service container, removing all serial workarounds for ws_accompaniment.
+
+**Deliverables:**
+- Add `postgres:15` service container to the `test` job in `.github/workflows/ci.yml`; set `DATABASE_TEST_URL` to `postgres://postgres:test@localhost/postgres`
+- Remove `binary(ws_accompaniment)` serial override from `.config/nextest.toml`
+- Revert `test_15` drain timeout from 10 s back to 3 s in `ws_accompaniment.rs`
+- Bulk-insert `seed_accompaniment_asset` (replace sequential INSERTs with a single multi-row CTE)
+- Document local vs CI vs production DB distinction in `Documentation/conventions.md`
+
+**Exit criteria:**
+- `cargo nextest run --tests --profile ci` completes in < 5 minutes on GitHub Actions
+- All 327 tests pass with no serial group for `ws_accompaniment`
+- No `recv_json timeout` failures over 3 consecutive pushes
+- No `binary(ws_accompaniment)` override remaining in nextest.toml
+
+**Status:** IN PROGRESS

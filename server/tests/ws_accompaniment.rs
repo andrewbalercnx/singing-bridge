@@ -523,14 +523,13 @@ async fn test_15_rapid_sequence_final_state_cleared() {
     // Use ws.next() directly (not recv_json) so a timeout returns Err(Elapsed)
     // rather than panicking — recv_json's internal panic would fire before
     // a longer outer timeout could cancel it gracefully.
-    // 10s per read: matches recv_json's timeout; handles slow CI under high parallelism.
-    // Break on first silence (no more messages) or on receiving the cleared state.
+    // 3s per read: enough for a local-DB round-trip; break on first silence.
     let mut last_state: Option<serde_json::Value> = None;
     use futures_util::StreamExt as _;
     use tokio_tungstenite::tungstenite::Message;
     loop {
         match tokio::time::timeout(
-            std::time::Duration::from_secs(10),
+            std::time::Duration::from_secs(3),
             teacher.next(),
         )
         .await

@@ -3,7 +3,7 @@
 #   then deploy only if both are green.
 #   Skips rebuilding server or sidecar image if their source hasn't changed.
 #   On pull requests: run tests only. workflow_dispatch triggers full pipeline.
-# Last updated: Sprint 27 (2026-05-08) -- parallel build + test; latest tag only on successful deploy
+# Last updated: Sprint 28 (2026-05-08) -- local postgres service container for tests
 
 name: CI
 
@@ -26,6 +26,19 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: postgres
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+        ports:
+          - 5432:5432
     steps:
       - uses: actions/checkout@v4
         with:
@@ -77,7 +90,7 @@ jobs:
 
       - name: Rust integration tests
         env:
-          DATABASE_TEST_URL: ${{ secrets.DATABASE_TEST_URL }}
+          DATABASE_TEST_URL: postgres://postgres:test@localhost/postgres
         run: cargo nextest run -p singing-bridge-server --tests --profile ci
 
   build:

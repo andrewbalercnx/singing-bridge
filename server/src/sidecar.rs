@@ -2,14 +2,14 @@
 // Purpose: HTTP client for the internal Python sidecar — OMR, MIDI extraction,
 //          WAV synthesis, rasterisation, bar-timing/coord computation.
 // Role: Thin async wrapper; maps sidecar error codes to AppError variants.
-// Exports: SidecarClient, OmrResult, PartInfo, BarTiming, BarCoord, SynthesiseRequest
+// Exports: SidecarClient, OmrResult, PartInfo, BarTiming, BarCoord, SynthesiseRequest, ScoreRenderResult
 // Depends: reqwest, bytes, url, auth::secret, error
 // Invariants: Bearer token sent on every request.
 //             AUDIVERIS_MISSING / FLUIDSYNTH_MISSING / connection failure → SidecarUnavailable.
 //             All other sidecar error codes → SidecarBadInput (surfaces as 422).
 //             ZIP response from /rasterise is unzipped here; caller receives Vec<(filename, bytes)>.
 //             /omr response includes parts + bar_coords so Audiveris runs exactly once per PDF.
-// Last updated: Sprint 23 (2026-04-26) -- OmrResult gains parts + bar_coords; remove list_parts()
+// Last updated: Sprint 26 (2026-05-06) -- render_score returns ScoreRenderResult (pages + bar_coords); add list_parts_from_musicxml
 
 use std::time::Duration;
 
@@ -53,6 +53,11 @@ pub struct BarCoord {
     pub y_frac: f64,
     pub w_frac: f64,
     pub h_frac: f64,
+}
+
+pub struct ScoreRenderResult {
+    pub pages: Vec<(String, Bytes)>,
+    pub bar_coords: Vec<BarCoord>,
 }
 
 pub struct SynthesiseRequest {
@@ -271,7 +276,7 @@ impl SidecarClient {
         unzip_pages(&zip_bytes)
     }
 
-    pub async fn render_score(&self, musicxml: Bytes, part_indices: &[usize]) -> Result<Vec<(String, Bytes)>> {
+    pub async fn render_score(&self, musicxml: Bytes, part_indices: &[usize]) -> Result<ScoreRenderResult> {
         let indices_json = serde_json::to_string(part_indices)
             .map_err(|_| AppError::Internal("part_indices json".into()))?;
 
@@ -290,7 +295,28 @@ impl SidecarClient {
 
         let resp = Self::check(resp).await?;
         let zip_bytes = resp.bytes().await.map_err(|_| AppError::Internal("sidecar render-score bytes".into()))?;
-        unzip_pages(&zip_bytes)
+        unzip_score(&zip_bytes)
+    }
+
+    pub async fn list_parts_from_musicxml(&self, musicxml: Bytes) -> Result<Vec<PartInfo>> {
+        let form = reqwest::multipart::Form::new()
+            .part("musicxml", reqwest::multipart::Part::bytes(musicxml.to_vec()).file_name("score.musicxml"));
+
+        let resp = self
+            .client
+            .post(self.url("/list-parts"))
+            .header("Authorization", self.auth())
+            .multipart(form)
+            .send()
+            .await
+            .map_err(|e| Self::send_err(e, "list-parts"))?;
+
+        let resp = Self::check(resp).await?;
+
+        #[derive(Deserialize)]
+        struct ListPartsResponse { parts: Vec<PartInfo> }
+        let body: ListPartsResponse = resp.json().await.map_err(|_| AppError::Internal("sidecar list-parts parse".into()))?;
+        Ok(body.parts)
     }
 
     pub async fn synthesise(&self, req: SynthesiseRequest) -> Result<Bytes> {
@@ -323,6 +349,36 @@ fn base64_decode(s: &str) -> Result<Vec<u8>> {
     base64::engine::general_purpose::STANDARD
         .decode(s)
         .map_err(|_| AppError::Internal("base64 decode".into()))
+}
+
+fn unzip_score(zip_bytes: &[u8]) -> Result<ScoreRenderResult> {
+    use std::io::{Cursor, Read};
+
+    let cursor = Cursor::new(zip_bytes);
+    let mut archive = zip::ZipArchive::new(cursor)
+        .map_err(|_| AppError::Internal("zip parse".into()))?;
+
+    let mut pages: Vec<(String, Bytes)> = Vec::new();
+    let mut bar_coords: Vec<BarCoord> = Vec::new();
+
+    for i in 0..archive.len() {
+        let mut file = archive.by_index(i)
+            .map_err(|_| AppError::Internal("zip entry".into()))?;
+        let name = file.name().to_string();
+        let mut buf = Vec::new();
+        file.read_to_end(&mut buf)
+            .map_err(|_| AppError::Internal("zip read".into()))?;
+
+        if name == "bar_coords.json" {
+            if let Ok(coords) = serde_json::from_slice::<Vec<BarCoord>>(&buf) {
+                bar_coords = coords;
+            }
+        } else {
+            pages.push((name, Bytes::from(buf)));
+        }
+    }
+    pages.sort_by(|a, b| a.0.cmp(&b.0));
+    Ok(ScoreRenderResult { pages, bar_coords })
 }
 
 fn unzip_pages(zip_bytes: &[u8]) -> Result<Vec<(String, Bytes)>> {

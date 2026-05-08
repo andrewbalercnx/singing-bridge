@@ -348,7 +348,10 @@ pub(crate) async fn get_recordings_page(
     headers: HeaderMap,
     Path(slug): Path<String>,
 ) -> Result<Response> {
-    let teacher_id = require_auth(&state, &headers).await?;
+    let teacher_id = match crate::auth::resolve_teacher_from_cookie(&state.db, &headers).await {
+        Some(id) => id,
+        None => return Ok(crate::http::signup::home_redirect()),
+    };
 
     let (owns,): (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM teachers WHERE id = $1 AND slug = $2",
@@ -358,7 +361,7 @@ pub(crate) async fn get_recordings_page(
     .fetch_one(&state.db)
     .await?;
     if owns == 0 {
-        return Err(AppError::NotFound);
+        return Ok(crate::http::signup::home_redirect());
     }
 
     let html_path = state.config.static_dir.join("recordings.html");

@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use axum::{
     extract::{Path, State},
-    http::{header, HeaderMap, StatusCode},
+    http::{header, HeaderMap},
     response::{Html, IntoResponse, Response},
 };
 
@@ -37,6 +37,38 @@ fn html_escape(s: &str) -> String {
     out
 }
 
+fn format_timestamp(unix_secs: i64) -> String {
+    // Format as YYYY-MM-DD HH:MM (UTC) — simple manual implementation, no chrono dep.
+    let secs = unix_secs.max(0) as u64;
+    let days = secs / 86400;
+    let rem = secs % 86400;
+    let hour = rem / 3600;
+    let min = (rem % 3600) / 60;
+    // days since Unix epoch (1970-01-01)
+    let (y, m, d) = days_to_ymd(days);
+    format!("{y}-{m:02}-{d:02} {hour:02}:{min:02}")
+}
+
+fn days_to_ymd(mut days: u64) -> (u64, u64, u64) {
+    let mut year = 1970u64;
+    loop {
+        let leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
+        let dy = if leap { 366 } else { 365 };
+        if days < dy { break; }
+        days -= dy;
+        year += 1;
+    }
+    let leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
+    let month_days: [u64; 12] = [31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let mut month = 1u64;
+    for &md in &month_days {
+        if days < md { break; }
+        days -= md;
+        month += 1;
+    }
+    (year, month, days + 1)
+}
+
 fn format_duration(duration_secs: Option<i64>) -> String {
     match duration_secs {
         None => "-".to_string(),
@@ -51,7 +83,7 @@ pub(crate) async fn get_history(
 ) -> Response {
     let teacher_id = match resolve_teacher_from_cookie(&state.db, &headers).await {
         Some(id) => id,
-        None => return unauthorized_no_store(),
+        None => return crate::http::signup::home_redirect(),
     };
 
     // Verify the teacher owns the slug.
@@ -62,7 +94,7 @@ pub(crate) async fn get_history(
             .fetch_one(&state.db)
             .await;
     if row.is_err() {
-        return unauthorized_no_store();
+        return crate::http::signup::home_redirect();
     }
 
     let rows: Vec<(i64, i64, Option<i64>, Option<i64>, Option<String>, String, Option<i64>)> =
@@ -102,28 +134,44 @@ pub(crate) async fn get_history(
             ),
             None => "-".to_string(),
         };
+            let started_display = format_timestamp(*started_at);
         rows_html.push_str(&format!(
-            "<tr><td>{id}</td><td>{}</td><td>{email_e}</td><td>{duration_display}</td>\
+            "<tr><td>{id}</td><td>{started_display}</td><td>{email_e}</td><td>{duration_display}</td>\
              <td>{reason_e}</td><td>{recording_cell}</td></tr>\n",
-            started_at
         ));
     }
 
     let html = format!(
         r#"<!DOCTYPE html>
 <html lang="en">
-<head><meta charset="utf-8"><title>Session History</title></head>
-<body>
-<h1>Session History — {slug_e}</h1>
-<table border="1" cellpadding="4">
-<thead><tr><th>ID</th><th>Started</th><th>Student</th><th>Duration</th><th>Ended Reason</th><th>Recording</th></tr></thead>
-<tbody>
-{rows_html}</tbody>
-</table>
-<p><a href="/teach/{slug_e}">Back to room</a></p>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Session History — {slug_e}</title>
+  <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/assets/styles.css">
+  <link rel="stylesheet" href="/assets/theme.css">
+</head>
+<body class="sb-page">
+  <header class="sb-topbar">
+    <span class="sb-topbar__brand">singing-bridge</span>
+    <span class="sb-topbar__meta">{slug_upper}</span>
+    <a class="sb-btn sb-btn--ghost sb-btn--sm" href="/teach/{slug_e}/dashboard">← Dashboard</a>
+  </header>
+  <main class="sb-container sb-mt-6">
+    <h1 class="sb-h1">Session History</h1>
+    <div class="sb-card sb-mt-4">
+      <table class="sb-table">
+        <thead><tr><th>ID</th><th>Started (UTC)</th><th>Student</th><th>Duration</th><th>End reason</th><th>Recording</th></tr></thead>
+        <tbody>
+{rows_html}        </tbody>
+      </table>
+    </div>
+  </main>
 </body>
 </html>"#,
         slug_e = html_escape(&slug),
+        slug_upper = html_escape(&slug.to_uppercase()),
         rows_html = rows_html,
     );
 
@@ -133,16 +181,9 @@ pub(crate) async fn get_history(
     resp
 }
 
-fn unauthorized_no_store() -> Response {
-    let mut resp = (StatusCode::UNAUTHORIZED, "Unauthorized").into_response();
-    resp.headers_mut()
-        .insert(header::CACHE_CONTROL, header::HeaderValue::from_static("no-store"));
-    resp
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{format_duration, html_escape};
+    use super::{format_duration, format_timestamp, html_escape};
 
     #[test]
     fn format_duration_none_returns_dash() {
@@ -191,5 +232,22 @@ mod tests {
     #[test]
     fn html_escape_plain_passthrough() {
         assert_eq!(html_escape("hello world"), "hello world");
+    }
+
+    #[test]
+    fn format_timestamp_epoch() {
+        assert_eq!(format_timestamp(0), "1970-01-01 00:00");
+    }
+
+    #[test]
+    fn format_timestamp_known_date() {
+        // 2026-05-07 14:23:00 UTC = 1778163780
+        assert_eq!(format_timestamp(1778163780), "2026-05-07 14:23");
+    }
+
+    #[test]
+    fn format_timestamp_leap_day() {
+        // 2000-02-29 00:00:00 UTC = 951782400
+        assert_eq!(format_timestamp(951782400), "2000-02-29 00:00");
     }
 }

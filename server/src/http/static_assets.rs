@@ -10,12 +10,21 @@
 use std::sync::Arc;
 
 use axum::Router;
+use tower::ServiceBuilder;
 use tower_http::services::ServeDir;
+use tower_http::set_header::SetResponseHeaderLayer;
+use axum::http::{header, HeaderValue};
 
 use crate::config::Config;
 use crate::state::AppState;
 
 pub fn routes(config: &Config) -> Router<Arc<AppState>> {
     let assets_dir = config.static_dir.join("assets");
-    Router::new().nest_service("/assets", ServeDir::new(assets_dir))
+    let svc = ServiceBuilder::new()
+        .layer(SetResponseHeaderLayer::overriding(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("no-cache"),
+        ))
+        .service(ServeDir::new(assets_dir));
+    Router::new().nest_service("/assets", svc)
 }

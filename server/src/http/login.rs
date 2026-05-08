@@ -256,26 +256,23 @@ pub async fn post_logout(
     State(state): State<Arc<AppState>>,
     headers: axum::http::HeaderMap,
 ) -> Result<Response> {
-    let raw = extract_cookie_value(&headers, SESSION_COOKIE_NAME)
-        .ok_or_else(|| AppError::Unauthorized)?;
-    let hash = cookie_hash(&raw);
-    let deleted = sqlx::query("DELETE FROM sessions WHERE cookie_hash = $1")
-        .bind(&hash)
-        .execute(&state.db)
-        .await?
-        .rows_affected();
-    if deleted == 0 {
-        return Err(AppError::Unauthorized);
+    if let Some(raw) = extract_cookie_value(&headers, SESSION_COOKIE_NAME) {
+        let hash = cookie_hash(&raw);
+        sqlx::query("DELETE FROM sessions WHERE cookie_hash = $1")
+            .bind(&hash)
+            .execute(&state.db)
+            .await?;
     }
     let expire_header = format!(
         "{SESSION_COOKIE_NAME}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0"
     );
-    let mut resp = StatusCode::NO_CONTENT.into_response();
+    let mut resp = (StatusCode::FOUND, [(header::LOCATION, "/")]).into_response();
     resp.headers_mut().insert(
         header::SET_COOKIE,
         HeaderValue::from_str(&expire_header)
             .map_err(|e| AppError::Internal(format!("cookie header: {e}").into()))?,
     );
+    resp.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     Ok(resp)
 }
 
@@ -313,6 +310,7 @@ const LOGIN_HTML: &str = r#"<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Log in — Singing Bridge</title>
+<link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/assets/styles.css">
 <link rel="stylesheet" href="/assets/theme.css">
 </head>
@@ -347,6 +345,7 @@ const SIGNUP_HTML: &str = r#"<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Create account — Singing Bridge</title>
+<link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/assets/styles.css">
 <link rel="stylesheet" href="/assets/theme.css">
 </head>

@@ -32,7 +32,7 @@ Invariants & gotchas:
     bar) are corrected per bar and all parts hit every bar line at the
     same tick.
 
-Last updated: Sprint 12a (2026-04-21) -- promoted from spike to production sidecar
+Last updated: Sprint 26 (2026-05-06) -- extract_bar_coords_from_svgs for per-variant score highlighting
 """
 from __future__ import annotations
 
@@ -424,6 +424,106 @@ def render_parts_to_svgs(musicxml_path: Path, part_indices: list[int]) -> list[s
         for i in range(1, tk.getPageCount() + 1):
             pages.append(tk.renderToSVG(i))
         return pages
+
+
+def extract_bar_coords_from_svgs(svg_strings: list[str]) -> list[dict]:
+    """Extract measure bounding boxes from a list of verovio-rendered SVG strings.
+
+    Parses each page's SVG, walks the page-margin → system → measure hierarchy,
+    applies accumulated translate() transforms, and collects rect bounding boxes
+    (skipping staff lines, which are very wide relative to their height).
+
+    Returns [{bar, page, x_frac, y_frac, w_frac, h_frac}, ...] where bar is a
+    0-based sequential index across all pages and fractions are relative to the
+    SVG viewBox dimensions.
+    """
+    import re
+    import xml.etree.ElementTree as ET
+
+    def parse_translate(t: str) -> tuple[float, float]:
+        m = re.search(r'translate\(\s*([-\d.]+)(?:[,\s]\s*([-\d.]+))?\s*\)', t or '')
+        if not m:
+            return 0.0, 0.0
+        return float(m.group(1)), float(m.group(2) or '0')
+
+    def elem_classes(elem) -> list[str]:
+        return (elem.get('class') or '').split()
+
+    def collect_positions(elem, tx: float, ty: float) -> tuple[list[float], list[float]]:
+        etx, ety = parse_translate(elem.get('transform', ''))
+        tx, ty = tx + etx, ty + ety
+
+        xs: list[float] = []
+        ys: list[float] = []
+        tag = elem.tag.split('}')[1] if '}' in elem.tag else elem.tag
+
+        if tag == 'rect':
+            try:
+                x = tx + float(elem.get('x', 0))
+                y = ty + float(elem.get('y', 0))
+                w = float(elem.get('width', 0))
+                h = float(elem.get('height', 0))
+                # Skip staff lines: very wide and very thin (w > 5 × h)
+                if w > 0 and h > 0 and w <= h * 5:
+                    xs += [x, x + w]
+                    ys += [y, y + h]
+            except (ValueError, TypeError):
+                pass
+
+        for child in elem:
+            cxs, cys = collect_positions(child, tx, ty)
+            xs += cxs
+            ys += cys
+
+        return xs, ys
+
+    coords: list[dict] = []
+    bar_idx = 0
+
+    for page_idx, svg_str in enumerate(svg_strings):
+        try:
+            root = ET.fromstring(svg_str)
+        except ET.ParseError:
+            continue
+
+        vb = (root.get('viewBox') or '0 0 2100 2970').split()
+        try:
+            vb_w, vb_h = float(vb[2]), float(vb[3])
+        except (IndexError, ValueError):
+            vb_w, vb_h = 2100.0, 2970.0
+
+        for page_margin in root:
+            if 'page-margin' not in elem_classes(page_margin):
+                continue
+            pm_tx, pm_ty = parse_translate(page_margin.get('transform', ''))
+
+            for system in page_margin:
+                if 'system' not in elem_classes(system):
+                    continue
+                sys_tx, sys_ty = parse_translate(system.get('transform', ''))
+
+                for measure in system:
+                    if 'measure' not in elem_classes(measure):
+                        continue
+
+                    xs, ys = collect_positions(measure, pm_tx + sys_tx, pm_ty + sys_ty)
+
+                    if xs and ys:
+                        min_x, max_x = min(xs), max(xs)
+                        min_y, max_y = min(ys), max(ys)
+                        if max_x > min_x and max_y > min_y:
+                            coords.append({
+                                'bar': bar_idx,
+                                'page': page_idx,
+                                'x_frac': round(max(0.0, min_x / vb_w), 6),
+                                'y_frac': round(max(0.0, min_y / vb_h), 6),
+                                'w_frac': round((max_x - min_x) / vb_w, 6),
+                                'h_frac': round((max_y - min_y) / vb_h, 6),
+                            })
+
+                    bar_idx += 1
+
+    return coords
 
 
 def extract_parts_musicxml(

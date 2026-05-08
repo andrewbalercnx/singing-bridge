@@ -9,7 +9,7 @@ Invariants: Every non-/healthz endpoint requires Authorization: Bearer <SIDECAR_
             SIDECAR_SECRET must be set at startup; missing → process exits.
             Upload size is capped at MAX_UPLOAD_BYTES before processing.
             All temp files are cleaned up even on error.
-Last updated: Sprint 25 (2026-04-28) -- /omr returns 0-based bar_coords pages to match /bar_coords + server contract
+Last updated: Sprint 26 (2026-05-06) -- /render-score ZIP includes bar_coords.json; add /list-parts endpoint
 """
 from __future__ import annotations
 
@@ -30,6 +30,7 @@ from pipeline import (
     AudiverisMissing,
     FluidSynthMissing,
     compute_bar_timings,
+    extract_bar_coords_from_svgs,
     extract_measure_coords,
     extract_parts_midi,
     list_parts,
@@ -311,13 +312,39 @@ def render_score():
         except Exception as e:
             return error_resp("INVALID_MUSICXML", f"Could not render score: {e}", 422)
 
+        try:
+            bar_coords = extract_bar_coords_from_svgs(svgs)
+        except Exception as e:
+            app.logger.warning("extract_bar_coords_from_svgs failed: %s", e)
+            bar_coords = []
+
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
             for i, svg_str in enumerate(svgs):
                 zf.writestr(f"page_{i + 1:04d}.svg", svg_str.encode("utf-8"))
+            zf.writestr("bar_coords.json", json.dumps(bar_coords).encode("utf-8"))
         zip_bytes = buf.getvalue()
 
     return Response(zip_bytes, mimetype="application/zip")
+
+
+@app.route("/list-parts", methods=["POST"])
+@require_auth
+def list_parts_endpoint():
+    """Return the parts list for a MusicXML file (no Audiveris/FluidSynth required)."""
+    xml_bytes, err = _require_file("musicxml")
+    if err:
+        return err
+
+    with tempfile.TemporaryDirectory() as tmp:
+        xml_path = Path(tmp) / "score.musicxml"
+        xml_path.write_bytes(xml_bytes)
+        try:
+            parts = list_parts(xml_path)
+        except Exception as e:
+            return error_resp("INVALID_MUSICXML", f"Could not parse parts: {e}", 422)
+
+    return jsonify({"parts": [{"index": p.index, "name": p.name, "instrument": p.instrument, "has_notes": p.has_notes} for p in parts]})
 
 
 @app.route("/bar-timings", methods=["POST"])

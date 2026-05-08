@@ -33,8 +33,13 @@ pub async fn get_teach(
     headers: HeaderMap,
     Path(slug): Path<String>,
 ) -> Result<Response> {
-    let slug = validate(&slug).map_err(|_| AppError::NotFound)?;
-    ensure_slug_exists(&state, &slug).await?;
+    let slug = match validate(&slug) {
+        Ok(s) => s,
+        Err(_) => return Ok(home_redirect_room_not_found(&slug)),
+    };
+    if ensure_slug_exists(&state, &slug).await.is_err() {
+        return Ok(home_redirect_room_not_found(&slug));
+    }
 
     if is_owner(&state, &headers, &slug).await {
         let location = format!("/teach/{}/dashboard", slug);
@@ -109,6 +114,15 @@ pub fn private_redirect(location: String) -> Response {
 pub fn set_private_headers(h: &mut axum::http::HeaderMap) {
     h.insert(header::CACHE_CONTROL, HeaderValue::from_static("private, no-store"));
     h.insert(header::VARY, HeaderValue::from_static("Cookie"));
+}
+
+/// Redirect to /?room-not-found=<slug> so the homepage can show an error and pre-fill the input.
+fn home_redirect_room_not_found(slug: &str) -> Response {
+    let encoded = slug.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_').collect::<String>();
+    let location = format!("/?room-not-found={}", encoded);
+    let mut resp = (StatusCode::FOUND, [(header::LOCATION, location)]).into_response();
+    resp.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    resp
 }
 
 pub const DEBUG_MARKER_PLACEHOLDER: &str = "<!-- sb:debug -->";

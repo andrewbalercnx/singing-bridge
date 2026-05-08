@@ -1,0 +1,23 @@
+# File: sidecar/docker-compose.yml
+# Purpose: Local development launcher for the production sidecar image.
+# Role: Builds the sidecar container (with Audiveris/FluidSynth/Ghostscript) and
+#       exposes it on port 5050, matching what the Rust server expects by default.
+# Last updated: Sprint 26 (2026-05-05) -- initial local dev docker-compose
+
+services:
+  sidecar:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    platform: linux/amd64
+    ports:
+      - "5050:5050"
+    environment:
+      SIDECAR_SECRET: ${SIDECAR_SECRET:-dev-sidecar-secret-change-me-in-prod}
+      PIANO_SF2: /usr/share/sounds/sf2/FluidR3_GM.sf2
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:5050/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

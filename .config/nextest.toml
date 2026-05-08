@@ -32,6 +32,24 @@ test-group = 'serial'
 filter = 'binary(ws_accompaniment)'
 test-group = 'ws_accompaniment'
 
+# Run the historically flaky / slowest binaries first so failures surface early.
+# Priority 100 = first; default = 0; negative = deferred to end.
+[[profile.ci.overrides]]
+filter = 'binary(ws_accompaniment)'
+priority = 100
+
+[[profile.ci.overrides]]
+filter = 'binary(http_signup)'
+priority = 90
+
+[[profile.ci.overrides]]
+filter = 'binary(cleanup)'
+priority = 80
+
+[[profile.ci.overrides]]
+filter = 'binary(db_error_500)'
+priority = 70
+
 [[profile.ci.overrides]]
 filter = 'all()'
 slow-timeout = { period = "60s", terminate-after = 3 }

@@ -12,6 +12,10 @@ test-group = 'serial'
 
 [test-groups]
 serial = { max-threads = 1 }
+# ws_accompaniment seeds heavy DB assets per test (variants, bar_coords, media tokens);
+# running more than 4 concurrently overwhelms the CI PostgreSQL response time and
+# causes recv_json to timeout. Other ws_* tests are lighter and unaffected.
+ws_accompaniment = { max-threads = 4 }
 
 # CI profile: per-test timeout + higher parallelism.
 # test-threads=8 on 2-CPU runner: tests finish in ~10 min vs 45 min at default num-cpus=2.
@@ -23,6 +27,10 @@ test-threads = 8
 [[profile.ci.overrides]]
 filter = 'binary(db_pool)'
 test-group = 'serial'
+
+[[profile.ci.overrides]]
+filter = 'binary(ws_accompaniment)'
+test-group = 'ws_accompaniment'
 
 [[profile.ci.overrides]]
 filter = 'all()'

@@ -84,7 +84,7 @@ pub mod test_helpers {
                     .connect(&admin_url)
                     .await
                     .expect("template: connect admin");
-                let _ = sqlx::query(&format!("DROP DATABASE IF EXISTS \"{name}\""))
+                let _ = sqlx::query(&format!("DROP DATABASE IF EXISTS \"{name}\" WITH (FORCE)"))
                     .execute(&admin)
                     .await;
                 sqlx::query(&format!("CREATE DATABASE \"{name}\""))

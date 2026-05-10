@@ -32,7 +32,7 @@ Invariants & gotchas:
     bar) are corrected per bar and all parts hit every bar line at the
     same tick.
 
-Last updated: Sprint 29 (2026-05-10) -- pass transpose to render_parts_to_svgs so score matches audio
+Last updated: Sprint 29 (2026-05-10) -- transpose in single music21 pass; no second parse
 """
 from __future__ import annotations
 
@@ -447,12 +447,10 @@ def render_parts_to_svgs(
         raise ImportError("verovio is required for score rendering; pip install verovio")
 
     with tempfile.TemporaryDirectory() as tmp:
-        filtered_xml = extract_parts_musicxml(musicxml_path, part_indices, Path(tmp) / "filtered.musicxml")
-        if transpose_semitones != 0:
-            from music21 import interval as m21interval
-            transposed = converter.parse(str(filtered_xml))
-            transposed = transposed.transpose(m21interval.ChromaticInterval(transpose_semitones))
-            transposed.write("musicxml", fp=str(filtered_xml))
+        filtered_xml = extract_parts_musicxml(
+            musicxml_path, part_indices, Path(tmp) / "filtered.musicxml",
+            transpose_semitones=transpose_semitones,
+        )
         tk = verovio.toolkit()
         tk.setOptions({
             "pageWidth": 2100,
@@ -614,6 +612,7 @@ def extract_parts_musicxml(
     musicxml_path: Path,
     part_indices: list[int],
     out_path: Path,
+    transpose_semitones: int = 0,
 ) -> Path:
     # Build a fresh Score by appending deepcopied parts individually.
     # Avoids the voice-ID inconsistencies that arise when removing parts
@@ -638,6 +637,10 @@ def extract_parts_musicxml(
         except Exception:
             pass
         fresh.append(part)
+
+    if transpose_semitones != 0:
+        from music21 import interval as m21interval
+        fresh = fresh.transpose(m21interval.ChromaticInterval(transpose_semitones))
 
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)

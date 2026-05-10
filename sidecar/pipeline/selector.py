@@ -32,7 +32,7 @@ Invariants & gotchas:
     bar) are corrected per bar and all parts hit every bar line at the
     same tick.
 
-Last updated: Sprint 29 (2026-05-10) -- fix extract_bar_coords_from_svgs for Verovio 6.x (path elements + definition-scale viewBox)
+Last updated: Sprint 29 (2026-05-10) -- fix bar_idx to 1-based so Verovio coords align with bar_timings
 """
 from __future__ import annotations
 
@@ -437,8 +437,8 @@ def extract_bar_coords_from_svgs(svg_strings: list[str]) -> list[dict]:
     not as a direct child of the root SVG — so we search the full tree.
 
     Returns [{bar, page, x_frac, y_frac, w_frac, h_frac}, ...] where bar is a
-    0-based sequential index across all pages and fractions are relative to the
-    SVG viewBox dimensions.
+    1-based sequential index across all pages (matching bar_timings and PDF
+    bar_coords) and fractions are relative to the SVG viewBox dimensions.
     """
     import re
     import xml.etree.ElementTree as ET
@@ -503,7 +503,7 @@ def extract_bar_coords_from_svgs(svg_strings: list[str]) -> list[dict]:
         return result
 
     coords: list[dict] = []
-    bar_idx = 0
+    bar_idx = 1  # 1-based to match bar_timings and PDF bar_coords from extract_measure_coords
 
     for page_idx, svg_str in enumerate(svg_strings):
         try:

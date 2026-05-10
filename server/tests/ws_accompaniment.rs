@@ -321,9 +321,6 @@ async fn test_6_student_play_rejected_with_forbidden() {
 async fn test_7_student_pause_rejected_with_forbidden() {
     let app = spawn_app().await;
     let cookie = app.signup_teacher("t@test.example", "room1").await;
-    make_session(&app, "room1", &cookie).await;
-
-    // Open a fresh student WS (not the session student).
     let (_teacher, mut student) = make_session(&app, "room1", &cookie).await;
 
     send_ws(

@@ -32,7 +32,7 @@ Invariants & gotchas:
     bar) are corrected per bar and all parts hit every bar line at the
     same tick.
 
-Last updated: Sprint 29 (2026-05-10) -- fix bar_idx to 1-based so Verovio coords align with bar_timings
+Last updated: Sprint 29 (2026-05-10) -- honour ties across bar lines in MIDI extraction
 """
 from __future__ import annotations
 
@@ -253,9 +253,17 @@ def _part_to_midi_track_bar_aligned(
     regardless of how many beats the OMR crammed into it.  This means
     all parts hit every bar line at the same tick even when different
     parts have different OMR errors in the same bar.
+
+    Ties across bar lines are handled correctly: a tie-continuation note
+    (tie.type == 'stop' or 'continue') suppresses the new note_on and
+    extends the pending note_off for that pitch to the end of the
+    continuation's duration (with the current bar's scale applied).
     """
     events: list[tuple[int, int, mido.Message]] = []
     events.append((0, 0, mido.Message("program_change", channel=channel, program=0, time=0)))
+
+    # pitch → scheduled note_off tick for notes whose tie chain is still open.
+    pending_tie_off: dict[int, int] = {}
 
     for i, measure in enumerate(part.getElementsByClass(stream.Measure)):
         if i >= len(canonical_bars):
@@ -282,23 +290,48 @@ def _part_to_midi_track_bar_aligned(
 
             start_tick = int(round(note_start_ql * ticks_per_beat))
             end_tick = int(round(note_end_ql * ticks_per_beat))
-            if end_tick <= start_tick:
-                continue
 
             if isinstance(el, m21chord.Chord):
-                pitches = [(n.pitch.midi, _vel(n)) for n in el.notes]
+                note_list = list(el.notes)
             elif isinstance(el, m21note.Note):
-                pitches = [(el.pitch.midi, _vel(el))]
+                note_list = [el]
             else:
                 continue
 
-            for pitch, vel in pitches:
-                events.append((start_tick, 0,
-                                mido.Message("note_on",  channel=channel,
-                                             note=pitch, velocity=vel, time=0)))
-                events.append((end_tick,   1,
-                                mido.Message("note_off", channel=channel,
-                                             note=pitch, velocity=0,   time=0)))
+            for note in note_list:
+                pitch = note.pitch.midi
+                vel = _vel(note)
+                tie_type = note.tie.type if note.tie is not None else None
+
+                # A tie-stop or tie-continue means this note is a continuation
+                # of a preceding tied note — don't start a new note_on.
+                is_continuation = tie_type in ('stop', 'continue')
+                # A tie-start or tie-continue means the note extends into the
+                # next bar — don't close the note_off yet.
+                is_open = tie_type in ('start', 'continue')
+
+                if not is_continuation:
+                    if end_tick <= start_tick:
+                        continue
+                    events.append((start_tick, 0,
+                                   mido.Message("note_on",  channel=channel,
+                                                note=pitch, velocity=vel, time=0)))
+                    pending_tie_off[pitch] = end_tick
+                else:
+                    # Extend the pending note_off to this bar's scaled end.
+                    pending_tie_off[pitch] = end_tick
+
+                if not is_open:
+                    off_tick = pending_tie_off.pop(pitch, end_tick)
+                    events.append((off_tick, 1,
+                                   mido.Message("note_off", channel=channel,
+                                                note=pitch, velocity=0, time=0)))
+
+    # Emit any note_offs still pending (malformed tie chains — shouldn't happen).
+    for pitch, off_tick in pending_tie_off.items():
+        events.append((off_tick, 1,
+                       mido.Message("note_off", channel=channel,
+                                    note=pitch, velocity=0, time=0)))
 
     # Sort by tick; note_off (priority 1) before note_on (0) at same tick
     # so that a note ending on the same tick another starts doesn't stick.

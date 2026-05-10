@@ -9,7 +9,7 @@
 //             All other sidecar error codes → SidecarBadInput (surfaces as 422).
 //             ZIP response from /rasterise is unzipped here; caller receives Vec<(filename, bytes)>.
 //             /omr response includes parts + bar_coords so Audiveris runs exactly once per PDF.
-// Last updated: Sprint 26 (2026-05-06) -- render_score returns ScoreRenderResult (pages + bar_coords); add list_parts_from_musicxml
+// Last updated: Sprint 29 (2026-05-10) -- render_score accepts transpose_semitones
 
 use std::time::Duration;
 
@@ -276,13 +276,14 @@ impl SidecarClient {
         unzip_pages(&zip_bytes)
     }
 
-    pub async fn render_score(&self, musicxml: Bytes, part_indices: &[usize]) -> Result<ScoreRenderResult> {
+    pub async fn render_score(&self, musicxml: Bytes, part_indices: &[usize], transpose_semitones: i32) -> Result<ScoreRenderResult> {
         let indices_json = serde_json::to_string(part_indices)
             .map_err(|_| AppError::Internal("part_indices json".into()))?;
 
         let form = reqwest::multipart::Form::new()
             .part("musicxml", reqwest::multipart::Part::bytes(musicxml.to_vec()).file_name("score.musicxml"))
-            .text("part_indices", indices_json);
+            .text("part_indices", indices_json)
+            .text("transpose_semitones", transpose_semitones.to_string());
 
         let resp = self
             .client

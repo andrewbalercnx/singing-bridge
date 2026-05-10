@@ -20,7 +20,7 @@
 //             post_midi: part_indices length capped at 32.
 //             score_render_status lifecycle: pending → rendering → done | failed.
 //             recover_pending_score_renders re-queues stuck variants on startup.
-// Last updated: Sprint 29 (2026-05-10) -- score render status + startup recovery
+// Last updated: Sprint 29 (2026-05-10) -- pass transpose_semitones to render_score
 
 use std::pin::Pin;
 use std::sync::Arc;
@@ -931,7 +931,7 @@ pub(crate) async fn post_midi(
                     return;
                 }
             };
-            let result = match state2.sidecar.render_score(musicxml_bytes, &part_indices).await {
+            let result = match state2.sidecar.render_score(musicxml_bytes, &part_indices, 0).await {
                 Ok(r) => r,
                 Err(e) => {
                     tracing::warn!(asset_id, error = %e, "render_score: sidecar call failed");
@@ -1207,7 +1207,7 @@ pub(crate) async fn post_variant(
     // Spawn background task: render per-variant score SVG pages when musicxml + part_indices available.
     if use_per_variant {
         let part_indices = req.part_indices.clone().unwrap_or_default();
-        spawn_variant_score_render(Arc::clone(&state), asset_id, teacher_id, vid, part_indices);
+        spawn_variant_score_render(Arc::clone(&state), asset_id, teacher_id, vid, part_indices, req.transpose_semitones);
     }
 
     let ttl = Duration::from_secs(state.config.media_token_ttl_secs);
@@ -1236,8 +1236,8 @@ pub(crate) async fn post_retry_variant_score(
     require_slug_owner(&state, teacher_id, &slug).await?;
 
     // Verify the variant belongs to this teacher's asset.
-    let row: Option<(Option<String>, Option<String>, Option<String>)> = sqlx::query_as(
-        "SELECT v.score_render_status, v.part_indices_json, v.score_page_blob_keys_json
+    let row: Option<(Option<String>, Option<String>, Option<String>, i32)> = sqlx::query_as(
+        "SELECT v.score_render_status, v.part_indices_json, v.score_page_blob_keys_json, v.transpose_semitones
          FROM accompaniment_variants v
          JOIN accompaniments a ON a.id = v.accompaniment_id
          WHERE v.id = $1 AND v.accompaniment_id = $2 AND a.teacher_id = $3
@@ -1249,7 +1249,7 @@ pub(crate) async fn post_retry_variant_score(
     .fetch_optional(&state.db)
     .await?;
 
-    let (render_status_opt, part_indices_json_opt, score_pages_opt) = row.ok_or(AppError::NotFound)?;
+    let (render_status_opt, part_indices_json_opt, score_pages_opt, transpose_semitones) = row.ok_or(AppError::NotFound)?;
     let render_status = render_status_opt.as_deref().unwrap_or("pending");
 
     // If already done, return immediately.
@@ -1270,7 +1270,7 @@ pub(crate) async fn post_retry_variant_score(
         .and_then(|s| serde_json::from_str(s).ok())
         .unwrap_or_default();
 
-    spawn_variant_score_render(Arc::clone(&state), asset_id, teacher_id, variant_id, part_indices);
+    spawn_variant_score_render(Arc::clone(&state), asset_id, teacher_id, variant_id, part_indices, transpose_semitones);
 
     Ok((StatusCode::ACCEPTED, Json(serde_json::json!({"status": "queued"}))).into_response())
 }
@@ -1554,6 +1554,7 @@ fn spawn_variant_score_render(
     teacher_id: i64,
     vid: i64,
     part_indices: Vec<usize>,
+    transpose_semitones: i32,
 ) {
     tokio::spawn(async move {
         let _ = sqlx::query(
@@ -1576,7 +1577,7 @@ fn spawn_variant_score_render(
                 return;
             }
         };
-        let result = match state.sidecar.render_score(musicxml_bytes, &part_indices).await {
+        let result = match state.sidecar.render_score(musicxml_bytes, &part_indices, transpose_semitones).await {
             Ok(r) => r,
             Err(e) => {
                 tracing::warn!(asset_id, variant_id = vid, error = %e, "variant render_score: sidecar call failed");
@@ -1632,8 +1633,8 @@ fn spawn_variant_score_render(
 /// Re-queues any variant score renders that were interrupted by a server restart.
 /// Called at startup, before the HTTP server begins accepting requests.
 pub async fn recover_pending_score_renders(state: Arc<AppState>) {
-    let rows: Vec<(i64, Option<String>, i64, i64)> = match sqlx::query_as(
-        "SELECT v.id, v.part_indices_json, a.teacher_id, a.id as asset_id
+    let rows: Vec<(i64, Option<String>, i64, i64, i32)> = match sqlx::query_as(
+        "SELECT v.id, v.part_indices_json, a.teacher_id, a.id as asset_id, v.transpose_semitones
          FROM accompaniment_variants v
          JOIN accompaniments a ON a.id = v.accompaniment_id
          WHERE v.score_render_status IN ('pending', 'rendering')
@@ -1658,11 +1659,11 @@ pub async fn recover_pending_score_renders(state: Arc<AppState>) {
         tracing::info!(count = n, "startup recovery: re-queuing variant score renders");
     }
 
-    for (variant_id, part_indices_json, teacher_id, asset_id) in rows {
+    for (variant_id, part_indices_json, teacher_id, asset_id, transpose_semitones) in rows {
         let part_indices: Vec<usize> = part_indices_json
             .as_deref()
             .and_then(|s| serde_json::from_str(s).ok())
             .unwrap_or_default();
-        spawn_variant_score_render(Arc::clone(&state), asset_id, teacher_id, variant_id, part_indices);
+        spawn_variant_score_render(Arc::clone(&state), asset_id, teacher_id, variant_id, part_indices, transpose_semitones);
     }
 }

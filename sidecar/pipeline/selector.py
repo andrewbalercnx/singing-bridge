@@ -32,7 +32,7 @@ Invariants & gotchas:
     bar) are corrected per bar and all parts hit every bar line at the
     same tick.
 
-Last updated: Sprint 29 (2026-05-10) -- honour ties across bar lines in MIDI extraction
+Last updated: Sprint 29 (2026-05-10) -- pass transpose to render_parts_to_svgs so score matches audio
 """
 from __future__ import annotations
 
@@ -426,11 +426,17 @@ def compute_bar_timings(musicxml_path: Path) -> list[dict]:
     return result
 
 
-def render_parts_to_svgs(musicxml_path: Path, part_indices: list[int]) -> list[str]:
+def render_parts_to_svgs(
+    musicxml_path: Path,
+    part_indices: list[int],
+    transpose_semitones: int = 0,
+) -> list[str]:
     """Render selected parts to a list of SVG strings (one per page).
 
     Uses verovio to typeset the filtered MusicXML. Each element of the returned
     list is a complete SVG document string for one page of the score.
+    If transpose_semitones is non-zero the score is transposed before rendering
+    so the notation matches the synthesised audio.
 
     Raises ImportError if verovio is not installed.
     Raises IndexError if any part_index is out of range.
@@ -442,6 +448,11 @@ def render_parts_to_svgs(musicxml_path: Path, part_indices: list[int]) -> list[s
 
     with tempfile.TemporaryDirectory() as tmp:
         filtered_xml = extract_parts_musicxml(musicxml_path, part_indices, Path(tmp) / "filtered.musicxml")
+        if transpose_semitones != 0:
+            from music21 import interval as m21interval
+            transposed = converter.parse(str(filtered_xml))
+            transposed = transposed.transpose(m21interval.ChromaticInterval(transpose_semitones))
+            transposed.write("musicxml", fp=str(filtered_xml))
         tk = verovio.toolkit()
         tk.setOptions({
             "pageWidth": 2100,

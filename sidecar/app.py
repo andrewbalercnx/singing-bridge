@@ -299,12 +299,20 @@ def render_score():
     except (ValueError, TypeError) as e:
         return error_resp("INVALID_PART_INDICES", f"Invalid part_indices: {e}", 422)
 
+    raw_transpose = request.form.get("transpose_semitones", "0")
+    try:
+        transpose_semitones = int(raw_transpose)
+        if not (-12 <= transpose_semitones <= 12):
+            raise ValueError
+    except (TypeError, ValueError):
+        return error_resp("INVALID_PARAMS", "transpose_semitones must be an integer between -12 and 12", 422)
+
     with tempfile.TemporaryDirectory() as tmp:
         xml_path = Path(tmp) / "score.musicxml"
         xml_path.write_bytes(xml_bytes)
 
         try:
-            svgs = render_parts_to_svgs(xml_path, part_indices)
+            svgs = render_parts_to_svgs(xml_path, part_indices, transpose_semitones=transpose_semitones)
         except ImportError as e:
             return error_resp("VEROVIO_MISSING", str(e), 503)
         except IndexError as e:

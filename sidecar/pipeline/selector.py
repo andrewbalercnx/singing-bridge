@@ -32,7 +32,7 @@ Invariants & gotchas:
     bar) are corrected per bar and all parts hit every bar line at the
     same tick.
 
-Last updated: Sprint 26 (2026-05-06) -- extract_bar_coords_from_svgs for per-variant score highlighting
+Last updated: Sprint 29 (2026-05-10) -- fix extract_bar_coords_from_svgs for Verovio 6.x (path elements + definition-scale viewBox)
 """
 from __future__ import annotations
 
@@ -430,8 +430,11 @@ def extract_bar_coords_from_svgs(svg_strings: list[str]) -> list[dict]:
     """Extract measure bounding boxes from a list of verovio-rendered SVG strings.
 
     Parses each page's SVG, walks the page-margin → system → measure hierarchy,
-    applies accumulated translate() transforms, and collects rect bounding boxes
-    (skipping staff lines, which are very wide relative to their height).
+    applies accumulated translate() transforms, and collects bounding boxes from
+    path elements (Verovio 6.x uses paths, not rects, for staff lines and barlines).
+
+    The page-margin element lives inside a nested <svg class="definition-scale">,
+    not as a direct child of the root SVG — so we search the full tree.
 
     Returns [{bar, page, x_frac, y_frac, w_frac, h_frac}, ...] where bar is a
     0-based sequential index across all pages and fractions are relative to the
@@ -449,6 +452,16 @@ def extract_bar_coords_from_svgs(svg_strings: list[str]) -> list[dict]:
     def elem_classes(elem) -> list[str]:
         return (elem.get('class') or '').split()
 
+    def parse_path_points(d: str) -> list[tuple[float, float]]:
+        """Extract (x, y) pairs from M and L path commands."""
+        points = []
+        for m in re.finditer(r'[ML]\s*([-\d.]+)\s+([-\d.]+)', d):
+            try:
+                points.append((float(m.group(1)), float(m.group(2))))
+            except ValueError:
+                pass
+        return points
+
     def collect_positions(elem, tx: float, ty: float) -> tuple[list[float], list[float]]:
         etx, ety = parse_translate(elem.get('transform', ''))
         tx, ty = tx + etx, ty + ety
@@ -457,14 +470,17 @@ def extract_bar_coords_from_svgs(svg_strings: list[str]) -> list[dict]:
         ys: list[float] = []
         tag = elem.tag.split('}')[1] if '}' in elem.tag else elem.tag
 
-        if tag == 'rect':
+        if tag == 'path':
+            for x, y in parse_path_points(elem.get('d', '')):
+                xs.append(tx + x)
+                ys.append(ty + y)
+        elif tag == 'rect':
             try:
                 x = tx + float(elem.get('x', 0))
                 y = ty + float(elem.get('y', 0))
                 w = float(elem.get('width', 0))
                 h = float(elem.get('height', 0))
-                # Skip staff lines: very wide and very thin (w > 5 × h)
-                if w > 0 and h > 0 and w <= h * 5:
+                if w > 0 and h > 0:
                     xs += [x, x + w]
                     ys += [y, y + h]
             except (ValueError, TypeError):
@@ -477,6 +493,15 @@ def extract_bar_coords_from_svgs(svg_strings: list[str]) -> list[dict]:
 
         return xs, ys
 
+    def find_all_with_class(elem, cls: str) -> list:
+        """Recursively find all elements whose class list contains cls."""
+        result = []
+        if cls in elem_classes(elem):
+            result.append(elem)
+        for child in elem:
+            result.extend(find_all_with_class(child, cls))
+        return result
+
     coords: list[dict] = []
     bar_idx = 0
 
@@ -486,15 +511,30 @@ def extract_bar_coords_from_svgs(svg_strings: list[str]) -> list[dict]:
         except ET.ParseError:
             continue
 
-        vb = (root.get('viewBox') or '0 0 2100 2970').split()
+        # Verovio 6.x wraps content in <svg class="definition-scale"> whose viewBox
+        # is 10× the page dimensions (e.g. 21000×29700 for a 2100×2970 page).
+        # Coordinates in path elements use that inner SVG's coordinate space.
+        # Find the definition-scale SVG and use its viewBox; fall back to outer SVG.
+        def find_coord_svg(elem):
+            """Return the SVG element that contains page-margin (definition-scale)."""
+            tag = elem.tag.split('}')[1] if '}' in elem.tag else elem.tag
+            if tag == 'svg' and 'definition-scale' in elem_classes(elem):
+                return elem
+            for child in elem:
+                result = find_coord_svg(child)
+                if result is not None:
+                    return result
+            return None
+
+        coord_svg = find_coord_svg(root) or root
+        vb = (coord_svg.get('viewBox') or root.get('viewBox') or '0 0 21000 29700').split()
         try:
             vb_w, vb_h = float(vb[2]), float(vb[3])
         except (IndexError, ValueError):
-            vb_w, vb_h = 2100.0, 2970.0
+            vb_w, vb_h = 21000.0, 29700.0
 
-        for page_margin in root:
-            if 'page-margin' not in elem_classes(page_margin):
-                continue
+        # Search the full tree for page-margin elements (inside definition-scale).
+        for page_margin in find_all_with_class(root, 'page-margin'):
             pm_tx, pm_ty = parse_translate(page_margin.get('transform', ''))
 
             for system in page_margin:

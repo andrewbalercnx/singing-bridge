@@ -11,7 +11,7 @@
 //             MIDI port.name set via .textContent only (no innerHTML);
 //             serializeMidi is a pure function — no side effects, no DOM access;
 //             openSynthModal submit handler registered once at init — no listener accumulation.
-// Last updated: Sprint 26 (2026-05-06) -- variant score_bar_coords for correct highlight; lazy parts populate; View Score fix
+// Last updated: Sprint 29 (2026-05-10) -- score render status + startup recovery
 
 (function (root, factory) {
   'use strict';
@@ -539,16 +539,47 @@
       li.appendChild(resynBtn);
     }
     if (viewScoreFn) {
-      var scoreBtn = document.createElement('button');
-      scoreBtn.type = 'button';
-      scoreBtn.className = 'variant-score-btn';
-      if ((variant.score_page_tokens && variant.score_page_tokens.length > 0) || assetHasPages) {
+      var scoreStatus = variant.score_render_status || 'pending';
+      var hasPages = (variant.score_page_tokens && variant.score_page_tokens.length > 0) || assetHasPages;
+      if (scoreStatus === 'done' || hasPages) {
+        var scoreBtn = document.createElement('button');
+        scoreBtn.type = 'button';
+        scoreBtn.className = 'variant-score-btn';
         scoreBtn.textContent = 'View Score';
+        scoreBtn.addEventListener('click', function () { viewScoreFn(); });
+        li.appendChild(scoreBtn);
+      } else if (scoreStatus === 'failed') {
+        var retryBtn = document.createElement('button');
+        retryBtn.type = 'button';
+        retryBtn.className = 'variant-score-btn variant-score-btn--retry';
+        retryBtn.textContent = 'Retry Score';
+        retryBtn.addEventListener('click', function () {
+          retryBtn.disabled = true;
+          retryBtn.textContent = 'Retrying\u2026';
+          fetch(base + '/' + assetId + '/variants/' + variant.id + '/render-score', { method: 'POST' })
+            .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, data: d }; }); })
+            .then(function (res) {
+              if (!res.ok) {
+                retryBtn.disabled = false;
+                retryBtn.textContent = 'Retry Score';
+                return;
+              }
+              // Replace the retry button with a "rendering" indicator while polling.
+              retryBtn.replaceWith(document.createTextNode('Score rendering\u2026'));
+            })
+            .catch(function () {
+              retryBtn.disabled = false;
+              retryBtn.textContent = 'Retry Score';
+            });
+        });
+        li.appendChild(retryBtn);
       } else {
-        scoreBtn.textContent = 'Score rendering\u2026';
+        // pending or rendering — informational text only
+        var renderingText = document.createElement('span');
+        renderingText.className = 'variant-score-rendering';
+        renderingText.textContent = 'Score rendering\u2026';
+        li.appendChild(renderingText);
       }
-      scoreBtn.addEventListener('click', function () { viewScoreFn(); });
-      li.appendChild(scoreBtn);
     }
     li.appendChild(deleteBtn);
     return li;

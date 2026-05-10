@@ -4,7 +4,7 @@
 // Role: Two-browser Playwright specs; no sidecar required (WAV upload seeding).
 //       Playback is driven by setting the drawer's dataset and clicking Play.
 // Depends: Playwright, running server at localhost:8080
-// Last updated: Sprint 14 (2026-04-23) -- initial implementation
+// Last updated: Sprint 28 (2026-05-08) -- fix selectors for v2 teacher panel
 
 import { test, expect, Browser, BrowserContext, Page } from '@playwright/test';
 import { parse as parseCookieHeader } from 'set-cookie-parser';
@@ -33,6 +33,7 @@ const WAV_BYTES = Buffer.from([
 // Helpers
 // ---------------------------------------------------------------------------
 
+// Each run generates a unique timestamp slug so collision is impossible — no login fallback needed.
 async function registerTeacher(page: Page, email: string, slug: string): Promise<string> {
   const res = await page.request.post(`${BASE_URL}/auth/register`, {
     data: { email, slug, password: 'test-passphrase-12' },
@@ -341,7 +342,7 @@ test('student cannot control: no play/pause/stop buttons', async ({ browser }) =
 // Test 7: Teacher has play/pause/stop controls
 // ---------------------------------------------------------------------------
 
-test('teacher has play/pause/stop controls in drawer', async ({ browser }) => {
+test('teacher has play/pause controls in v2 accmp panel (no stop button)', async ({ browser }) => {
   test.setTimeout(60_000);
   if (!sharedSlug) test.skip();
 

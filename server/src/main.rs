@@ -7,7 +7,7 @@
 //             Selects mailer based on MailerKind. Spawns WS join rate sweeper
 //             and aborts it on shutdown. AppState.ws_join_rate_sweeper is
 //             always a valid JoinHandle for the life of the process.
-// Last updated: Sprint 25 (2026-04-27) -- select AzureBlobStore vs DevBlobStore at startup
+// Last updated: Sprint 29 (2026-05-10) -- score render status + startup recovery
 
 use std::{net::SocketAddr, sync::Arc};
 
@@ -20,7 +20,7 @@ use singing_bridge_server::{
     cleanup::cleanup_loop,
     config::{Config, MailerKind},
     db::{init_pool, run_migrations},
-    http::{media_token::MediaTokenStore, router},
+    http::{library::recover_pending_score_renders, media_token::MediaTokenStore, router},
     sidecar::SidecarClient,
     state::AppState,
     ws::rate_limit::sweep_stale,
@@ -157,6 +157,9 @@ async fn main() -> anyhow::Result<()> {
             }
         }
     });
+
+    // Recover any score renders that were in-flight when the server last restarted.
+    tokio::spawn(recover_pending_score_renders(Arc::clone(&state)));
 
     let app = router(state.clone()).into_make_service_with_connect_info::<SocketAddr>();
 

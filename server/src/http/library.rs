@@ -5,7 +5,8 @@
 //       public GET /api/media/:token for WAV + page-image delivery.
 // Exports: get_library_page, list_assets, post_asset, get_asset, delete_asset,
 //          post_parts, get_parts_status, post_midi, post_rasterise, post_variant,
-//          delete_variant, get_media
+//          delete_variant, get_media, recover_pending_score_renders,
+//          post_retry_variant_score
 // Depends: axum, sqlx, blob, sidecar, media_token, uuid, bytes, serde_json
 // Invariants: All /teach/:slug/library/* routes require valid teacher session cookie.
 //             All asset/variant DB queries join through teacher_id — no cross-teacher access.
@@ -17,7 +18,9 @@
 //             Blob keys are never returned directly — callers receive short-lived media tokens.
 //             post_variant: tempo_pct [25,300], transpose_semitones [-12,12] enforced server-side.
 //             post_midi: part_indices length capped at 32.
-// Last updated: Sprint 26 (2026-05-06) -- per-variant part selection, parts_json on asset, score_page_tokens on variant
+//             score_render_status lifecycle: pending → rendering → done | failed.
+//             recover_pending_score_renders re-queues stuck variants on startup.
+// Last updated: Sprint 29 (2026-05-10) -- score render status + startup recovery
 
 use std::pin::Pin;
 use std::sync::Arc;
@@ -93,6 +96,7 @@ pub(crate) struct VariantView {
     duration_s: Option<f64>,
     score_page_tokens: Vec<String>,
     score_bar_coords: serde_json::Value,
+    score_render_status: String,
     created_at: i64,
 }
 
@@ -513,11 +517,11 @@ pub(crate) async fn get_asset(
         .collect();
 
     // Issue media tokens for WAV variants and per-variant score pages.
-    let variants_db: Vec<(i64, String, String, i32, i32, i32, Option<f64>, Option<String>, Option<String>, i64)> =
+    let variants_db: Vec<(i64, String, String, i32, i32, i32, Option<f64>, Option<String>, Option<String>, Option<String>, i64)> =
         sqlx::query_as(
             "SELECT id, label, wav_blob_key, tempo_pct, transpose_semitones,
                     respect_repeats, duration_s, score_page_blob_keys_json,
-                    score_bar_coords_json, created_at
+                    score_bar_coords_json, score_render_status, created_at
              FROM accompaniment_variants
              WHERE accompaniment_id = $1 AND deleted_at IS NULL
              ORDER BY created_at DESC",
@@ -528,7 +532,7 @@ pub(crate) async fn get_asset(
 
     let variants: Vec<VariantView> = variants_db
         .into_iter()
-        .map(|(vid, label, wav_key, tempo_pct, transpose, repeats, duration_s, v_score_pages_json, v_bar_coords_json, vcreated)| {
+        .map(|(vid, label, wav_key, tempo_pct, transpose, repeats, duration_s, v_score_pages_json, v_bar_coords_json, v_render_status, vcreated)| {
             let token = state.media_tokens.insert(wav_key, ttl, false);
             // Issue media tokens for per-variant score SVG pages.
             let v_score_keys: Vec<String> = v_score_pages_json
@@ -553,6 +557,7 @@ pub(crate) async fn get_asset(
                 duration_s,
                 score_page_tokens: v_score_page_tokens,
                 score_bar_coords,
+                score_render_status: v_render_status.unwrap_or_else(|| "pending".to_string()),
                 created_at: vcreated,
             }
         })
@@ -1171,8 +1176,9 @@ pub(crate) async fn post_variant(
     let insert: std::result::Result<(i64,), sqlx::Error> = sqlx::query_as(
         "INSERT INTO accompaniment_variants
            (accompaniment_id, label, wav_blob_key, tempo_pct, transpose_semitones,
-            respect_repeats, midi_blob_key, bar_timings_json, part_indices_json, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id",
+            respect_repeats, midi_blob_key, bar_timings_json, part_indices_json,
+            score_render_status, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending', $10) RETURNING id",
     )
     .bind(asset_id)
     .bind(&req.label)
@@ -1200,48 +1206,8 @@ pub(crate) async fn post_variant(
 
     // Spawn background task: render per-variant score SVG pages when musicxml + part_indices available.
     if use_per_variant {
-        let state2 = Arc::clone(&state);
         let part_indices = req.part_indices.clone().unwrap_or_default();
-        tokio::spawn(async move {
-            let musicxml_bytes = match get_cached_musicxml_or_rerun_omr(&state2, asset_id, teacher_id).await {
-                Ok(b) => b,
-                Err(e) => {
-                    tracing::warn!(asset_id, variant_id = vid, error = %e, "variant render_score: could not get musicxml");
-                    return;
-                }
-            };
-            let result = match state2.sidecar.render_score(musicxml_bytes, &part_indices).await {
-                Ok(r) => r,
-                Err(e) => {
-                    tracing::warn!(asset_id, variant_id = vid, error = %e, "variant render_score: sidecar call failed");
-                    return;
-                }
-            };
-            let mut score_keys: Vec<String> = Vec::with_capacity(result.pages.len());
-            for (_, svg_bytes) in &result.pages {
-                let k = format!("{}.svg", uuid::Uuid::new_v4());
-                if let Err(e) = state2.blob.put(&k, Box::pin(std::io::Cursor::new(svg_bytes.to_vec()))).await {
-                    tracing::warn!(asset_id, variant_id = vid, error = %e, "variant render_score: blob put failed");
-                    return;
-                }
-                score_keys.push(k);
-            }
-            let score_keys_json = match serde_json::to_string(&score_keys) { Ok(j) => j, Err(_) => return };
-            let coords_json = serde_json::to_string(&result.bar_coords).unwrap_or_else(|_| "[]".to_string());
-            if let Err(e) = sqlx::query(
-                "UPDATE accompaniment_variants SET score_page_blob_keys_json = $1, score_bar_coords_json = $2 WHERE id = $3",
-            )
-            .bind(&score_keys_json)
-            .bind(&coords_json)
-            .bind(vid)
-            .execute(&state2.db)
-            .await
-            {
-                tracing::warn!(asset_id, variant_id = vid, error = %e, "variant render_score: db update failed");
-            } else {
-                tracing::info!(asset_id, variant_id = vid, pages = score_keys.len(), "variant render_score: score pages stored");
-            }
-        });
+        spawn_variant_score_render(Arc::clone(&state), asset_id, teacher_id, vid, part_indices);
     }
 
     let ttl = Duration::from_secs(state.config.media_token_ttl_secs);
@@ -1252,6 +1218,61 @@ pub(crate) async fn post_variant(
         Json(serde_json::json!({ "id": vid, "label": req.label, "token": wav_token })),
     )
         .into_response())
+}
+
+// ---------------------------------------------------------------------------
+// Retry variant score render
+// ---------------------------------------------------------------------------
+
+/// POST /teach/:slug/assets/:asset_id/variants/:variant_id/render-score
+/// Re-queues a failed or stuck score render for the given variant.
+/// Returns 200 {"status":"done"} if already done, or 202 {"status":"queued"}.
+pub(crate) async fn post_retry_variant_score(
+    State(state): State<Arc<AppState>>,
+    Path((slug, asset_id, variant_id)): Path<(String, i64, i64)>,
+    headers: HeaderMap,
+) -> Result<Response> {
+    let teacher_id = require_auth(&state, &headers).await?;
+    require_slug_owner(&state, teacher_id, &slug).await?;
+
+    // Verify the variant belongs to this teacher's asset.
+    let row: Option<(Option<String>, Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT v.score_render_status, v.part_indices_json, v.score_page_blob_keys_json
+         FROM accompaniment_variants v
+         JOIN accompaniments a ON a.id = v.accompaniment_id
+         WHERE v.id = $1 AND v.accompaniment_id = $2 AND a.teacher_id = $3
+           AND v.deleted_at IS NULL AND a.deleted_at IS NULL",
+    )
+    .bind(variant_id)
+    .bind(asset_id)
+    .bind(teacher_id)
+    .fetch_optional(&state.db)
+    .await?;
+
+    let (render_status_opt, part_indices_json_opt, score_pages_opt) = row.ok_or(AppError::NotFound)?;
+    let render_status = render_status_opt.as_deref().unwrap_or("pending");
+
+    // If already done, return immediately.
+    if render_status == "done" && score_pages_opt.as_deref().map(|s| s != "[]").unwrap_or(false) {
+        return Ok((StatusCode::OK, Json(serde_json::json!({"status": "done"}))).into_response());
+    }
+
+    // Reset to pending and re-spawn.
+    sqlx::query(
+        "UPDATE accompaniment_variants SET score_render_status = 'pending' WHERE id = $1",
+    )
+    .bind(variant_id)
+    .execute(&state.db)
+    .await?;
+
+    let part_indices: Vec<usize> = part_indices_json_opt
+        .as_deref()
+        .and_then(|s| serde_json::from_str(s).ok())
+        .unwrap_or_default();
+
+    spawn_variant_score_render(Arc::clone(&state), asset_id, teacher_id, variant_id, part_indices);
+
+    Ok((StatusCode::ACCEPTED, Json(serde_json::json!({"status": "queued"}))).into_response())
 }
 
 // ---------------------------------------------------------------------------
@@ -1518,5 +1539,130 @@ fn mime_for_key(key: &str) -> &'static str {
         "image/svg+xml"
     } else {
         "application/octet-stream"
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Background score render — shared spawn helper
+// ---------------------------------------------------------------------------
+
+/// Spawns a background task to render per-variant score SVG pages.
+/// Used by both post_variant and post_retry_variant_score / recover_pending_score_renders.
+fn spawn_variant_score_render(
+    state: Arc<AppState>,
+    asset_id: i64,
+    teacher_id: i64,
+    vid: i64,
+    part_indices: Vec<usize>,
+) {
+    tokio::spawn(async move {
+        let _ = sqlx::query(
+            "UPDATE accompaniment_variants SET score_render_status = 'rendering' WHERE id = $1",
+        )
+        .bind(vid)
+        .execute(&state.db)
+        .await;
+
+        let musicxml_bytes = match get_cached_musicxml_or_rerun_omr(&state, asset_id, teacher_id).await {
+            Ok(b) => b,
+            Err(e) => {
+                tracing::warn!(asset_id, variant_id = vid, error = %e, "variant render_score: could not get musicxml");
+                let _ = sqlx::query(
+                    "UPDATE accompaniment_variants SET score_render_status = 'failed' WHERE id = $1",
+                )
+                .bind(vid)
+                .execute(&state.db)
+                .await;
+                return;
+            }
+        };
+        let result = match state.sidecar.render_score(musicxml_bytes, &part_indices).await {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!(asset_id, variant_id = vid, error = %e, "variant render_score: sidecar call failed");
+                let _ = sqlx::query(
+                    "UPDATE accompaniment_variants SET score_render_status = 'failed' WHERE id = $1",
+                )
+                .bind(vid)
+                .execute(&state.db)
+                .await;
+                return;
+            }
+        };
+        let mut score_keys: Vec<String> = Vec::with_capacity(result.pages.len());
+        for (_, svg_bytes) in &result.pages {
+            let k = format!("{}.svg", uuid::Uuid::new_v4());
+            if let Err(e) = state.blob.put(&k, Box::pin(std::io::Cursor::new(svg_bytes.to_vec()))).await {
+                tracing::warn!(asset_id, variant_id = vid, error = %e, "variant render_score: blob put failed");
+                let _ = sqlx::query(
+                    "UPDATE accompaniment_variants SET score_render_status = 'failed' WHERE id = $1",
+                )
+                .bind(vid)
+                .execute(&state.db)
+                .await;
+                return;
+            }
+            score_keys.push(k);
+        }
+        let score_keys_json = match serde_json::to_string(&score_keys) { Ok(j) => j, Err(_) => return };
+        let coords_json = serde_json::to_string(&result.bar_coords).unwrap_or_else(|_| "[]".to_string());
+        if let Err(e) = sqlx::query(
+            "UPDATE accompaniment_variants
+             SET score_page_blob_keys_json = $1, score_bar_coords_json = $2,
+                 score_render_status = 'done'
+             WHERE id = $3",
+        )
+        .bind(&score_keys_json)
+        .bind(&coords_json)
+        .bind(vid)
+        .execute(&state.db)
+        .await
+        {
+            tracing::warn!(asset_id, variant_id = vid, error = %e, "variant render_score: db update failed");
+        } else {
+            tracing::info!(asset_id, variant_id = vid, pages = score_keys.len(), "variant render_score: score pages stored");
+        }
+    });
+}
+
+// ---------------------------------------------------------------------------
+// Startup recovery
+// ---------------------------------------------------------------------------
+
+/// Re-queues any variant score renders that were interrupted by a server restart.
+/// Called at startup, before the HTTP server begins accepting requests.
+pub async fn recover_pending_score_renders(state: Arc<AppState>) {
+    let rows: Vec<(i64, Option<String>, i64, i64)> = match sqlx::query_as(
+        "SELECT v.id, v.part_indices_json, a.teacher_id, a.id as asset_id
+         FROM accompaniment_variants v
+         JOIN accompaniments a ON a.id = v.accompaniment_id
+         WHERE v.score_render_status IN ('pending', 'rendering')
+           AND v.score_page_blob_keys_json IS NULL
+           AND v.part_indices_json IS NOT NULL
+           AND v.deleted_at IS NULL
+           AND a.deleted_at IS NULL
+           AND a.musicxml_blob_key IS NOT NULL",
+    )
+    .fetch_all(&state.db)
+    .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!(error = %e, "startup recovery: failed to query stuck score renders");
+            return;
+        }
+    };
+
+    let n = rows.len();
+    if n > 0 {
+        tracing::info!(count = n, "startup recovery: re-queuing variant score renders");
+    }
+
+    for (variant_id, part_indices_json, teacher_id, asset_id) in rows {
+        let part_indices: Vec<usize> = part_indices_json
+            .as_deref()
+            .and_then(|s| serde_json::from_str(s).ok())
+            .unwrap_or_default();
+        spawn_variant_score_render(Arc::clone(&state), asset_id, teacher_id, variant_id, part_indices);
     }
 }

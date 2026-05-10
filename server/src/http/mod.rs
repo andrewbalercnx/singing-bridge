@@ -7,7 +7,7 @@
 //             Cache-Control: no-store. /healthz body is fixed JSON.
 //             /api/dev-blob/* is only compiled and mounted in debug builds + dev mode.
 //             /api/media/:token is public — the token itself is the auth.
-// Last updated: Sprint 25 (2026-04-27) -- add /teach/:slug/dashboard and /teach/:slug/session routes
+// Last updated: Sprint 29 (2026-05-10) -- score render status + startup recovery
 
 pub mod dashboard;
 pub mod health;
@@ -68,6 +68,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/teach/:slug/library/assets/:id/variants", post(library::post_variant))
         .route("/teach/:slug/library/assets/:id/variants/:vid",
             delete(library::delete_variant))
+        .route("/teach/:slug/library/assets/:id/variants/:vid/render-score",
+            post(library::post_retry_variant_score))
         // Media token delivery (public — token is the auth)
         .route("/api/media/:token", get(library::get_media))
         .route("/loopback", get(loopback::get_loopback))

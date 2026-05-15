@@ -89,6 +89,7 @@
     var _trackMap = new Map();  // "assetId:variantId" → { token }; lobby fetches accumulate here per asset; bound by TOKEN_CAP (1000) enforced server-side
     var _base = (opts && opts.base) || '';  // base URL prefix for lazy fetch; empty string when opts.base omitted — fetch then fails silently via .catch
     var _pendingPreviewFetch = false;       // prevents duplicate in-flight fetches
+    var _assetMeta = {};                    // assetId(string) → { has_pdf, page_tokens[] }
 
     var audio = null;
     var rafHandle = null;
@@ -235,23 +236,56 @@
         }
       });
 
+      // Show/hide score button and load pages for selected asset.
+      function _updateScoreForAsset(assetId) {
+        var meta = assetId ? _assetMeta[String(assetId)] : null;
+        var hasPdf = !!(meta && meta.has_pdf);
+        if (panelEl.setScoreBtnVisible) panelEl.setScoreBtnVisible(hasPdf);
+        if (!hasPdf) {
+          if (scoreViewHandle) scoreViewHandle.updatePages(null, null);
+          return;
+        }
+        if (meta.page_tokens && meta.page_tokens.length > 0) {
+          // Tokens already in hand (live mode pre-fetched them).
+          var urls = meta.page_tokens.map(function (t) { return '/api/media/' + t; });
+          if (scoreViewHandle) scoreViewHandle.updatePages(urls, null);
+        } else if (_lobbyMode && _base && assetId) {
+          // Lobby mode: lazily fetch asset detail to get page_tokens.
+          var capturedId = assetId;
+          fetch(_base + '/' + capturedId)
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+              if (String(_assetId) !== String(capturedId)) return; // stale
+              var tokens = d.page_tokens || [];
+              _assetMeta[String(capturedId)] = Object.assign({}, _assetMeta[String(capturedId)] || {}, { page_tokens: tokens });
+              var urls = tokens.map(function (t) { return '/api/media/' + t; });
+              if (scoreViewHandle) scoreViewHandle.updatePages(urls.length > 0 ? urls : null, null);
+            })
+            .catch(function () {});
+        }
+      }
+
       // Track selector: mode-aware change handler.
       if (panelEl.trackSelect) {
         panelEl.trackSelect.addEventListener('change', function () {
           var val = panelEl.trackSelect.value || '';
+          var selectedAssetId = null;
           if (_lobbyMode) {
             // Lobby: value is just assetId.
             _assetId = val || null;
             _variantId = null;
             _destroyLobbyAudio();
+            selectedAssetId = _assetId;
           } else {
             // Live: value is "assetId:variantId".
             var parts = val.split(':');
             if (parts.length === 2 && parts[0] && parts[1]) {
               _assetId = parts[0];
               _variantId = parts[1];
+              selectedAssetId = _assetId;
             }
           }
+          _updateScoreForAsset(selectedAssetId);
         });
       }
 
@@ -461,6 +495,9 @@
       },
       // Populate lobby track selector with [{id, title, variant_count}] — no tokens.
       setAssetList: function (assets) {
+        assets.forEach(function (a) {
+          _assetMeta[String(a.id)] = { has_pdf: !!a.has_pdf, page_tokens: [] };
+        });
         if (!panelEl || !panelEl.trackSelect) return;
         var sel = panelEl.trackSelect;
         while (sel.options.length > 1) sel.remove(1);
@@ -472,9 +509,12 @@
           sel.appendChild(opt);
         });
       },
-      // Populate live track selector with [{id, title, variants:[{id,label,tempo_pct,token}]}].
+      // Populate live track selector with [{id, title, has_pdf, page_tokens, variants:[{id,label,tempo_pct,token}]}].
       setTrackList: function (assets) {
         _trackMap = new Map();  // idempotent clear
+        assets.forEach(function (a) {
+          _assetMeta[String(a.id)] = { has_pdf: !!a.has_pdf, page_tokens: a.page_tokens || [] };
+        });
         if (!panelEl || !panelEl.trackSelect) return;
         var sel = panelEl.trackSelect;
         while (sel.options.length > 1) sel.remove(1);

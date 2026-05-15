@@ -148,6 +148,7 @@
     scoreBtn.setAttribute('aria-label', 'Toggle score viewer');
     scoreBtn.setAttribute('title', 'Toggle score viewer');
     scoreBtn.setAttribute('aria-pressed', 'false');
+    scoreBtn.hidden = true;
     scoreBtn.appendChild(svgIcon('score'));
 
     var btnRow = el('div', 'sb-accmp-btn-row');
@@ -159,6 +160,7 @@
       node: panel,
       pauseBtn: pauseBtn,
       scoreToggleBtn: scoreBtn,
+      setScoreBtnVisible: function (v) { scoreBtn.hidden = !v; },
       setTrackName: function (name) { trackName.textContent = name || 'No track selected'; },
       setPosition: function (ms) { slider.value = String(ms); },
       setDuration: function (ms) { slider.max = String(ms); },

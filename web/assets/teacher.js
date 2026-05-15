@@ -448,7 +448,7 @@
             return Promise.allSettled(useful.map(function (a) {
               return fetch(BASE + '/' + a.id)
                 .then(function (r) { return r.json(); })
-                .then(function (d) { return Object.assign({}, a, { variants: d.variants || [] }); });
+                .then(function (d) { return Object.assign({}, a, { variants: d.variants || [], page_tokens: d.page_tokens || [] }); });
             }));
           })
           .then(function (results) {

@@ -142,6 +142,24 @@ test('buildAccmpPanel: scoreToggleBtn aria-label correct', () => {
   assert.equal(p.scoreToggleBtn.getAttribute('aria-label'), 'Toggle score viewer');
 });
 
+test('buildAccmpPanel: scoreToggleBtn starts hidden', () => {
+  const p = mod.buildAccmpPanel();
+  assert.equal(p.scoreToggleBtn.hidden, true);
+});
+
+test('buildAccmpPanel: setScoreBtnVisible(true) reveals score button', () => {
+  const p = mod.buildAccmpPanel();
+  p.setScoreBtnVisible(true);
+  assert.equal(p.scoreToggleBtn.hidden, false);
+});
+
+test('buildAccmpPanel: setScoreBtnVisible(false) hides score button', () => {
+  const p = mod.buildAccmpPanel();
+  p.setScoreBtnVisible(true);
+  p.setScoreBtnVisible(false);
+  assert.equal(p.scoreToggleBtn.hidden, true);
+});
+
 // ---------------------------------------------------------------------------
 // buildIconBar
 // ---------------------------------------------------------------------------

@@ -14,7 +14,7 @@
 //             exactly one RAF loop per mount; teardown is idempotent;
 //             mount is an orchestrator only (no audio/DOM logic beyond named builders);
 //             accmpPanel open-state persisted in sessionStorage (sb-accmp-open).
-// Last updated: Sprint 26 (2026-05-07) -- accept pre-built accmpPanel via opts.accmpPanel
+// Last updated: Sprint 30 (2026-05-15) -- onRecord wired to icon bar; expose setRecordState
 
 (function (root, factory) {
   'use strict';
@@ -297,6 +297,7 @@
         if (accmpPanelWrap) accmpPanelWrap.hidden = !accmpOpen;
       } : null,
       onSay: chatDrawer ? function () { chatDrawer.toggle(); } : (opts.onSay || function () {}),
+      onRecord: isTeacher ? (opts.onRecord || null) : null,
     });
 
     var videoZone = el('div', 'sb-video-zone');
@@ -328,6 +329,9 @@
       setRemoteStream: lifecycle.setRemoteStream,
       appendChatMsg: function (from, text) {
         if (chatDrawer) chatDrawer.appendMsg(from, text);
+      },
+      setRecordState: function (state) {
+        if (iconBar && iconBar.setRecordState) iconBar.setRecordState(state);
       },
       accmpPanel: accmpPanel,
     };

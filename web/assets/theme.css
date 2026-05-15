@@ -9,7 +9,7 @@
  * Invariants: no colour, font, radius, or shadow literal in other CSS files —
  *             always a var(--sb-...). Dark surfaces (session UI) use the
  *             same tokens with a `.sb-theme-dark` scope flip.
- * Last updated: Sprint 26 (2026-05-05) -- score modal: fix always-visible bug (display:flex moved to [open] only).
+ * Last updated: Sprint 30 (2026-05-15) -- session full-screen takeover (.sb-in-session); record button states.
  */
 
 /* ============================================================
@@ -1566,4 +1566,30 @@
   width: 100%;
   height: 100%;
   pointer-events: none;
+}
+
+/* ============================================================
+   20. Session full-screen takeover
+   ============================================================ */
+
+/* When a call is active, the session root becomes a fixed full-viewport overlay.
+   Body scroll locks so content behind it does not shift. */
+.sb-in-session #session-root {
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: 100;
+}
+.sb-in-session body {
+  overflow: hidden;
+}
+
+/* Record button — active (recording) state */
+.sb-iconbtn.sb-rec--active {
+  background: var(--sb-rose);
+  border-color: var(--sb-rose);
+  color: var(--sb-ink);
+}
+.sb-iconbtn.sb-rec--pending {
+  opacity: 0.5;
+  cursor: not-allowed;
 }

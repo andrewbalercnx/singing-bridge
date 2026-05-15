@@ -1,7 +1,7 @@
 // File: web/assets/student.js
 // Purpose: Student join form + lobby/session UI driver. Sprint 8:
 //          replaced wireControls with sbSessionUI.mount into #session-root.
-// Last updated: Sprint 20 (2026-04-25) -- acoustic profile derivation, iOS note, applyChatMode
+// Last updated: Sprint 30 (2026-05-15) -- full-viewport session takeover
 
 'use strict';
 
@@ -38,6 +38,9 @@
   let consentTimer = null;
   let headphonesConfirmedState = false;
   let localAudioTrack = null;
+  let localAudioTrackAec = null;
+  let audioSender = null;
+  let micEnabled = true;
   let lastChatModeApplied = null;
   let pitchDataChannel = null;
 
@@ -62,18 +65,19 @@
     return det.iosAecForced ? 'ios_forced' : null;
   }
 
-  function applyChatMode(enabled) {
+  async function applyChatMode(enabled) {
     if (enabled === lastChatModeApplied) return;
     lastChatModeApplied = enabled;
-    if (detect.iosAecForced) return; // iOS: constraints are fixed by OS; no-op
-    if (!localAudioTrack) return;
-    localAudioTrack.applyConstraints({
-      echoCancellation: enabled,
-      noiseSuppression: enabled,
-      autoGainControl: enabled,
-    }).catch(function () {
-      console.warn('[student] applyConstraints for chat mode rejected');
-    });
+    if (detect.iosAecForced) return; // iOS: AEC is fixed by OS; no-op
+    if (!audioSender) return;
+    const track = enabled ? localAudioTrackAec : localAudioTrack;
+    if (!track) return;
+    track.enabled = micEnabled;
+    try {
+      await audioSender.replaceTrack(track);
+    } catch (_) {
+      console.warn('[student] replaceTrack for chat mode failed');
+    }
   }
 
   function showConsentBanner(onResponse) {
@@ -203,8 +207,19 @@
       onChattingMode({ enabled }) {
         applyChatMode(enabled);
       },
-      onPeerConnected({ dataChannel, audioTrack, videoTrack, localStream, remoteStream }) {
+      onPeerConnected({ dataChannel, audioTrack, videoTrack, localStream, remoteStream, audioSender: sndr }) {
         localAudioTrack = localStream && localStream.getAudioTracks()[0] || null;
+        audioSender = sndr || null;
+        document.documentElement.classList.add('sb-in-session');
+        if (window.sbAudio.startLocalAudioAec && localAudioTrack) {
+          const deviceId = localAudioTrack.getSettings && localAudioTrack.getSettings().deviceId;
+          window.sbAudio.startLocalAudioAec(deviceId).then(function (acq) {
+            localAudioTrackAec = acq.track;
+            localAudioTrackAec.enabled = micEnabled;
+          }).catch(function () {
+            console.warn('[student] AEC track acquisition failed — chat mode will not cancel echo');
+          });
+        }
         sessionSection.hidden = false;
         if (qualityBadge) qualityBadge.hidden = false;
         const sessionRoot = document.getElementById('session-root');
@@ -231,8 +246,9 @@
           micEnabled: true,
           videoEnabled: true,
           onMicToggle() {
-            const track = localStream && localStream.getAudioTracks()[0];
-            if (track) track.enabled = !track.enabled;
+            micEnabled = !micEnabled;
+            if (localAudioTrack) localAudioTrack.enabled = micEnabled;
+            if (localAudioTrackAec) localAudioTrackAec.enabled = micEnabled;
           },
           onVideoToggle() {
             const track = localStream && localStream.getVideoTracks()[0];
@@ -256,9 +272,13 @@
       onPeerDisconnected() {
         stopPitch();
         pitchDataChannel = null;
+        document.documentElement.classList.remove('sb-in-session');
         if (sessionUiHandle) { sessionUiHandle.teardown(); sessionUiHandle = null; }
         if (accompanimentHandle) { accompanimentHandle.teardown(); accompanimentHandle = null; }
         if (scoreViewHandle) { scoreViewHandle.teardown(); scoreViewHandle = null; }
+        if (localAudioTrackAec) { localAudioTrackAec.stop(); localAudioTrackAec = null; }
+        audioSender = null;
+        micEnabled = true;
         localAudioTrack = null;
         lastChatModeApplied = null;
         sessionSection.hidden = true;

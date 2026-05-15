@@ -6,15 +6,15 @@
 // Role: Only module that calls getUserMedia or touches the
 //       <audio id="remote-audio"> element.
 // Exports: window.sbAudio.{
-//            startLocalAudio, attachRemoteAudio, detachRemoteAudio,
-//            hasTrack
+//            startLocalAudio, startLocalAudioAec, attachRemoteAudio,
+//            detachRemoteAudio, hasTrack
 //          }
 //          (Under Node/CommonJS, module.exports = { hasTrack } so
 //          the pure predicate is unit-testable without a DOM.)
 // Depends: none
 // Invariants: hasTrack is pure — no DOM, no global state; it is
 //             the single source of truth for duplicate detection.
-// Last updated: Sprint 2 (2026-04-17) -- initial implementation
+// Last updated: Sprint 29 (2026-05-10) -- add startLocalAudioAec for parallel AEC track
 
 'use strict';
 
@@ -57,6 +57,23 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     var stream = await navigator.mediaDevices.getUserMedia(constraints);
     var track = stream.getAudioTracks()[0];
     return { stream: stream, track: track, settings: track.getSettings() };
+  };
+
+  var startLocalAudioAec = async function (deviceId) {
+    var constraints = {
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: false,
+        autoGainControl: false,
+        channelCount: 2,
+        sampleRate: 48000,
+      },
+      video: false,
+    };
+    if (deviceId) constraints.audio.deviceId = { exact: deviceId };
+    var stream = await navigator.mediaDevices.getUserMedia(constraints);
+    var track = stream.getAudioTracks()[0];
+    return { stream: stream, track: track };
   };
 
   var showUnmuteAffordance = function (el) {
@@ -105,6 +122,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
 
   window.sbAudio = {
     startLocalAudio: startLocalAudio,
+    startLocalAudioAec: startLocalAudioAec,
     attachRemoteAudio: attachRemoteAudio,
     detachRemoteAudio: detachRemoteAudio,
     hasTrack: hasTrack,

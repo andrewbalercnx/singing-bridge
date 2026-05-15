@@ -2,7 +2,7 @@
 // Purpose: Teacher UI wiring. Student-supplied strings rendered via
 //          textContent only (no innerHTML — XSS prevention). Sprint 8:
 //          replaced wireControls with sbSessionUI.mount into #session-root.
-// Last updated: Sprint 26 (2026-05-07) -- lobby mode accompaniment panel; mutable sendWs/latency refs
+// Last updated: Sprint 30 (2026-05-15) -- full-viewport session, record in icon bar, allSettled track fetch
 
 'use strict';
 
@@ -108,12 +108,14 @@
   }
 
   function setRecordState(state) {
-    if (!recordBtn) return;
-    recordBtn.dataset.state = state;
-    const labels = { idle: 'Record', 'waiting-consent': 'Waiting…', recording: 'Stop recording', stopped: 'Record' };
-    recordBtn.textContent = labels[state] || 'Record';
-    recordBtn.disabled = state === 'waiting-consent';
+    if (recordBtn) {
+      recordBtn.dataset.state = state;
+      const labels = { idle: 'Record', 'waiting-consent': 'Waiting…', recording: 'Stop recording', stopped: 'Record' };
+      recordBtn.textContent = labels[state] || 'Record';
+      recordBtn.disabled = state === 'waiting-consent';
+    }
     if (recIndicator) recIndicator.hidden = state !== 'recording';
+    if (sessionUiHandle && sessionUiHandle.setRecordState) sessionUiHandle.setRecordState(state);
   }
 
   if (recordBtn) {
@@ -356,6 +358,7 @@
     onPeerConnected({ dataChannel, audioTrack, videoTrack, localStream, remoteStream, getOneWayLatencyMs }) {
       statusEl.textContent = 'Connected.';
       localAudioTrack = audioTrack;
+      document.documentElement.classList.add('sb-in-session');
       if (qualityBadge) qualityBadge.hidden = false;
       if (recordingControls) recordingControls.hidden = false;
       if (pitchControls) pitchControls.hidden = false;
@@ -396,6 +399,16 @@
         },
         onEnd() { if (sessionHandle) sessionHandle.hangup(); },
         onSendChat(text) { if (sessionHandle) sessionHandle.sendChat(text); },
+        onRecord() {
+          const state = recordBtn ? recordBtn.dataset.state : 'idle';
+          if (state === 'idle' || state === 'stopped') {
+            if (sessionHandle) sessionHandle.startRecording(slug);
+            setRecordState('waiting-consent');
+          } else if (state === 'recording') {
+            if (sessionHandle) sessionHandle.stopRecording(slug);
+            stopRecorder();
+          }
+        },
       });
 
       // Create VAD on the teacher's local audio track.
@@ -434,14 +447,17 @@
           .then(function (r) { return r.json(); })
           .then(function (assets) {
             const useful = assets.filter(function (a) { return a.variant_count > 0; });
-            return Promise.all(useful.map(function (a) {
+            return Promise.allSettled(useful.map(function (a) {
               return fetch(BASE + '/' + a.id)
                 .then(function (r) { return r.json(); })
                 .then(function (d) { return Object.assign({}, a, { variants: d.variants || [] }); });
             }));
           })
-          .then(function (full) {
-            if (accompanimentHandle) accompanimentHandle.setTrackList(full);
+          .then(function (results) {
+            const full = results
+              .filter(function (r) { return r.status === 'fulfilled'; })
+              .map(function (r) { return r.value; });
+            if (full.length > 0 && accompanimentHandle) accompanimentHandle.setTrackList(full);
           })
           .catch(function () {});
       }
@@ -460,6 +476,7 @@
     },
     onPeerDisconnected() {
       statusEl.textContent = 'Student disconnected.';
+      document.documentElement.classList.remove('sb-in-session');
       if (recordingControls) recordingControls.hidden = true;
       if (pitchControls) pitchControls.hidden = true;
       if (window.sbPitchDisplay) window.sbPitchDisplay.setActive(false);

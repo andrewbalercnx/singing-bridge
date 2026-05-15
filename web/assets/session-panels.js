@@ -10,7 +10,7 @@
 //             (no user input reaches innerHTML).
 //             buildIconBar: teacher gets 5 buttons (mic, vid, accmp, chat, end);
 //             non-teacher gets 3 (mic, vid, end).
-// Last updated: Sprint 26 (2026-05-07) -- buildAccmpPanel: add setLobbyMode
+// Last updated: Sprint 30 (2026-05-15) -- title tooltips on all icon buttons; record button in teacher icon bar
 
 (function (root, factory) {
   'use strict';
@@ -47,6 +47,7 @@
       score:    '<rect x="4" y="2" width="16" height="20" rx="2"/><line x1="8" y1="7" x2="16" y2="7"/><line x1="8" y1="11" x2="16" y2="11"/><line x1="8" y1="15" x2="13" y2="15"/>',
       chat:     '<path d="M4 5h16v11H8l-4 4z"/>',
       end:      '<path d="M3 13a13 13 0 0118 0l-2 3-4-1-1-3a10 10 0 00-4 0l-1 3-4 1z"/>',
+      record:   '<circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="3.5" fill="currentColor"/>',
     };
     s.innerHTML = paths[name] || '';
     return s;
@@ -138,12 +139,14 @@
     var pauseBtn = el('button', 'sb-iconbtn sb-accmp-pause');
     pauseBtn.type = 'button';
     pauseBtn.setAttribute('aria-label', 'Play / Pause');
+    pauseBtn.setAttribute('title', 'Play / Pause');
     pauseBtn.setAttribute('aria-pressed', 'false');
     pauseBtn.appendChild(svgIcon('music'));
 
     var scoreBtn = el('button', 'sb-iconbtn sb-accmp-score');
     scoreBtn.type = 'button';
     scoreBtn.setAttribute('aria-label', 'Toggle score viewer');
+    scoreBtn.setAttribute('title', 'Toggle score viewer');
     scoreBtn.setAttribute('aria-pressed', 'false');
     scoreBtn.appendChild(svgIcon('score'));
 
@@ -185,6 +188,7 @@
       var b = el('button', 'sb-iconbtn' + (extraCls ? ' ' + extraCls : ''));
       b.type = 'button';
       b.setAttribute('aria-label', label);
+      b.setAttribute('title', label);
       b.setAttribute('aria-pressed', active ? 'true' : 'false');
       b.appendChild(svgIcon(icon));
       return b;
@@ -199,13 +203,15 @@
     var accmpBtn = null;
     var chatBtn = null;
     var sayBadge = null;
+    var recBtn = null;
 
     if (isTeacher) {
       accmpBtn = makeBtn('music', 'Toggle accompaniment', accmpOpen);
       chatBtn = makeBtn('chat', 'Chat', false);
       sayBadge = el('span', 'sb-btn-badge'); sayBadge.hidden = true;
       chatBtn.appendChild(sayBadge);
-      bar.append(accmpBtn, chatBtn);
+      recBtn = makeBtn('record', 'Start recording', false, 'sb-rec');
+      bar.append(accmpBtn, chatBtn, recBtn);
     }
 
     bar.append(endBtn);
@@ -215,23 +221,40 @@
     endBtn.addEventListener('click', function () { if (opts.onEnd) opts.onEnd(); });
     if (accmpBtn) accmpBtn.addEventListener('click', function () { if (opts.onAccmpToggle) opts.onAccmpToggle(); });
     if (chatBtn) chatBtn.addEventListener('click', function () { if (opts.onSay) opts.onSay(); });
+    if (recBtn) recBtn.addEventListener('click', function () { if (opts.onRecord) opts.onRecord(); });
 
     return {
       node: bar,
       setMicActive: function (active) {
         micBtn.setAttribute('aria-pressed', active ? 'true' : 'false');
-        micBtn.setAttribute('aria-label', active ? 'Mute microphone' : 'Unmute microphone');
+        var label = active ? 'Mute microphone' : 'Unmute microphone';
+        micBtn.setAttribute('aria-label', label);
+        micBtn.setAttribute('title', label);
         micBtn.replaceChildren(svgIcon(active ? 'mic' : 'mic-off'));
       },
       setVideoActive: function (active) {
         vidBtn.setAttribute('aria-pressed', active ? 'true' : 'false');
-        vidBtn.setAttribute('aria-label', active ? 'Turn off camera' : 'Turn on camera');
+        var label = active ? 'Turn off camera' : 'Turn on camera';
+        vidBtn.setAttribute('aria-label', label);
+        vidBtn.setAttribute('title', label);
         vidBtn.replaceChildren(svgIcon(active ? 'vid' : 'vid-off'));
       },
       setAccmpOpen: function (open) {
         if (accmpBtn) accmpBtn.setAttribute('aria-pressed', open ? 'true' : 'false');
       },
       setSayBadge: function (visible) { if (sayBadge) sayBadge.hidden = !visible; },
+      setRecordState: function (state) {
+        if (!recBtn) return;
+        var recording = state === 'recording';
+        var pending = state === 'waiting-consent';
+        var label = recording ? 'Stop recording' : 'Start recording';
+        recBtn.setAttribute('aria-label', label);
+        recBtn.setAttribute('title', label);
+        recBtn.setAttribute('aria-pressed', recording ? 'true' : 'false');
+        recBtn.classList.toggle('sb-rec--active', recording);
+        recBtn.classList.toggle('sb-rec--pending', pending);
+        recBtn.disabled = pending;
+      },
     };
   }
 

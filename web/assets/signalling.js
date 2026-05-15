@@ -481,6 +481,7 @@
           videoTrack: refs.media.video.track,
           localStream: new MediaStream([refs.media.audio.track, refs.media.video.track]),
           remoteStream: remoteStream,
+          audioSender: refs.media.audioSender,
         });
       };
       var offer = await refs.pc.createOffer();

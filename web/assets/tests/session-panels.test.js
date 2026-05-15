@@ -151,9 +151,9 @@ test('buildIconBar non-teacher: 3 buttons', () => {
   assert.equal(b.node.children.length, 3);
 });
 
-test('buildIconBar teacher: 5 buttons', () => {
+test('buildIconBar teacher: 6 buttons', () => {
   const b = mod.buildIconBar({ isTeacher: true, micEnabled: true, videoEnabled: true });
-  assert.equal(b.node.children.length, 5);
+  assert.equal(b.node.children.length, 6);
 });
 
 test('buildIconBar: mic enabled aria attrs', () => {

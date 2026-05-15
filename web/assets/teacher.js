@@ -322,9 +322,7 @@
   fetch(BASE)
     .then(function (r) { return r.json(); })
     .then(function (assets) {
-      if (accompanimentHandle) accompanimentHandle.setAssetList(
-        assets.filter(function (a) { return a.variant_count > 0; })
-      );
+      if (accompanimentHandle) accompanimentHandle.setAssetList(assets);
     })
     .catch(function () {});
 

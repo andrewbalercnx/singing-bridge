@@ -68,6 +68,91 @@
   }
 
   // ---------------------------------------------------------------------------
+  // OMR job persistence across page navigations (localStorage)
+  // ---------------------------------------------------------------------------
+
+  function _omrKey(assetId) { return 'sb-omr:' + assetId; }
+
+  function _saveOmrJob(assetId, pollUrl) {
+    try { localStorage.setItem(_omrKey(assetId), pollUrl); } catch (_) {}
+  }
+
+  function _clearOmrJob(assetId) {
+    try { localStorage.removeItem(_omrKey(assetId)); } catch (_) {}
+  }
+
+  function _pendingOmrJobs() {
+    var jobs = [];
+    try {
+      for (var i = 0; i < localStorage.length; i++) {
+        var k = localStorage.key(i);
+        if (k && k.slice(0, 7) === 'sb-omr:') {
+          var url = localStorage.getItem(k);
+          if (url) jobs.push({ assetId: k.slice(7), pollUrl: url });
+        }
+      }
+    } catch (_) {}
+    return jobs;
+  }
+
+  function restoreOmrJobs(listEl, base, bannerEl) {
+    _pendingOmrJobs().forEach(function (job) {
+      var assetId = Number(job.assetId);
+      var row = listEl.querySelector('[data-id="' + assetId + '"]');
+      if (!row) { _clearOmrJob(assetId); return; }
+      var badge = document.createElement('span');
+      badge.className = 'omr-running-badge';
+      badge.textContent = 'OMR running…';
+      var hdr = row.querySelector('.asset-header');
+      if (hdr) hdr.appendChild(badge);
+      _pollOmrRestore(job.pollUrl, assetId, badge, listEl, base, bannerEl);
+    });
+  }
+
+  function _pollOmrRestore(pollUrl, assetId, badge, listEl, base, bannerEl) {
+    fetch(pollUrl)
+      .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, status: r.status, data: d }; }); })
+      .then(function (res) {
+        if (res.status === 202) {
+          setTimeout(function () { _pollOmrRestore(pollUrl, assetId, badge, listEl, base, bannerEl); }, 3000);
+          return;
+        }
+        _clearOmrJob(assetId);
+        if (badge && badge.parentNode) badge.parentNode.removeChild(badge);
+        var row = listEl.querySelector('[data-id="' + assetId + '"]');
+        if (!res.ok) {
+          if (res.status !== 404 && row) {
+            var hdr = row.querySelector('.asset-header');
+            if (hdr) {
+              var err = document.createElement('span');
+              err.className = 'omr-running-badge omr-running-badge--error';
+              err.textContent = 'OMR failed — expand to retry';
+              hdr.appendChild(err);
+            }
+          }
+          return;
+        }
+        // Done: auto-expand the card so the teacher sees the result.
+        if (!row) return;
+        var expandBtn = row.querySelector('.asset-expand-btn');
+        if (expandBtn && expandBtn.getAttribute('aria-expanded') === 'false') expandBtn.click();
+        var parts = res.data.parts || [];
+        setTimeout(function () {
+          var variantListEl = row.querySelector('.variant-list');
+          var dummyStatus = document.createElement('span');
+          if (variantListEl) {
+            rasterise(assetId, dummyStatus, base, bannerEl, function () {});
+            if (parts.length > 0) openSynthModal(assetId, parts, false, variantListEl, null, base, bannerEl, null);
+            else dummyStatus.textContent = 'No voices detected — re-run OMR.';
+          }
+        }, 600);
+      })
+      .catch(function () {
+        setTimeout(function () { _pollOmrRestore(pollUrl, assetId, badge, listEl, base, bannerEl); }, 5000);
+      });
+  }
+
+  // ---------------------------------------------------------------------------
   // Asset list
   // ---------------------------------------------------------------------------
 
@@ -85,6 +170,7 @@
         res.data.forEach(function (asset) {
           listEl.appendChild(renderSummary(asset, base, bannerEl));
         });
+        restoreOmrJobs(listEl, base, bannerEl);
       })
       .catch(function (err) {
         errorEl.hidden = false;
@@ -352,6 +438,7 @@
           return;
         }
         statusEl.textContent = 'OMR running\u2026';
+        _saveOmrJob(assetId, res.data.poll_url);
         pollOmrJob(res.data.poll_url, assetId, partPickerEl, omrBtn, statusEl, variantListEl, base, bannerEl, onRasterised, makeViewFn);
       })
       .catch(function (err) {
@@ -371,6 +458,7 @@
           }, 3000);
           return;
         }
+        _clearOmrJob(assetId);
         omrBtn.disabled = false;
         omrBtn.textContent = 'Run OMR';
         if (!res.ok) {
@@ -388,6 +476,7 @@
         }
       })
       .catch(function (err) {
+        _clearOmrJob(assetId);
         omrBtn.disabled = false;
         omrBtn.textContent = 'Run OMR';
         statusEl.textContent = 'OMR failed: ' + err.message;

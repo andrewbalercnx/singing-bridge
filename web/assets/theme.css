@@ -1352,6 +1352,16 @@
   font-size: var(--sb-text-sm);
 }
 
+.omr-running-badge {
+  font-size: var(--sb-text-sm);
+  color: var(--sb-accent);
+  margin-left: var(--sb-space-2);
+}
+
+.omr-running-badge--error {
+  color: var(--sb-rose);
+}
+
 .part-picker {
   display: flex;
   flex-direction: column;

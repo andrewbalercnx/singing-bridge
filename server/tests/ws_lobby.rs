@@ -1,7 +1,7 @@
 // File: server/tests/ws_lobby.rs
 // Purpose: Lobby join + admit + signal relay end-to-end at the signalling layer.
 // Covers exit-criteria from SPRINTS.md Sprint 1.
-// Last updated: Sprint 10 (2026-04-21) -- fix bob re-registration conflict
+// Last updated: Sprint 30 (2026-05-15) -- fix race in teacher_cookie_for_slug_a test
 
 mod common;
 
@@ -80,6 +80,18 @@ async fn teacher_cookie_for_slug_a_joining_slug_b_as_student_succeeds() {
     let cookie = app.signup_teacher("alice@example.test", "alice").await;
     let bob_cookie = app.signup_teacher("bob@example.test", "bob").await;
 
+    // Bob watches first so we can wait for the push rather than racing on a snapshot.
+    let mut teacher = app.open_ws(Some(&bob_cookie), None).await;
+    send_ws(
+        &mut teacher,
+        &serde_json::json!({"type":"lobby_watch","slug":"bob"}),
+    )
+    .await;
+    let initial = recv_json(&mut teacher).await;
+    assert_eq!(initial["type"], "lobby_state");
+    assert_eq!(initial["entries"].as_array().unwrap().len(), 0);
+
+    // Alice joins Bob's room using her teacher cookie — should succeed, not error.
     let mut ws = app.open_ws(Some(&cookie), None).await;
     send_ws(
         &mut ws,
@@ -89,17 +101,11 @@ async fn teacher_cookie_for_slug_a_joining_slug_b_as_student_succeeds() {
         }),
     )
     .await;
-    // Should NOT get an error; teacher cookie doesn't block student action
-    // in a different room.
-    let mut teacher = app.open_ws(Some(&bob_cookie), None).await;
-    send_ws(
-        &mut teacher,
-        &serde_json::json!({"type":"lobby_watch","slug":"bob"}),
-    )
-    .await;
-    let snapshot = recv_json(&mut teacher).await;
-    assert_eq!(snapshot["type"], "lobby_state");
-    assert_eq!(snapshot["entries"].as_array().unwrap().len(), 1);
+
+    // Bob receives the push update — proves Alice's join was accepted.
+    let update = recv_json(&mut teacher).await;
+    assert_eq!(update["type"], "lobby_state");
+    assert_eq!(update["entries"].as_array().unwrap().len(), 1);
     app.shutdown().await;
 }
 

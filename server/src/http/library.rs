@@ -767,6 +767,9 @@ async fn run_omr_job(
         .await
         .map_err(|_| AppError::Internal("pdf blob read".into()))?;
 
+    // Clone before consuming — rasterise runs after OMR regardless of client navigation.
+    let pdf_for_rasterise = pdf.clone();
+
     tracing::info!(asset_id, pdf_bytes = pdf.len(), "omr_job: calling sidecar omr");
     let omr = state.sidecar.omr(pdf).await?;
     tracing::info!(asset_id, parts = omr.parts.len(), "omr_job: omr complete");
@@ -832,6 +835,44 @@ async fn run_omr_job(
     if let Err(e) = update {
         let _ = state.blob.delete(&xml_key).await;
         return Err(AppError::Sqlx(e));
+    }
+
+    // Auto-rasterise so score viewer works without an explicit client-side trigger.
+    // A rasterise failure is non-fatal — parts are still returned and the teacher
+    // can re-trigger rasterise from the library page if needed.
+    match state.sidecar.rasterise(pdf_for_rasterise, 150).await {
+        Ok(pages) if !pages.is_empty() => {
+            let mut page_keys: Vec<String> = Vec::with_capacity(pages.len());
+            let mut store_ok = true;
+            for (_, page_bytes) in &pages {
+                let k = format!("{}.png", uuid::Uuid::new_v4());
+                match state.blob.put(&k, Box::pin(std::io::Cursor::new(page_bytes.to_vec()))).await {
+                    Ok(_) => page_keys.push(k),
+                    Err(e) => {
+                        tracing::warn!(asset_id, error = %e, "omr_job: auto-rasterise blob put failed");
+                        store_ok = false;
+                        break;
+                    }
+                }
+            }
+            if store_ok {
+                if let Ok(page_keys_json) = serde_json::to_string(&page_keys) {
+                    if page_keys_json.len() <= PAGE_KEYS_LIMIT {
+                        let _ = sqlx::query(
+                            "UPDATE accompaniments SET page_blob_keys_json = $1 WHERE id = $2 AND teacher_id = $3",
+                        )
+                        .bind(&page_keys_json)
+                        .bind(asset_id)
+                        .bind(teacher_id)
+                        .execute(&state.db)
+                        .await;
+                        tracing::info!(asset_id, pages = page_keys.len(), "omr_job: auto-rasterised");
+                    }
+                }
+            }
+        }
+        Ok(_) => tracing::warn!(asset_id, "omr_job: rasterise returned 0 pages"),
+        Err(e) => tracing::warn!(asset_id, error = %e, "omr_job: auto-rasterise failed (non-fatal)"),
     }
 
     Ok(omr.parts)
